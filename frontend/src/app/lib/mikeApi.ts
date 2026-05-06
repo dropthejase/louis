@@ -1,9 +1,12 @@
 /**
- * Mike API client — all requests to the Node.js backend.
- * Attaches the Supabase auth token for user authentication.
+ * Mike API client — all requests to the AWS backend.
+ * API Gateway calls use Supabase Bearer JWT (validated by Lambda Token authorizer).
+ * AgentCore calls use the same Bearer JWT (AgentCore JWT inbound authorizer).
+ * File uploads go via multipart POST to API Gateway Lambda.
  */
 
 import { supabase } from "@/lib/supabase";
+import { API_URL, AGENTCORE_URL } from "@/lib/aws/config";
 import type {
     AssistantEvent,
     MikeChat,
@@ -34,26 +37,25 @@ interface ServerChatDetailOut {
     messages: ServerMessage[];
 }
 
-const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+const API_BASE = API_URL;
 
-async function getAuthHeader(): Promise<Record<string, string>> {
+async function getAuthHeader(): Promise<string> {
     const {
         data: { session },
     } = await supabase.auth.getSession();
-    if (!session?.access_token) return {};
-    return { Authorization: `Bearer ${session.access_token}` };
+    if (!session?.access_token) throw new Error("Not authenticated");
+    return `Bearer ${session.access_token}`;
 }
 
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await fetch(`${API_BASE}${path}`, {
         cache: "no-store",
         ...restInit,
         headers: {
             Accept: "application/json",
-            ...authHeaders,
+            Authorization: authHeader,
             ...(initHeaders as Record<string, string> | undefined),
         },
     });
@@ -244,17 +246,13 @@ export async function uploadDocumentVersion(
     file: File,
     displayName?: string,
 ): Promise<MikeDocumentVersion> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (displayName) form.append("display_name", displayName);
     const response = await fetch(
         `${API_BASE}/single-documents/${documentId}/versions`,
-        {
-            method: "POST",
-            headers: { ...authHeaders },
-            body: form,
-        },
+        { method: "POST", body: form, headers: { Authorization: authHeader } },
     );
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<MikeDocumentVersion>;
@@ -279,16 +277,12 @@ export async function uploadProjectDocument(
     projectId: string,
     file: File,
 ): Promise<MikeDocument> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     const response = await fetch(
         `${API_BASE}/projects/${projectId}/documents`,
-        {
-            method: "POST",
-            headers: { ...authHeaders },
-            body: form,
-        },
+        { method: "POST", body: form, headers: { Authorization: authHeader } },
     );
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<MikeDocument>;
@@ -297,13 +291,13 @@ export async function uploadProjectDocument(
 export async function uploadStandaloneDocument(
     file: File,
 ): Promise<MikeDocument> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     const response = await fetch(`${API_BASE}/single-documents`, {
         method: "POST",
-        headers: { ...authHeaders },
         body: form,
+        headers: { Authorization: authHeader },
     });
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<MikeDocument>;
@@ -330,14 +324,11 @@ export async function getDocumentUrl(
 export async function downloadDocumentsZip(
     documentIds: string[],
 ): Promise<Blob> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     const response = await fetch(`${API_BASE}/single-documents/download-zip`, {
         method: "POST",
         cache: "no-store",
-        headers: {
-            "Content-Type": "application/json",
-            ...authHeaders,
-        },
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
         body: JSON.stringify({ document_ids: documentIds }),
     });
     if (!response.ok) {
@@ -420,32 +411,6 @@ export async function generateChatTitle(
     });
 }
 
-export async function streamChat(payload: {
-    messages: {
-        role: string;
-        content: string;
-        files?: { filename: string; document_id?: string }[];
-        workflow?: { id: string; title: string };
-    }[];
-    chat_id?: string;
-    project_id?: string;
-    model?: string;
-    signal?: AbortSignal;
-}): Promise<Response> {
-    const { signal, ...body } = payload;
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-            ...authHeaders,
-        },
-        body: JSON.stringify(body),
-        signal,
-    });
-}
-
 type StreamChatMessage = {
     role: string;
     content: string;
@@ -453,25 +418,66 @@ type StreamChatMessage = {
     workflow?: { id: string; title: string };
 };
 
+export async function streamChat(payload: {
+    userId: string;
+    chatId: string;
+    messages: {
+        role: string;
+        content: string;
+        files?: { filename: string; document_id?: string }[];
+        workflow?: { id: string; title: string };
+    }[];
+    runtimeSessionId?: string;
+    model?: string;
+    signal?: AbortSignal;
+}): Promise<Response> {
+    const { signal, messages, ...rest } = payload;
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) throw new Error("No active session");
+    // Send only the latest user turn — agent rebuilds history from DB via chatId
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const prompt = lastUser?.content ?? "";
+    return fetch(AGENTCORE_URL, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ ...rest, prompt }),
+        signal,
+    });
+}
+
 export async function streamProjectChat(payload: {
+    userId: string;
+    chatId: string;
     projectId: string;
     messages: StreamChatMessage[];
-    chat_id?: string;
+    runtimeSessionId?: string;
     model?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     signal?: AbortSignal;
 }): Promise<Response> {
-    const { projectId, signal, ...body } = payload;
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    const { signal, messages, displayed_doc, attached_documents, ...rest } =
+        payload;
+    const {
+        data: { session },
+    } = await supabase.auth.getSession();
+    if (!session) throw new Error("No active session");
+    const lastUser = [...messages].reverse().find((m) => m.role === "user");
+    const prompt = lastUser?.content ?? "";
+    return fetch(AGENTCORE_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...authHeaders,
+            Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...rest, prompt }),
         signal,
     });
 }
@@ -579,10 +585,10 @@ export async function deleteTabularReview(reviewId: string): Promise<void> {
 export async function streamTabularGeneration(
     reviewId: string,
 ): Promise<Response> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     return fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
         method: "POST",
-        headers: { ...authHeaders },
+        headers: { Authorization: authHeader },
     });
 }
 
@@ -593,10 +599,10 @@ export async function streamTabularChat(
     signal?: AbortSignal,
     context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
         body: JSON.stringify({
             messages,
             chat_id: chat_id ?? undefined,
