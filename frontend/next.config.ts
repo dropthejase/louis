@@ -1,21 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-    /* config options here */
-    reactCompiler: true,
-    async rewrites() {
-        return [
-            {
-                source: "/sitemap.xml",
-                destination: "/api/sitemap/sitemap.xml",
-            },
-            {
-                source: "/sitemap_:slug.xml",
-                destination: "/api/sitemap/sitemap_:slug.xml",
-            },
-        ];
-    },
-    skipTrailingSlashRedirect: true,
+  reactCompiler: true,
+  output: "export",
+  images: { unoptimized: true },
+  // Static export does not support rewrites — remove sitemap rewrites.
+  // Sitemap generation should move to a build-time script or be served
+  // from the API Lambda if needed post-migration.
+  skipTrailingSlashRedirect: true,
 };
 
 export default nextConfig;
