@@ -3,6 +3,7 @@ import { Construct } from 'constructs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as path from 'path';
 import { Stage } from './shared/stage';
@@ -24,11 +25,15 @@ export class AuthStack extends Stack {
     const jwksUri = `${props.supabaseProjectUrl}/auth/v1/.well-known/jwks.json`;
     const issuer = `${props.supabaseProjectUrl}/auth/v1`;
 
-    // Lambda authorizer
-    this.authorizerFn = new lambda.Function(this, 'JwtAuthorizer', {
+    // Lambda authorizer — NodejsFunction bundles at synth time via esbuild (no pre-build needed)
+    this.authorizerFn = new lambdaNodejs.NodejsFunction(this, 'JwtAuthorizer', {
       runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'index.handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/authorizer/dist')),
+      entry: path.join(__dirname, '../lambda/authorizer/index.ts'),
+      handler: 'handler',
+      bundling: {
+        minify: true,
+        externalModules: ['@aws-sdk/*'],
+      },
       environment: {
         SUPABASE_JWKS_URI: jwksUri,
         SUPABASE_JWT_ISSUER: issuer,
