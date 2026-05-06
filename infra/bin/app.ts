@@ -35,7 +35,8 @@ const conversionStack = new ConversionStack(app, 'ConversionStack', {
   stage,
   docsBucketArn: storageStack.docsBucket.bucketArn,
   docsBucketName: storageStack.docsBucket.bucketName,
+  supabaseSecret: apiStack.supabaseSecret,
 });
-conversionStack.addDependency(storageStack);
+conversionStack.addDependency(apiStack);
 
 app.synth();

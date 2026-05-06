@@ -4,6 +4,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as path from 'path';
 import { Stage } from './shared/stage';
 
@@ -14,6 +15,7 @@ interface ConversionStackProps extends StackProps {
   // which would make StorageStack depend on ConversionStack and vice versa).
   docsBucketArn: string;
   docsBucketName: string;
+  supabaseSecret: secretsmanager.ISecret;
 }
 
 export class ConversionStack extends Stack {
@@ -36,9 +38,8 @@ export class ConversionStack extends Stack {
     });
 
     docsBucket.grantReadWrite(lambdaRole);
+    props.supabaseSecret.grantRead(lambdaRole);
 
-    // Docker image Lambda — image built and pushed separately via conversion/ plan
-    // Replace with DockerImageCode.fromEcr() after conversion container is built
     this.conversionLambda = new lambda.DockerImageFunction(this, 'ConversionLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../conversion')),
       role: lambdaRole,
@@ -46,6 +47,7 @@ export class ConversionStack extends Stack {
       memorySize: 2048,
       environment: {
         DOCS_BUCKET_NAME: props.docsBucketName,
+        SUPABASE_SECRET_ARN: props.supabaseSecret.secretArn,
         POWERTOOLS_SERVICE_NAME: 'mike-conversion',
         POWERTOOLS_LOG_LEVEL: props.stage === 'dev' ? 'DEBUG' : 'INFO',
       },
