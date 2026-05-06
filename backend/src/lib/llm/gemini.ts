@@ -43,9 +43,9 @@ function toNativeContents(messages: StreamChatParams["messages"]): GeminiContent
 export async function streamGemini(
     params: StreamChatParams,
 ): Promise<StreamChatResult> {
-    const { model, systemPrompt, tools = [], callbacks = {}, runTools, apiKeys, enableThinking } = params;
+    const { model, systemPrompt, tools = [], callbacks = {}, runTools, enableThinking } = params;
     const maxIter = params.maxIterations ?? 10;
-    const ai = client(apiKeys?.gemini);
+    const ai = client((params.apiKeys as { gemini?: string | null } | undefined)?.gemini);
     const functionDeclarations = toGeminiTools(tools);
 
     const contents: GeminiContent[] = toNativeContents(params.messages);

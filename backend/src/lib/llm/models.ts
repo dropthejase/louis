@@ -1,48 +1,72 @@
-import type { Provider } from "./types";
+// backend/src/lib/llm/models.ts
+//
+// Bedrock model IDs for eu-west-1 (cross-region inference profile IDs).
+// Gemini references removed — all LLM calls now go through Bedrock.
 
 // ---------------------------------------------------------------------------
-// Canonical model IDs
+// Bedrock model ID constants
 // ---------------------------------------------------------------------------
-// Main-chat tier (top-end) — user picks one of these per message.
+
+export const BEDROCK_HIGH_MODEL =
+  "eu.anthropic.claude-opus-4-7-20251101-v1:0";
+
+export const BEDROCK_MID_MODEL =
+  "eu.anthropic.claude-sonnet-4-6-20250922-v1:0";
+
+export const BEDROCK_LOW_MODEL =
+  "eu.anthropic.claude-haiku-4-5-20251001-v1:0";
+
+// ---------------------------------------------------------------------------
+// Public-facing model tier names (used in DB records + frontend settings).
+// These are the logical tiers callers pass to streamChatWithTools().
+// Mapping to Bedrock IDs happens in resolveBedrockModelId() below.
+// ---------------------------------------------------------------------------
+
+// High tier — interactive chat (main model)
 export const CLAUDE_MAIN_MODELS = ["claude-opus-4-7", "claude-sonnet-4-6"] as const;
-export const GEMINI_MAIN_MODELS = [
-    "gemini-3.1-pro-preview",
-    "gemini-3-flash-preview",
-] as const;
 
-// Mid-tier (used for tabular review) — user picks one in account settings.
+// Mid tier — tabular review, bulk jobs
 export const CLAUDE_MID_MODELS = ["claude-sonnet-4-6"] as const;
-export const GEMINI_MID_MODELS = ["gemini-3-flash-preview"] as const;
 
-// Low-tier (used for title generation, lightweight extractions) — user picks
-// one in account settings.
+// Low tier — title generation, lightweight extraction
 export const CLAUDE_LOW_MODELS = ["claude-haiku-4-5"] as const;
-export const GEMINI_LOW_MODELS = ["gemini-3.1-flash-lite-preview"] as const;
 
-export const DEFAULT_MAIN_MODEL = "gemini-3-flash-preview";
-export const DEFAULT_TITLE_MODEL = "gemini-3.1-flash-lite-preview";
-export const DEFAULT_TABULAR_MODEL = "gemini-3-flash-preview";
+export const DEFAULT_MAIN_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_TITLE_MODEL = "claude-haiku-4-5";
+export const DEFAULT_TABULAR_MODEL = "claude-sonnet-4-6";
 
-const ALL_MODELS = new Set<string>([
-    ...CLAUDE_MAIN_MODELS,
-    ...GEMINI_MAIN_MODELS,
-    ...CLAUDE_MID_MODELS,
-    ...GEMINI_MID_MODELS,
-    ...CLAUDE_LOW_MODELS,
-    ...GEMINI_LOW_MODELS,
+const ALL_LOGICAL_MODELS = new Set<string>([
+  ...CLAUDE_MAIN_MODELS,
+  ...CLAUDE_MID_MODELS,
+  ...CLAUDE_LOW_MODELS,
 ]);
 
 // ---------------------------------------------------------------------------
-// Provider inference
+// Model resolution
 // ---------------------------------------------------------------------------
 
-export function providerForModel(model: string): Provider {
-    if (model.startsWith("claude")) return "claude";
-    if (model.startsWith("gemini")) return "gemini";
-    throw new Error(`Unknown model id: ${model}`);
+/**
+ * Maps a logical model tier name (as stored in DB / sent by frontend) to the
+ * concrete Bedrock cross-region inference profile ID for eu-west-1.
+ */
+export function resolveBedrockModelId(logicalModel: string): string {
+  switch (logicalModel) {
+    case "claude-opus-4-7":
+      return BEDROCK_HIGH_MODEL;
+    case "claude-sonnet-4-6":
+      return BEDROCK_MID_MODEL;
+    case "claude-haiku-4-5":
+      return BEDROCK_LOW_MODEL;
+    default:
+      // Unknown model — default to mid tier.
+      return BEDROCK_MID_MODEL;
+  }
 }
 
-export function resolveModel(id: string | null | undefined, fallback: string): string {
-    if (id && ALL_MODELS.has(id)) return id;
-    return fallback;
+export function resolveModel(
+  id: string | null | undefined,
+  fallback: string,
+): string {
+  if (id && ALL_LOGICAL_MODELS.has(id)) return id;
+  return fallback;
 }
