@@ -1,5 +1,7 @@
+import * as cdk from 'aws-cdk-lib';
 import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import * as path from 'path';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -11,6 +13,7 @@ interface ApiStackProps extends StackProps {
   stage: Stage;
   authorizerFnArn: string;
   docsBucket: s3.Bucket;
+  frontendUrl?: string;
 }
 
 export class ApiStack extends Stack {
@@ -45,31 +48,36 @@ export class ApiStack extends Stack {
     // Allow Lambda to read/write docs bucket (for presigned URLs and direct access)
     props.docsBucket.grantReadWrite(lambdaRole);
 
-    // Allow Lambda to invoke Bedrock models
+    // Allow Lambda to invoke Bedrock models — scoped to specific model ARNs
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
-      resources: [`arn:aws:bedrock:eu-west-1::foundation-model/*`],
+      resources: [
+        'arn:aws:bedrock:eu-west-1::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0',
+        'arn:aws:bedrock:eu-west-1::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0',
+        'arn:aws:bedrock:eu-west-1::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+      ],
     }));
 
-    // API Lambda — placeholder inline handler until backend build is wired
-    // Replace Code.fromInline with Code.fromAsset('../backend/dist') after Task backend-2
-    this.apiLambda = new lambda.Function(this, 'ApiLambda', {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      handler: 'lambda.handler',
-      code: lambda.Code.fromInline(`
-        exports.handler = async () => ({ statusCode: 200, body: JSON.stringify({ status: 'ok' }) });
-      `),
+    // API Lambda — Docker image from backend/Dockerfile.lambda
+    this.apiLambda = new lambda.DockerImageFunction(this, 'ApiLambda', {
+      code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../backend'), {
+        file: 'Dockerfile.lambda',
+      }),
+      architecture: lambda.Architecture.ARM_64,
       role: lambdaRole,
-      timeout: Duration.seconds(29), // API Gateway hard limit is 29s
+      timeout: cdk.Duration.seconds(29),
       memorySize: 1024,
       environment: {
         SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn,
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
+        FRONTEND_URL: props.frontendUrl ?? '*',
         NODE_ENV: 'production',
         POWERTOOLS_SERVICE_NAME: 'mike-api',
         POWERTOOLS_LOG_LEVEL: props.stage === 'dev' ? 'DEBUG' : 'INFO',
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       },
+      tracing: lambda.Tracing.ACTIVE,
     });
 
     // REST API Gateway
