@@ -419,19 +419,18 @@ type StreamChatMessage = {
 };
 
 export async function streamChat(payload: {
-    userId: string;
-    chatId: string;
     messages: {
         role: string;
         content: string;
         files?: { filename: string; document_id?: string }[];
         workflow?: { id: string; title: string };
     }[];
-    runtimeSessionId?: string;
+    chat_id?: string;
     model?: string;
+    runtimeSessionId?: string;
     signal?: AbortSignal;
 }): Promise<Response> {
-    const { signal, messages, ...rest } = payload;
+    const { signal, messages, chat_id, ...rest } = payload;
     const {
         data: { session },
     } = await supabase.auth.getSession();
@@ -446,23 +445,22 @@ export async function streamChat(payload: {
             Accept: "text/event-stream",
             Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ ...rest, prompt }),
+        body: JSON.stringify({ ...rest, chatId: chat_id, prompt }),
         signal,
     });
 }
 
 export async function streamProjectChat(payload: {
-    userId: string;
-    chatId: string;
     projectId: string;
     messages: StreamChatMessage[];
-    runtimeSessionId?: string;
+    chat_id?: string;
     model?: string;
+    runtimeSessionId?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     signal?: AbortSignal;
 }): Promise<Response> {
-    const { signal, messages, displayed_doc, attached_documents, ...rest } =
+    const { signal, messages, chat_id, displayed_doc, attached_documents, ...rest } =
         payload;
     const {
         data: { session },
@@ -477,7 +475,7 @@ export async function streamProjectChat(payload: {
             Accept: "text/event-stream",
             Authorization: `Bearer ${session.access_token}`,
         },
-        body: JSON.stringify({ ...rest, prompt }),
+        body: JSON.stringify({ ...rest, chatId: chat_id, prompt }),
         signal,
     });
 }

@@ -18,6 +18,8 @@ export function configureAmplifyStorage(
   if (amplifyConfigured) return;
   amplifyConfigured = true;
 
+  // In Amplify v6, custom credentials are provided via Auth.credentialsProvider
+  // in the LibraryOptions (second argument to Amplify.configure).
   Amplify.configure(
     {
       Storage: {
@@ -28,14 +30,12 @@ export function configureAmplifyStorage(
       },
     },
     {
-      Storage: {
-        S3: {
-          credentialsProvider: {
-            getCredentialsAndIdentityId: async () => ({
-              credentials: await getCredentials(),
-            }),
-            clearCredentialsAndIdentityId: () => {},
-          },
+      Auth: {
+        credentialsProvider: {
+          getCredentialsAndIdentityId: async () => ({
+            credentials: await getCredentials(),
+          }),
+          clearCredentialsAndIdentityId: () => {},
         },
       },
     },

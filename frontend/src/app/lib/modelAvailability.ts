@@ -2,38 +2,40 @@ import { MODELS, type ModelOption } from "../components/assistant/ModelToggle";
 
 export type ModelProvider = "claude" | "gemini";
 
-export function getModelProvider(modelId: string): ModelProvider | null {
-    const model = MODELS.find((m) => m.id === modelId);
-    if (!model) return null;
-    return model.group === "Anthropic" ? "claude" : "gemini";
+export function getModelLabel(modelId: string): string {
+    return MODELS.find((m) => m.id === modelId)?.label ?? modelId;
+}
+
+// ---------------------------------------------------------------------------
+// Compatibility shims — all models always available via Bedrock IAM.
+// These functions are kept to avoid modifying callers (ChatInput, TRChatPanel,
+// TabularReviewView, ApiKeyMissingModal). They always return "available".
+// ---------------------------------------------------------------------------
+
+export function getModelProvider(_modelId: string): ModelProvider | null {
+    return "claude";
 }
 
 export function isModelAvailable(
-    modelId: string,
-    apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null },
+    _modelId: string,
+    _apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null },
 ): boolean {
-    const provider = getModelProvider(modelId);
-    if (!provider) return false;
-    return provider === "claude"
-        ? !!apiKeys.claudeApiKey?.trim()
-        : !!apiKeys.geminiApiKey?.trim();
+    return true;
 }
 
 export function isProviderAvailable(
-    provider: ModelProvider,
-    apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null },
+    _provider: ModelProvider,
+    _apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null },
 ): boolean {
-    return provider === "claude"
-        ? !!apiKeys.claudeApiKey?.trim()
-        : !!apiKeys.geminiApiKey?.trim();
+    return true;
 }
 
-export function providerLabel(provider: ModelProvider): string {
-    return provider === "claude" ? "Anthropic (Claude)" : "Google (Gemini)";
+export function providerLabel(_provider: ModelProvider): string {
+    return "Anthropic (via Bedrock)";
 }
 
 export function modelGroupToProvider(
-    group: ModelOption["group"],
+    _group: ModelOption["group"],
 ): ModelProvider {
-    return group === "Anthropic" ? "claude" : "gemini";
+    return "claude";
 }
