@@ -1,0 +1,19 @@
+{
+  "name": "mike-authorizer",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "dependencies": {
+    "jwks-rsa": "^3.1.0",
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.140",
+    "@types/jsonwebtoken": "^9.0.7",
+    "typescript": "~5.4.0",
+    "esbuild": "^0.24.0"
+  },
+  "scripts": {
+    "build": "esbuild index.ts --bundle --platform=node --target=node20 --outfile=dist/index.js --external:@aws-sdk/*"
+  }
+}
