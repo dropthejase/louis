@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
+    "build:lambda": "tsc --project tsconfig.json && echo 'Build OK'",
     "start": "node dist/index.js"
   },
   "dependencies": {
