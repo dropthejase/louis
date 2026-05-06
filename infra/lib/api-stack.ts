@@ -89,7 +89,10 @@ export class ApiStack extends Stack {
     });
 
     // Token authorizer — references Lambda authorizer from AuthStack via ARN to avoid cross-stack cycle
-    const authorizerFn = lambda.Function.fromFunctionArn(this, 'ImportedAuthorizerFn', props.authorizerFnArn);
+    const authorizerFn = lambda.Function.fromFunctionAttributes(this, 'ImportedAuthorizerFn', {
+      functionArn: props.authorizerFnArn,
+      sameEnvironment: true,
+    });
     const authorizer = new apigateway.TokenAuthorizer(this, 'JwtAuthorizer', {
       handler: authorizerFn,
       resultsCacheTtl: Duration.seconds(300),
