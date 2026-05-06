@@ -1,0 +1,26 @@
+{
+  "name": "mike-on-aws-infra",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "deploy:storage": "cdk deploy StorageStack",
+    "deploy:auth": "cdk deploy AuthStack",
+    "deploy:api": "cdk deploy ApiStack",
+    "deploy:conversion": "cdk deploy ConversionStack",
+    "deploy:all": "cdk deploy --all",
+    "diff": "cdk diff",
+    "synth": "cdk synth"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.180.0",
+    "constructs": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "aws-cdk": "^2.180.0",
+    "typescript": "~5.4.0"
+  }
+}
