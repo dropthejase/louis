@@ -2,6 +2,7 @@ import { App } from 'aws-cdk-lib';
 import { getStage } from '../lib/shared/stage';
 import { StorageStack } from '../lib/storage-stack';
 import { AuthStack } from '../lib/auth-stack';
+import { ApiStack } from '../lib/api-stack';
 
 const app = new App();
 const stage = getStage(app);
@@ -19,5 +20,13 @@ const authStack = new AuthStack(app, 'AuthStack', {
   supabaseProjectUrl,
 });
 authStack.addDependency(storageStack);
+
+const apiStack = new ApiStack(app, 'ApiStack', {
+  env,
+  stage,
+  authorizerFnArn: authStack.authorizerFn.functionArn,
+  docsBucket: storageStack.docsBucket,
+});
+apiStack.addDependency(authStack);
 
 app.synth();
