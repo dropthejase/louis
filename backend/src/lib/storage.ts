@@ -1,13 +1,16 @@
-/**
- * Cloudflare R2 storage utilities for Mike document management.
- * R2 is S3-compatible — uses @aws-sdk/client-s3.
- *
- * Required env vars:
- *   R2_ENDPOINT_URL     — https://<account-id>.r2.cloudflarestorage.com
- *   R2_ACCESS_KEY_ID    — R2 API token (Access Key ID)
- *   R2_SECRET_ACCESS_KEY — R2 API token (Secret Access Key)
- *   R2_BUCKET_NAME      — bucket name (default: "mike")
- */
+// backend/src/lib/storage.ts
+//
+// Document storage — AWS S3 in prod (Lambda IAM role), Cloudflare R2 in local dev.
+//
+// Prod env vars (Lambda):
+//   S3_BUCKET_NAME  — documents bucket name (CDK output)
+//   AWS_REGION      — injected by Lambda runtime automatically
+//
+// Local dev env vars (R2 fallback — unchanged):
+//   R2_ENDPOINT_URL
+//   R2_ACCESS_KEY_ID
+//   R2_SECRET_ACCESS_KEY
+//   R2_BUCKET_NAME  (default: "mike")
 
 import {
   S3Client,
@@ -17,7 +20,21 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 
+// ---------------------------------------------------------------------------
+// Client + bucket selection
+// ---------------------------------------------------------------------------
+
+function isLambda(): boolean {
+  // Lambda runtime always sets AWS_LAMBDA_FUNCTION_NAME.
+  return Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
+}
+
 function getClient(): S3Client {
+  if (isLambda()) {
+    // IAM role via instance metadata — no explicit credentials.
+    return new S3Client({ region: process.env.AWS_REGION ?? "eu-west-1" });
+  }
+  // Local dev: R2
   return new S3Client({
     region: "auto",
     endpoint: process.env.R2_ENDPOINT_URL!,
@@ -28,13 +45,22 @@ function getClient(): S3Client {
   });
 }
 
-const BUCKET = process.env.R2_BUCKET_NAME ?? "mike";
+function getBucket(): string {
+  if (isLambda()) {
+    const bucket = process.env.S3_BUCKET_NAME;
+    if (!bucket) throw new Error("S3_BUCKET_NAME is not set");
+    return bucket;
+  }
+  return process.env.R2_BUCKET_NAME ?? "mike";
+}
 
-export const storageEnabled = Boolean(
-  process.env.R2_ENDPOINT_URL &&
-  process.env.R2_ACCESS_KEY_ID &&
-  process.env.R2_SECRET_ACCESS_KEY,
-);
+export const storageEnabled: boolean = isLambda()
+  ? Boolean(process.env.S3_BUCKET_NAME)
+  : Boolean(
+      process.env.R2_ENDPOINT_URL &&
+      process.env.R2_ACCESS_KEY_ID &&
+      process.env.R2_SECRET_ACCESS_KEY,
+    );
 
 // ---------------------------------------------------------------------------
 // Upload
@@ -48,7 +74,7 @@ export async function uploadFile(
   const client = getClient();
   await client.send(
     new PutObjectCommand({
-      Bucket: BUCKET,
+      Bucket: getBucket(),
       Key: key,
       Body: Buffer.from(content),
       ContentType: contentType,
@@ -65,7 +91,7 @@ export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
   try {
     const client = getClient();
     const response = await client.send(
-      new GetObjectCommand({ Bucket: BUCKET, Key: key }),
+      new GetObjectCommand({ Bucket: getBucket(), Key: key }),
     );
     if (!response.Body) return null;
     const bytes = await response.Body.transformToByteArray();
@@ -82,11 +108,11 @@ export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
 export async function deleteFile(key: string): Promise<void> {
   if (!storageEnabled) return;
   const client = getClient();
-  await client.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: key }));
+  await client.send(new DeleteObjectCommand({ Bucket: getBucket(), Key: key }));
 }
 
 // ---------------------------------------------------------------------------
-// Signed URL (pre-signed for temporary direct access)
+// Signed URL (presigned for temporary direct access)
 // ---------------------------------------------------------------------------
 
 export async function getSignedUrl(
@@ -97,15 +123,11 @@ export async function getSignedUrl(
   if (!storageEnabled) return null;
   try {
     const client = getClient();
-    // Override the response Content-Disposition so the browser uses this
-    // filename on download, instead of the last path segment of the R2 key
-    // (which includes the document UUID). The `download` attribute on <a>
-    // is ignored for cross-origin URLs, so we have to set it server-side.
     const responseContentDisposition = downloadFilename
       ? buildContentDisposition("attachment", downloadFilename)
       : undefined;
     const command = new GetObjectCommand({
-      Bucket: BUCKET,
+      Bucket: getBucket(),
       Key: key,
       ResponseContentDisposition: responseContentDisposition,
     });
@@ -114,6 +136,10 @@ export async function getSignedUrl(
     return null;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Filename helpers (unchanged)
+// ---------------------------------------------------------------------------
 
 export function normalizeDownloadFilename(name: string): string {
   const trimmed = name.trim();
@@ -141,30 +167,18 @@ export function buildContentDisposition(
 }
 
 // ---------------------------------------------------------------------------
-// Storage key helpers
+// Storage key helpers (unchanged)
 // ---------------------------------------------------------------------------
 
-export function storageKey(
-  userId: string,
-  docId: string,
-  filename: string,
-): string {
+export function storageKey(userId: string, docId: string, filename: string): string {
   return `documents/${userId}/${docId}/source${storageExtension(filename, ".bin")}`;
 }
 
-export function pdfStorageKey(
-  userId: string,
-  docId: string,
-  stem: string,
-): string {
+export function pdfStorageKey(userId: string, docId: string, stem: string): string {
   return `documents/${userId}/${docId}/${stem}.pdf`;
 }
 
-export function generatedDocKey(
-  userId: string,
-  docId: string,
-  filename: string,
-): string {
+export function generatedDocKey(userId: string, docId: string, filename: string): string {
   return `generated/${userId}/${docId}/generated${storageExtension(filename, ".docx")}`;
 }
 
