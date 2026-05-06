@@ -274,7 +274,6 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
                 'You write high-quality column prompts for legal tabular review workflows. Return only valid JSON with a single field: {"prompt": string}. The prompt you write must focus solely on what to extract — never on how to format the response.',
             user: userMessage,
             maxTokens: 512,
-            apiKeys: api_keys,
         });
         const parsed = JSON.parse(
             raw
@@ -1367,7 +1366,6 @@ The "summary" field must contain only the extracted value with inline citations 
             systemPrompt: EXTRACTION_SYSTEM,
             user: `Document: ${filename}\n\n${documentText.slice(0, 120_000)}\n\n---\nInstruction: ${fullPrompt}`,
             maxTokens: 2048,
-            apiKeys,
         });
     } catch (err) {
         console.error("[queryGemini] completion failed", err);
@@ -1427,7 +1425,6 @@ async function generateChatTitle(
             model,
             user: `${contextBlock}Generate a short title (4-6 words) for a chat that starts with the message below. The title should reflect the user's specific question, not the review or project name. Return only the title, no punctuation, no quotes:\n\n${firstUserMessage}`,
             maxTokens: 64,
-            apiKeys,
         });
         return raw.trim().slice(0, 80) || null;
     } catch {
