@@ -1,58 +1,185 @@
-# Mike
+# Mike — AWS Migration
 
-Open-source release containing the Mike frontend and backend.
+Mike is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
 
-## Contents
+Licensed AGPL-3.0.
 
-- `frontend/` - Next.js application
-- `backend/` - Express API, Supabase access, document processing, and migrations
-- `backend/migrations/000_one_shot_schema.sql` - one-shot Supabase schema for fresh databases
+## Architecture
 
-## Setup
+```
+CloudFront → S3 (static Next.js export)
 
-Install dependencies:
+API Gateway REST API (Lambda Token authorizer — Supabase JWT via JWKS)
+└→ Lambda container (Express + serverless-http + Lambda Powertools)
+└→ Supabase Postgres (unchanged)
 
-```bash
-npm install --prefix backend
-npm install --prefix frontend
+AgentCore Runtime (JWT inbound authorizer — Supabase OIDC)
+└→ Strands agent (10 tools, Bedrock Claude)
+└→ Supabase Postgres
+
+S3 PutObject (.docx) → Lambda container (LibreOffice DOCX→PDF)
+
+Cognito Identity Pool (OIDC-federated from Supabase JWT)
+└→ temporary IAM creds for frontend S3 uploads
+
+LLM → Amazon Bedrock Converse API (Claude only)
 ```
 
-Create local env files from the examples:
+Auth: Supabase JWT is the single token. API Gateway and AgentCore validate it directly via JWKS/OIDC. S3 access uses the JWT exchanged for IAM creds via Cognito Identity Pool — no Cognito User Pool.
+
+## Repo Structure
+
+```
+backend/        Express API (unchanged routes, new Lambda entrypoint)
+frontend/       Next.js app (unchanged UI, AWS transport layer)
+infra/          CDK app — StorageStack, AuthStack, ApiStack, ConversionStack
+agent/          AgentCore agent (Strands, 10 tools, ARM64 container)
+conversion/     LibreOffice Lambda container (DOCX→PDF, x86_64)
+scripts/        Deploy and utility scripts
+```
+
+## Prerequisites
+
+- AWS CLI configured for `eu-west-1`
+- Node 20
+- Docker (for container Lambda builds)
+- CDK bootstrapped: `npx cdk bootstrap aws://ACCOUNT_ID/eu-west-1`
+
+## First-Time Setup
+
+### 1. Register Supabase as an IAM OIDC provider (once per account)
 
 ```bash
-cp backend/.env.example backend/.env
+SUPABASE_URL=https://YOUR_PROJECT.supabase.co ./scripts/create-oidc-provider.sh
+```
+
+### 2. Run DB migration
+
+In the Supabase SQL editor:
+
+```sql
+ALTER TABLE chats ADD COLUMN IF NOT EXISTS agentcore_session_id TEXT;
+```
+
+### 3. Deploy CDK stacks (in order)
+
+```bash
+cd infra && npm install
+
+npx cdk deploy StorageStack -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
+npx cdk deploy AuthStack    -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
+npx cdk deploy ApiStack     -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
+npx cdk deploy ConversionStack -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
+```
+
+Note the outputs — you'll need them below.
+
+### 4. Populate the Supabase secret
+
+```bash
+aws secretsmanager put-secret-value \
+  --secret-id YOUR_SUPABASE_SECRET_ARN \
+  --secret-string '{"url":"https://YOUR_PROJECT.supabase.co","serviceRoleKey":"YOUR_SERVICE_ROLE_KEY"}' \
+  --region eu-west-1
+```
+
+### 5. Deploy the AgentCore agent
+
+```bash
+npm install -g @aws/agentcore
+cd agent && npm install && npm run build
+AWS_ACCOUNT_ID=YOUR_ACCOUNT_ID AWS_REGION=eu-west-1 ../scripts/deploy-agent.sh
+```
+
+### 6. Configure frontend env vars
+
+```bash
 cp frontend/.env.local.example frontend/.env.local
+# Fill in values from CDK outputs and AgentCore deploy output
 ```
 
-Run `backend/migrations/000_one_shot_schema.sql` in the Supabase SQL editor for a fresh database.
-
-Start the backend:
+### 7. Deploy frontend
 
 ```bash
+cd frontend && npm install && npm run build
+../scripts/deploy-frontend.sh
+```
+
+## CDK Stacks
+
+| Stack | Provisions |
+|---|---|
+| `StorageStack` | S3 docs bucket (private, per-user prefix), S3 frontend bucket, CloudFront + OAC |
+| `AuthStack` | Cognito Identity Pool (Supabase OIDC), Lambda Token authorizer |
+| `ApiStack` | REST API Gateway, API Lambda (ARM64 container), Secrets Manager secret |
+| `ConversionStack` | LibreOffice Lambda (x86_64 container), S3 event trigger |
+
+All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC — frontend bucket has no public access. API Gateway: Lambda Token authorizer on all routes.
+
+Synth without deploying:
+
+```bash
+cd infra && npx cdk synth -c stage=dev -c supabaseProjectUrl=https://example.supabase.co
+```
+
+## Local Development
+
+Backend and frontend both run locally against Supabase + Cloudflare R2 (no AWS needed).
+
+```bash
+cp backend/.env.example backend/.env      # fill in Supabase + R2 credentials
+cp frontend/.env.local.example frontend/.env.local  # set NEXT_PUBLIC_API_URL=http://localhost:3001
+
 npm run dev --prefix backend
-```
-
-Start the frontend:
-
-```bash
 npm run dev --prefix frontend
 ```
 
 Open `http://localhost:3000`.
 
-## Required Services
+Local dev uses Supabase `getUser()` for auth (fallback path in `auth.ts`) and R2 for storage. No Lambda, no Bedrock, no CDK needed.
 
-- Supabase Auth and Postgres
-- S3-compatible object storage, such as Cloudflare R2
-- At least one supported model provider key, depending on which models you enable
-- LibreOffice for DOC/DOCX to PDF conversion
+## Environment Variables
+
+### Backend Lambda (set by CDK — do not configure manually in prod)
+
+| Var | Description |
+|---|---|
+| `SUPABASE_SECRET_ARN` | Secrets Manager ARN for `{ url, serviceRoleKey }` |
+| `S3_BUCKET_NAME` | Documents S3 bucket (from StorageStack output) |
+| `FRONTEND_URL` | CloudFront domain for CORS |
+| `POWERTOOLS_SERVICE_NAME` | `mike-api` |
+
+### Frontend (build-time, `NEXT_PUBLIC_*`)
+
+| Var | Description |
+|---|---|
+| `NEXT_PUBLIC_IDENTITY_POOL_ID` | Cognito Identity Pool ID (AuthStack output) |
+| `NEXT_PUBLIC_DOCS_BUCKET_NAME` | S3 docs bucket name (StorageStack output) |
+| `NEXT_PUBLIC_API_URL` | API Gateway URL (ApiStack output) |
+| `NEXT_PUBLIC_AGENTCORE_URL` | AgentCore invocation endpoint |
+| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
+
+## Models
+
+Three Claude tiers via Bedrock (eu-west-1 cross-region inference):
+
+| UI label | Logical ID | Bedrock model |
+|---|---|---|
+| Claude Opus 4.7 | `claude-opus-4-7` | `eu.anthropic.claude-opus-4-7-20251101-v1:0` |
+| Claude Sonnet 4.6 *(default)* | `claude-sonnet-4-6` | `eu.anthropic.claude-sonnet-4-6-20250922-v1:0` |
+| Claude Haiku 4.5 | `claude-haiku-4-5` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
+
+Model is selected per conversation — switching mid-conversation is supported.
 
 ## Checks
 
 ```bash
-npm run build --prefix backend
+npm run build:lambda --prefix backend
+cd infra && npx tsc --noEmit
+cd agent && npm run build
+cd conversion && npm run build
 npm run build --prefix frontend
-npm run lint --prefix frontend
 ```
 
 ## License
