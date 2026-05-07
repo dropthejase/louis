@@ -345,11 +345,11 @@ function ResponseStatus({ status }: { status: StatusState }) {
 // ---------------------------------------------------------------------------
 
 const THINKING_PHRASES = [
-    "Thinking...",
-    "Pondering...",
-    "Analyzing...",
-    "Reviewing...",
-    "Reasoning...",
+    "Litting it up...",
+    "Mudbathing...",
+    "Redoing Harold's work...",
+    "Delegating to Katrina...",
+    "Finding Rick...",
 ];
 
 function ReasoningBlock({
