@@ -11,13 +11,21 @@ function sse(res: express.Response, data: object): void {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
 }
 
+function extractUserIdFromBearer(authHeader: string | undefined): string | null {
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  try {
+    const token = authHeader.slice(7);
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
+    return (payload.sub as string) ?? null;
+  } catch { return null; }
+}
+
 app.get('/ping', (_req, res) => {
   res.json({ status: 'Healthy', time_of_last_update: Math.floor(Date.now() / 1000) });
 });
 
 app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
   let body: {
-    userId: string;
     chatId: string;
     prompt: string;
     projectId?: string;
@@ -32,7 +40,13 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     return;
   }
 
-  const { userId, chatId, prompt, projectId, model } = body;
+  const userId = extractUserIdFromBearer(req.headers.authorization);
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized' });
+    return;
+  }
+
+  const { chatId, prompt, projectId, model } = body;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -142,14 +156,6 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     const annotations = extractAnnotations(fullText);
     sse(res, { type: 'content_done' });
     sse(res, { type: 'citations', citations: annotations });
-
-    // Persist assistant message
-    await db.from('chat_messages').insert({
-      chat_id: chatId,
-      role: 'assistant',
-      content: [{ type: 'text', text: fullText }],
-      annotations: annotations.length > 0 ? annotations : null,
-    });
 
     // Store AgentCore session ID for multi-turn continuity
     if (body.runtimeSessionId) {
