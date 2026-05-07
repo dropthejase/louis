@@ -3,7 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { streamChat, apiRequest } from "@/app/lib/mikeApi";
-import { supabase } from "@/lib/supabase";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useGenerateChatTitle } from "./useGenerateChatTitle";
 import type {
@@ -59,16 +58,13 @@ export function useAssistantChat({
         if (!initialChatId) return;
 
         // Load agentcore_session_id for multi-turn continuity.
-        supabase
-            .from("chats")
-            .select("agentcore_session_id")
-            .eq("id", initialChatId)
-            .single()
-            .then(({ data }) => {
-                if (data?.agentcore_session_id) {
-                    runtimeSessionIdRef.current = data.agentcore_session_id as string;
+        apiRequest<{ agentcore_session_id: string | null }>(`/chat/${initialChatId}/session-id`)
+            .then(({ agentcore_session_id }) => {
+                if (agentcore_session_id) {
+                    runtimeSessionIdRef.current = agentcore_session_id;
                 }
-            });
+            })
+            .catch(() => {});
 
         // Hydrate messages from S3 snapshot via backend only when no initial messages were provided.
         if (initialMessages.length > 0) return;

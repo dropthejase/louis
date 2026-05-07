@@ -546,6 +546,21 @@ chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
     }
 });
 
+// GET /chat/:chatId/session-id
+chatRouter.get("/:chatId/session-id", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const { chatId } = req.params;
+    const db = createServerSupabase();
+    const { data: chat, error } = await db
+        .from("chats")
+        .select("agentcore_session_id, user_id")
+        .eq("id", chatId)
+        .single();
+    if (error || !chat || chat.user_id !== userId)
+        return void res.status(404).json({ detail: "Chat not found" });
+    res.json({ agentcore_session_id: chat.agentcore_session_id ?? null });
+});
+
 // PATCH /chat/:chatId
 chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
