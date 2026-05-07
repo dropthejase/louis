@@ -1,4 +1,4 @@
-import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
+import { Stack, StackProps, Duration, RemovalPolicy, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -11,43 +11,82 @@ import { Stage } from './shared/stage';
 interface AuthStackProps extends StackProps {
   stage: Stage;
   docsBucket: s3.Bucket;
-  supabaseProjectUrl: string; // e.g. https://xxxx.supabase.co
 }
 
 export class AuthStack extends Stack {
+  public readonly userPool: cognito.UserPool;
+  public readonly userPoolClient: cognito.UserPoolClient;
   public readonly identityPool: cognito.CfnIdentityPool;
   public readonly authenticatedRole: iam.Role;
-  public readonly authorizerFn: lambda.Function;
 
   constructor(scope: Construct, id: string, props: AuthStackProps) {
     super(scope, id, props);
 
-    const jwksUri = `${props.supabaseProjectUrl}/auth/v1/.well-known/jwks.json`;
-    const issuer = `${props.supabaseProjectUrl}/auth/v1`;
-
-    // Lambda authorizer — NodejsFunction bundles at synth time via esbuild (no pre-build needed)
-    this.authorizerFn = new lambdaNodejs.NodejsFunction(this, 'JwtAuthorizer', {
+    // Pre-Token Generation v2 Lambda — injects role: "authenticated" into id token
+    const preTokenGenFn = new lambdaNodejs.NodejsFunction(this, 'PreTokenGen', {
       runtime: lambda.Runtime.NODEJS_20_X,
-      entry: path.join(__dirname, '../lambda/authorizer/index.ts'),
+      entry: path.join(__dirname, '../lambda/pre-token-gen/index.ts'),
       handler: 'handler',
-      bundling: {
-        minify: true,
-        externalModules: ['@aws-sdk/*'],
-      },
-      environment: {
-        SUPABASE_JWKS_URI: jwksUri,
-        SUPABASE_JWT_ISSUER: issuer,
-      },
-      timeout: Duration.seconds(10),
-      memorySize: 256,
+      bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
+      timeout: Duration.seconds(5),
+      memorySize: 128,
     });
 
-    // Cognito Identity Pool — OIDC-federated from Supabase
+    // Cognito User Pool
+    this.userPool = new cognito.UserPool(this, 'UserPool', {
+      userPoolName: `louis-${props.stage}`,
+      selfSignUpEnabled: true,
+      signInAliases: { email: true },
+      autoVerify: { email: true },
+      standardAttributes: {
+        email: { required: true, mutable: true },
+        givenName: { required: true, mutable: true },
+        familyName: { required: true, mutable: true },
+      },
+      passwordPolicy: {
+        minLength: 8,
+        requireLowercase: true,
+        requireUppercase: true,
+        requireDigits: true,
+        requireSymbols: true,
+      },
+      mfa: cognito.Mfa.OPTIONAL,
+      mfaSecondFactor: {
+        sms: false,
+        otp: true, // TOTP only
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      removalPolicy: props.stage === 'dev' ? RemovalPolicy.DESTROY : RemovalPolicy.RETAIN,
+      lambdaTriggers: {
+        preTokenGeneration: preTokenGenFn,
+      },
+    });
+
+    // Upgrade Pre-Token Generation trigger to V2_0 via CFN escape hatch
+    // (CDK high-level API only exposes V1; V2 is required for claimsAndScopeOverrideDetails)
+    const cfnUserPool = this.userPool.node.defaultChild as cognito.CfnUserPool;
+    cfnUserPool.addPropertyOverride('LambdaConfig.PreTokenGenerationConfig', {
+      LambdaArn: preTokenGenFn.functionArn,
+      LambdaVersion: 'V2_0',
+    });
+
+    // App Client — SRP auth, no client secret (browser-safe)
+    this.userPoolClient = this.userPool.addClient('WebClient', {
+      authFlows: {
+        userSrp: true,
+      },
+      preventUserExistenceErrors: true,
+    });
+
+    // Cognito Identity Pool — native User Pool federation
     this.identityPool = new cognito.CfnIdentityPool(this, 'IdentityPool', {
       allowUnauthenticatedIdentities: false,
-      openIdConnectProviderArns: [
-        // IAM OIDC provider ARN for Supabase — created separately (see scripts/create-oidc-provider.sh)
-        `arn:aws:iam::${this.account}:oidc-provider/${props.supabaseProjectUrl.replace('https://', '')}/auth/v1`,
+      cognitoIdentityProviders: [
+        {
+          clientId: this.userPoolClient.userPoolClientId,
+          providerName: this.userPool.userPoolProviderName,
+          serverSideTokenCheck: false,
+        },
       ],
     });
 
@@ -59,11 +98,11 @@ export class AuthStack extends Stack {
           StringEquals: { 'cognito-identity.amazonaws.com:aud': this.identityPool.ref },
           'ForAnyValue:StringLike': { 'cognito-identity.amazonaws.com:amr': 'authenticated' },
         },
-        'sts:AssumeRoleWithWebIdentity'
+        'sts:AssumeRoleWithWebIdentity',
       ),
     });
 
-    // Per-user S3 prefix policy — users can only access their own prefix
+    // Per-user S3 prefix policy
     this.authenticatedRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
@@ -82,14 +121,14 @@ export class AuthStack extends Stack {
       },
     }));
 
-    // Attach role to identity pool
     new cognito.CfnIdentityPoolRoleAttachment(this, 'IdentityPoolRoleAttachment', {
       identityPoolId: this.identityPool.ref,
       roles: { authenticated: this.authenticatedRole.roleArn },
     });
 
+    new CfnOutput(this, 'UserPoolId', { value: this.userPool.userPoolId });
+    new CfnOutput(this, 'UserPoolClientId', { value: this.userPoolClient.userPoolClientId });
     new CfnOutput(this, 'IdentityPoolId', { value: this.identityPool.ref });
-    new CfnOutput(this, 'AuthorizerFunctionArn', { value: this.authorizerFn.functionArn });
     new CfnOutput(this, 'AuthenticatedRoleArn', { value: this.authenticatedRole.roleArn });
   }
 }

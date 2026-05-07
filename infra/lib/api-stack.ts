@@ -4,6 +4,7 @@ import { Construct } from 'constructs';
 import * as path from 'path';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -11,7 +12,7 @@ import { Stage } from './shared/stage';
 
 interface ApiStackProps extends StackProps {
   stage: Stage;
-  authorizerFnArn: string;
+  userPool: cognito.UserPool;
   docsBucket: s3.Bucket;
   sessionsBucket: s3.Bucket;
   frontendUrl?: string;
@@ -25,17 +26,14 @@ export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
-    // Secrets Manager — stores Supabase URL + service role key
-    // Values populated manually after deploy: aws secretsmanager put-secret-value ...
     this.supabaseSecret = new secretsmanager.Secret(this, 'SupabaseCredentials', {
-      description: 'Supabase URL and service role key for Mike API Lambda',
+      description: 'Supabase URL and service role key for Louis API Lambda',
       generateSecretString: {
         secretStringTemplate: JSON.stringify({ url: 'REPLACE_ME', serviceRoleKey: 'REPLACE_ME' }),
-        generateStringKey: '_unused', // placeholder to satisfy CDK requirement
+        generateStringKey: '_unused',
       },
     });
 
-    // API Lambda execution role
     const lambdaRole = new iam.Role(this, 'ApiLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
@@ -43,16 +41,10 @@ export class ApiStack extends Stack {
       ],
     });
 
-    // Allow Lambda to read Supabase secret
     this.supabaseSecret.grantRead(lambdaRole);
-
-    // Allow Lambda to read/write docs bucket (for presigned URLs and direct access)
     props.docsBucket.grantReadWrite(lambdaRole);
-
-    // Allow Lambda to read session snapshots from the sessions bucket
     props.sessionsBucket.grantRead(lambdaRole);
 
-    // Allow Lambda to invoke Bedrock models — scoped to specific model ARNs
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
@@ -63,7 +55,6 @@ export class ApiStack extends Stack {
       ],
     }));
 
-    // API Lambda — Docker image from backend/Dockerfile.lambda
     this.apiLambda = new lambda.DockerImageFunction(this, 'ApiLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../backend'), {
         file: 'Dockerfile.lambda',
@@ -78,16 +69,15 @@ export class ApiStack extends Stack {
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
         FRONTEND_URL: props.frontendUrl ?? '*',
         NODE_ENV: 'production',
-        POWERTOOLS_SERVICE_NAME: 'mike-api',
+        POWERTOOLS_SERVICE_NAME: 'louis-api',
         POWERTOOLS_LOG_LEVEL: props.stage === 'dev' ? 'DEBUG' : 'INFO',
         AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       },
       tracing: lambda.Tracing.ACTIVE,
     });
 
-    // REST API Gateway
-    this.api = new apigateway.RestApi(this, 'MikeApi', {
-      description: 'Mike on AWS — REST API',
+    this.api = new apigateway.RestApi(this, 'LouisApi', {
+      description: 'Louis on AWS — REST API',
       deployOptions: {
         stageName: props.stage,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
@@ -95,34 +85,28 @@ export class ApiStack extends Stack {
         metricsEnabled: true,
       },
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS, // tighten to CloudFront domain post-deploy
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders: ['Content-Type', 'Authorization'],
       },
     });
 
-    // Token authorizer — references Lambda authorizer from AuthStack via ARN to avoid cross-stack cycle
-    const authorizerFn = lambda.Function.fromFunctionAttributes(this, 'ImportedAuthorizerFn', {
-      functionArn: props.authorizerFnArn,
-      sameEnvironment: true,
-    });
-    const authorizer = new apigateway.TokenAuthorizer(this, 'JwtAuthorizer', {
-      handler: authorizerFn,
+    // Native Cognito User Pool authorizer — no Lambda, no cold start
+    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
+      cognitoUserPools: [props.userPool],
       resultsCacheTtl: Duration.seconds(300),
       identitySource: 'method.request.header.Authorization',
     });
 
-    // Proxy all routes to API Lambda with authorizer
     const proxyResource = this.api.root.addResource('{proxy+}');
     proxyResource.addMethod('ANY', new apigateway.LambdaIntegration(this.apiLambda), {
       authorizer,
-      authorizationType: apigateway.AuthorizationType.CUSTOM,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
-    // Also add root route
     this.api.root.addMethod('ANY', new apigateway.LambdaIntegration(this.apiLambda), {
       authorizer,
-      authorizationType: apigateway.AuthorizationType.CUSTOM,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
     new CfnOutput(this, 'ApiUrl', { value: this.api.url });

@@ -9,23 +9,19 @@ const app = new App();
 const stage = getStage(app);
 const env = { account: process.env.CDK_DEFAULT_ACCOUNT, region: 'eu-west-1' };
 
-const supabaseProjectUrl = app.node.tryGetContext('supabaseProjectUrl') as string;
-if (!supabaseProjectUrl) throw new Error('Pass -c supabaseProjectUrl=https://xxxx.supabase.co');
-
 const storageStack = new StorageStack(app, 'StorageStack', { env, stage });
 
 const authStack = new AuthStack(app, 'AuthStack', {
   env,
   stage,
   docsBucket: storageStack.docsBucket,
-  supabaseProjectUrl,
 });
 authStack.addDependency(storageStack);
 
 const apiStack = new ApiStack(app, 'ApiStack', {
   env,
   stage,
-  authorizerFnArn: authStack.authorizerFn.functionArn,
+  userPool: authStack.userPool,
   docsBucket: storageStack.docsBucket,
   sessionsBucket: storageStack.sessionsBucket,
 });
