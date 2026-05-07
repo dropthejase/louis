@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { streamChat, streamProjectChat } from "@/app/lib/mikeApi";
+import { streamChat } from "@/app/lib/mikeApi";
+import { supabase } from "@/lib/supabase";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useGenerateChatTitle } from "./useGenerateChatTitle";
 import type {
@@ -45,12 +46,63 @@ export function useAssistantChat({
     const [chatId, setChatId] = useState<string | undefined>(initialChatId);
 
     const abortControllerRef = useRef<AbortController | null>(null);
+    const runtimeSessionIdRef = useRef<string | undefined>(undefined);
 
     const dripIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const dripTargetRef = useRef<string>("");
     const dripDisplayLenRef = useRef<number>(0);
     const eventsRef = useRef<AssistantEvent[]>([]);
     const DRIP_CHARS_PER_TICK = 8;
+
+    // Load runtimeSessionId and hydrate messages when opening an existing chat.
+    useEffect(() => {
+        if (!initialChatId) return;
+
+        // Load agentcore_session_id for multi-turn continuity.
+        supabase
+            .from("chats")
+            .select("agentcore_session_id")
+            .eq("id", initialChatId)
+            .single()
+            .then(({ data }) => {
+                if (data?.agentcore_session_id) {
+                    runtimeSessionIdRef.current = data.agentcore_session_id as string;
+                }
+            });
+
+        // Hydrate messages from Supabase only when no initial messages were provided.
+        if (initialMessages.length > 0) return;
+
+        supabase
+            .from("chat_messages")
+            .select("*")
+            .eq("chat_id", initialChatId)
+            .order("created_at")
+            .then(({ data }) => {
+                if (!data?.length) return;
+                const hydrated: MikeMessage[] = data.map((row) => {
+                    if (row.role === "user") {
+                        const contentArr = Array.isArray(row.content) ? row.content : [];
+                        const text = contentArr.find((b: { type: string }) => b.type === "text");
+                        return {
+                            role: "user" as const,
+                            content: text ? (text as { type: string; text: string }).text : "",
+                        };
+                    }
+                    const contentArr = Array.isArray(row.content) ? row.content : [];
+                    const text = contentArr.find((b: { type: string }) => b.type === "text");
+                    const fullText = text ? (text as { type: string; text: string }).text : "";
+                    return {
+                        role: "assistant" as const,
+                        content: fullText,
+                        annotations: (row.annotations as MikeCitationAnnotation[]) ?? undefined,
+                        events: [{ type: "content" as const, text: fullText }],
+                    };
+                });
+                setMessages(hydrated);
+            });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialChatId]);
 
     const stopDrip = () => {
         if (dripIntervalRef.current !== null) {
@@ -308,22 +360,12 @@ export function useAssistantChat({
             const controller = new AbortController();
             abortControllerRef.current = controller;
 
-            const apiMessages = newMessages.map((currentMessage) => ({
-                role: currentMessage.role,
-                content: currentMessage.content,
-                files: currentMessage.files,
-                workflow: currentMessage.workflow,
-            }));
-
             const model = message.model;
+            const prompt = message.content;
 
             const displayedDoc = opts?.displayedDoc ?? null;
 
             // Pull the user's attachments from the just-submitted message.
-            // These are the files dragged into / picked from the chat input
-            // for this turn (separate from the running history of past
-            // attachments). Sent as a request-level field so the backend
-            // can call them out specifically in the system prompt.
             const attachedDocs = (
                 message.files?.filter((f) => !!f.document_id) ?? []
             ).map((f) => ({
@@ -331,28 +373,30 @@ export function useAssistantChat({
                 document_id: f.document_id as string,
             }));
 
-            const response = await (projectId
-                ? streamProjectChat({
-                      projectId,
-                      messages: apiMessages,
-                      chat_id: chatId,
-                      model,
-                      displayed_doc: displayedDoc
-                          ? {
-                                filename: displayedDoc.filename,
-                                document_id: displayedDoc.documentId,
-                            }
-                          : undefined,
-                      attached_documents:
-                          attachedDocs.length > 0 ? attachedDocs : undefined,
-                      signal: controller.signal,
-                  })
-                : streamChat({
-                      messages: apiMessages,
-                      chat_id: chatId,
-                      model,
-                      signal: controller.signal,
-                  }));
+            // Persist the user message before streaming.
+            if (chatId) {
+                await supabase.from("chat_messages").insert({
+                    chat_id: chatId,
+                    role: "user",
+                    content: [{ type: "text", text: prompt }],
+                });
+            }
+
+            const response = await streamChat({
+                prompt,
+                chatId,
+                projectId,
+                model,
+                runtimeSessionId: runtimeSessionIdRef.current,
+                displayed_doc: displayedDoc
+                    ? {
+                          filename: displayedDoc.filename,
+                          document_id: displayedDoc.documentId,
+                      }
+                    : undefined,
+                attached_documents: attachedDocs.length > 0 ? attachedDocs : undefined,
+                signal: controller.signal,
+            });
 
             if (!response.ok) {
                 const errText = await response.text();
@@ -364,6 +408,8 @@ export function useAssistantChat({
 
             const decoder = new TextDecoder();
             let buffer = "";
+            let fullText = "";
+            let streamAnnotations: MikeCitationAnnotation[] = [];
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -397,6 +443,7 @@ export function useAssistantChat({
 
                         if (data.type === "content_delta") {
                             const text = data.text as string;
+                            fullText += text;
 
                             // Real content is streaming — retire any
                             // "Thinking…" / "Running…" placeholders, and
@@ -763,6 +810,7 @@ export function useAssistantChat({
                             clearStreamingPlaceholders();
                             const incoming = (data.citations ??
                                 []) as MikeCitationAnnotation[];
+                            streamAnnotations = incoming;
                             setMessages((prev) => {
                                 const updated = [...prev];
                                 const last = updated[updated.length - 1];
@@ -791,7 +839,17 @@ export function useAssistantChat({
             setIsResponseLoading(false);
             setIsLoadingCitations(false);
 
+            // Persist the assistant message now that the stream is complete.
             const finalChatId = streamedChatId || chatId || null;
+            if (finalChatId && fullText) {
+                await supabase.from("chat_messages").insert({
+                    chat_id: finalChatId,
+                    role: "assistant",
+                    content: [{ type: "text", text: fullText }],
+                    annotations: streamAnnotations.length > 0 ? streamAnnotations : null,
+                });
+            }
+
             if (finalChatId && finalChatId !== chatId) {
                 if (chatId) {
                     replaceChatId(
@@ -918,6 +976,7 @@ export function useAssistantChat({
         if (newChatId) {
             setChatId(newChatId);
             setCurrentChatId(newChatId);
+            runtimeSessionIdRef.current = crypto.randomUUID();
         }
 
         return newChatId;
