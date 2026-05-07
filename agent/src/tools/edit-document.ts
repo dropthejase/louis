@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { downloadFile, uploadFile, getPresignedUrl } from '../lib/storage';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DocStore, DocIndex } from '../lib/doc-context';
+import { applyTrackedEdits, type EditInput } from '../lib/docx-tracked-changes';
 
 const EditSchema = z.object({
   find: z.string(),
@@ -41,10 +42,17 @@ export function makeEditDocumentTool(
       const versionSlug = `v${newVersionNumber}`;
       const newKey = `documents/${userId}/${docId}/versions/${versionSlug}.docx`;
 
-      // Upload current buffer as new version
-      // Full tracked-change implementation: copy backend/src/lib/docxTrackedChanges.ts
-      // to agent/src/lib/docx-tracked-changes.ts and call applyTrackedEdits() here.
-      await uploadFile(newKey, Buffer.from(buf), 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      const editInputs: EditInput[] = edits.map(e => ({
+        find: e.find,
+        replace: e.replace,
+        context_before: e.context_before,
+        context_after: e.context_after,
+        reason: e.reason,
+      }));
+
+      const { bytes: editedBuf } = await applyTrackedEdits(Buffer.from(buf), editInputs, { author: 'Mike' });
+
+      await uploadFile(newKey, editedBuf, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 
       const { data: versionRow } = await db.from('document_versions').insert({
         document_id: docId,
