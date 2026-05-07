@@ -10,12 +10,13 @@ import React, {
   type ReactNode,
 } from "react";
 import type { AwsCredentialIdentity } from "@smithy/types";
-import { supabase } from "@/lib/supabase";
+import { Hub } from "aws-amplify/utils";
 import {
   getIdentityPoolCredentials,
   clearCredentialCache,
-  configureAmplifyStorage,
-} from "@/lib/aws";
+} from "@/lib/aws/credentials";
+import { configureAmplifyStorage } from "@/lib/aws/storage";
+import { getIdToken, ensureAmplifyConfigured } from "@/lib/aws/amplify-auth";
 
 interface AwsContextType {
   /** Current IAM credentials, or null while loading / not signed in. */
@@ -37,28 +38,24 @@ export function AwsProvider({ children }: { children: ReactNode }) {
   );
   const [awsLoading, setAwsLoading] = useState(true);
 
-  // Stable ref so that getCredentials always uses the latest JWT without
-  // needing the caller to re-subscribe to context changes.
   const jwtRef = useRef<string | null>(null);
 
   const getCredentials = useCallback(async (): Promise<AwsCredentialIdentity> => {
     const jwt = jwtRef.current;
-    if (!jwt) throw new Error("Not authenticated — no Supabase session");
+    if (!jwt) throw new Error("Not authenticated — no Cognito id token");
     const creds = await getIdentityPoolCredentials(jwt);
     setCredentials(creds);
     return creds;
   }, []);
 
   useEffect(() => {
-    // Amplify Storage only needs to be configured once — pass getCredentials
-    // as the provider so it always uses the current (cached) creds.
     configureAmplifyStorage(getCredentials);
   }, [getCredentials]);
 
-  useEffect(() => {
-    let mounted = true;
-
-    const bootstrap = async (jwt: string | null) => {
+  const bootstrap = useCallback(async () => {
+    try {
+      ensureAmplifyConfigured();
+      const jwt = await getIdToken().catch(() => null);
       if (!jwt) {
         jwtRef.current = null;
         clearCredentialCache();
@@ -67,33 +64,32 @@ export function AwsProvider({ children }: { children: ReactNode }) {
         return;
       }
       jwtRef.current = jwt;
-      try {
-        const creds = await getIdentityPoolCredentials(jwt);
-        if (mounted) setCredentials(creds);
-      } catch (e) {
-        console.error("AwsContext: credential exchange failed", e);
-      } finally {
-        if (mounted) setAwsLoading(false);
-      }
-    };
-
-    // Initialise from current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      bootstrap(session?.access_token ?? null);
-    });
-
-    // Re-exchange whenever the Supabase session changes (new login, token refresh)
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      bootstrap(session?.access_token ?? null);
-    });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+      const creds = await getIdentityPoolCredentials(jwt);
+      setCredentials(creds);
+    } catch (e) {
+      console.error("AwsContext: credential exchange failed", e);
+    } finally {
+      setAwsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    bootstrap();
+
+    const unsubscribe = Hub.listen("auth", ({ payload }) => {
+      if (payload.event === "signedIn" || payload.event === "tokenRefresh") {
+        void bootstrap();
+      }
+      if (payload.event === "signedOut") {
+        jwtRef.current = null;
+        clearCredentialCache();
+        setCredentials(null);
+        setAwsLoading(false);
+      }
+    });
+
+    return unsubscribe;
+  }, [bootstrap]);
 
   return (
     <AwsContext.Provider value={{ credentials, getCredentials, awsLoading }}>
