@@ -9,43 +9,44 @@ Louis is an AI-powered legal document workspace (AGPL-3.0) that lets users uploa
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Browser                                                                    │
-└──────┬──────────────────────┬──────────────────────┬───────────────────────┘
-       │ HTTPS (static assets) │ HTTPS + Bearer JWT   │ HTTPS + Bearer JWT
-       ▼                       ▼                       ▼
-┌─────────────┐   ┌───────────────────────┐   ┌─────────────────────────┐
-│ CloudFront  │   │   API Gateway (REST)   │   │  AgentCore Runtime      │
-│ (OAC)       │   │   Cognito authorizer    │   │  JWT inbound authorizer │
-└──────┬──────┘   └──────────┬────────────┘   └──────────┬──────────────┘
-       │                     │ validated JWT               │ validated JWT
-       ▼                     ▼                             ▼
-┌─────────────┐   ┌───────────────────────┐   ┌─────────────────────────┐
-│  S3         │   │  Lambda (ARM64)        │   │  Strands Agent (ARM64)  │
-│ (frontend   │   │  Express +             │   │  10 tools               │
-│  bucket)    │   │  serverless-http +     │   │  Bedrock Converse API   │
-└─────────────┘   │  Lambda Powertools     │   └──────────┬──────────────┘
-                  └──────────┬────────────┘              │
-                             │                            │
-              ┌──────────────┼───────────────┐           │
-              ▼              ▼               ▼            ▼
-       ┌──────────┐  ┌────────────┐  ┌───────────┐  ┌──────────────┐
-       │ Supabase │  │  S3 (docs  │  │  Bedrock  │  │  Supabase    │
-       │ Postgres │  │  bucket)   │  │  Claude   │  │  Postgres    │
-       └──────────┘  └─────┬──────┘  └───────────┘  └──────────────┘
-                           │ S3 PutObject event
-                           ▼
-                  ┌────────────────────┐
-                  │ Conversion Lambda  │
-                  │ (x86_64)           │
-                  │ LibreOffice        │
-                  │ DOCX → PDF → S3   │
-                  └────────────────────┘
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │  Browser (Amplify Auth v6)                                               │
+  └──┬────────────────┬──────────────────┬──────────────────┬───────────────┘
+     │ sign-up/login  │ static assets    │ Bearer id token  │ Bearer id token
+     ▼                ▼                  ▼                  ▼
+┌─────────────────┐  ┌──────────┐  ┌──────────────────┐  ┌─────────────────┐
+│ Cognito User    │  │CloudFront│  │ API Gateway(REST) │  │ AgentCore       │
+│ Pool            │  │  (OAC)   │  │ Cognito authorizer│  │ JWT authorizer  │
+│                 │  └────┬─────┘  └────────┬──────────┘  └────────┬────────┘
+│ Pre-Token Gen   │       │                 │ claims injected       │ validated
+│ Lambda (V2_0)   │       ▼                 ▼                       ▼
+│ injects         │  ┌─────────┐  ┌──────────────────┐  ┌─────────────────┐
+│ role:authenticated│  │  S3     │  │ Lambda (ARM64)   │  │ Strands Agent   │
+│                 │  │(frontend│  │ Express +        │  │ (ARM64)         │
+└────────┬────────┘  │ bucket) │  │ serverless-http  │  │ 10 tools        │
+         │           └─────────┘  │ Powertools       │  │ Bedrock Converse│
+         │ federate                └────────┬─────────┘  └────────┬────────┘
+         ▼                                  │                      │
+┌─────────────────┐           ┌─────────────┼──────────┐          │
+│ Cognito         │           ▼             ▼          ▼          ▼
+│ Identity Pool   │    ┌──────────┐  ┌──────────┐  ┌───────┐  ┌──────────┐
+│                 │    │ Supabase │  │  S3      │  │Bedrock│  │ Supabase │
+│ issues temp     │    │ Postgres │  │ (docs    │  │Claude │  │ Postgres │
+│ IAM creds       │    │          │  │ bucket)  │  │       │  │          │
+└────────┬────────┘    └──────────┘  └────┬─────┘  └───────┘  └──────────┘
+         │ PutObject/GetObject             │ S3 PutObject event (.docx)
+         ▼ (per-user prefix)              ▼
+   S3 docs bucket               ┌──────────────────┐
+                                │ Conversion Lambda │
+                                │ (x86_64)          │
+                                │ LibreOffice       │
+                                │ DOCX → PDF → S3  │
+                                └──────────────────┘
 
-  Browser direct S3 upload path:
-  Browser → Cognito Identity Pool (exchange Cognito id token → IAM creds)
-          → S3 docs bucket (per-user prefix, IAM-enforced)
-          → S3 PutObject event → Conversion Lambda
+  Note: Supabase Postgres is one database — shown twice only to indicate
+  both the API Lambda and the Strands Agent connect to it independently.
+  Supabase Third-Party Auth trusts Cognito id tokens (role:authenticated
+  claim) so Postgres RLS auth.role() checks pass for Cognito users.
 ```
 
 ---
