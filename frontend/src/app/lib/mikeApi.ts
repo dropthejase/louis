@@ -1,11 +1,11 @@
 /**
- * Mike API client — all requests to the AWS backend.
- * API Gateway calls use Supabase Bearer JWT (validated by Lambda Token authorizer).
+ * Louis API client — all requests to the AWS backend.
+ * API Gateway calls use Cognito id token Bearer JWT (validated by native Cognito authorizer).
  * AgentCore calls use the same Bearer JWT (AgentCore JWT inbound authorizer).
  * File uploads go via multipart POST to API Gateway Lambda.
  */
 
-import { supabase } from "@/lib/supabase";
+import { getIdToken } from "@/lib/aws/amplify-auth";
 import { API_URL, AGENTCORE_URL } from "@/lib/aws/config";
 import type {
     AssistantEvent,
@@ -40,11 +40,8 @@ interface ServerChatDetailOut {
 const API_BASE = API_URL;
 
 async function getAuthHeader(): Promise<string> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) throw new Error("Not authenticated");
-    return `Bearer ${session.access_token}`;
+    const token = await getIdToken();
+    return `Bearer ${token}`;
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -422,16 +419,13 @@ export async function streamChat(payload: {
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...rest } = payload;
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session) throw new Error("No active session");
+    const token = await getIdToken();
     return fetch(AGENTCORE_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(rest),
         signal,

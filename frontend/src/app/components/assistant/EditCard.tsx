@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getIdToken } from "@/lib/aws/amplify-auth";
 import type { MikeEditAnnotation } from "../shared/types";
 
 function normalizeText(s: string) {
@@ -240,19 +240,14 @@ export function EditCard({
             console.error("[EditCard] optimistic update threw", e);
         }
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
+            const token = await getIdToken();
             const apiBase =
                 process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
             const resp = await fetch(
                 `${apiBase}/single-documents/${annotation.document_id}/edits/${annotation.edit_id}/${verb}`,
                 {
                     method: "POST",
-                    headers: token
-                        ? { Authorization: `Bearer ${token}` }
-                        : undefined,
+                    headers: { Authorization: `Bearer ${token}` },
                 },
             );
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
