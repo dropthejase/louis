@@ -21,5 +21,9 @@ coverage
 # local mcp
 .mcp.json
 
+# local AI tool state
+.claude/
+.claire/
+
 # superpowers skill
 docs/superpowers
