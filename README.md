@@ -101,9 +101,21 @@ cp frontend/.env.local.example frontend/.env.local
 ### 7. Deploy frontend
 
 ```bash
-cd frontend && npm install && npm run build
-../scripts/deploy-frontend.sh
+cd frontend && npm install
+FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ../scripts/deploy-frontend.sh
 ```
+
+## Redeploying Frontend
+
+Any time you change frontend code, rebuild and redeploy — three steps handled by the script:
+
+```bash
+FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ./scripts/deploy-frontend.sh
+```
+
+This runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until the CDN cache is fully cleared before returning.
+
+Both values come from the `StorageStack` CDK outputs.
 
 ## CDK Stacks
 
