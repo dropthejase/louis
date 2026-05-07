@@ -27,6 +27,7 @@ const apiStack = new ApiStack(app, 'ApiStack', {
   stage,
   authorizerFnArn: authStack.authorizerFn.functionArn,
   docsBucket: storageStack.docsBucket,
+  sessionsBucket: storageStack.sessionsBucket,
 });
 apiStack.addDependency(authStack);
 

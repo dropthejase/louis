@@ -47,7 +47,7 @@ async function getAuthHeader(): Promise<string> {
     return `Bearer ${session.access_token}`;
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const authHeader = await getAuthHeader();
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await fetch(`${API_BASE}${path}`, {

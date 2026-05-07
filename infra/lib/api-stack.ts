@@ -13,6 +13,7 @@ interface ApiStackProps extends StackProps {
   stage: Stage;
   authorizerFnArn: string;
   docsBucket: s3.Bucket;
+  sessionsBucket: s3.Bucket;
   frontendUrl?: string;
 }
 
@@ -48,6 +49,9 @@ export class ApiStack extends Stack {
     // Allow Lambda to read/write docs bucket (for presigned URLs and direct access)
     props.docsBucket.grantReadWrite(lambdaRole);
 
+    // Allow Lambda to read session snapshots from the sessions bucket
+    props.sessionsBucket.grantRead(lambdaRole);
+
     // Allow Lambda to invoke Bedrock models — scoped to specific model ARNs
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
@@ -71,6 +75,7 @@ export class ApiStack extends Stack {
       environment: {
         SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn,
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
+        SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
         FRONTEND_URL: props.frontendUrl ?? '*',
         NODE_ENV: 'production',
         POWERTOOLS_SERVICE_NAME: 'mike-api',

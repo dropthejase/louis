@@ -11,6 +11,7 @@ interface StorageStackProps extends StackProps {
 
 export class StorageStack extends Stack {
   public readonly docsBucket: s3.Bucket;
+  public readonly sessionsBucket: s3.Bucket;
   public readonly frontendBucket: s3.Bucket;
   public readonly distribution: cloudfront.Distribution;
 
@@ -33,6 +34,15 @@ export class StorageStack extends Stack {
           maxAge: 3000,
         },
       ],
+    });
+
+    // Sessions bucket — private, stores Strands agent conversation snapshots
+    this.sessionsBucket = new s3.Bucket(this, 'SessionsBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      versioned: false,
+      removalPolicy: props.stage === 'dev' ? RemovalPolicy.DESTROY : RemovalPolicy.RETAIN,
+      autoDeleteObjects: props.stage === 'dev',
     });
 
     // Frontend bucket — private, served only via CloudFront OAC
@@ -69,6 +79,7 @@ export class StorageStack extends Stack {
     });
 
     new CfnOutput(this, 'DocsBucketName', { value: this.docsBucket.bucketName });
+    new CfnOutput(this, 'SessionsBucketName', { value: this.sessionsBucket.bucketName });
     new CfnOutput(this, 'FrontendBucketName', { value: this.frontendBucket.bucketName });
     new CfnOutput(this, 'DistributionDomainName', { value: this.distribution.distributionDomainName });
     new CfnOutput(this, 'DistributionId', { value: this.distribution.distributionId });

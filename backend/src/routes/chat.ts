@@ -13,6 +13,250 @@ import {
 import { completeText } from "../lib/llm";
 import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
+import {
+    S3Client,
+    ListObjectsV2Command,
+    GetObjectCommand,
+} from "@aws-sdk/client-s3";
+
+// Lazy singleton S3 client for reading session snapshots.
+let _s3: S3Client | undefined;
+function getSessionS3(): S3Client {
+    if (!_s3) {
+        _s3 = new S3Client({ region: process.env.AWS_REGION ?? "eu-west-1" });
+    }
+    return _s3;
+}
+
+// ---------------------------------------------------------------------------
+// Types mirroring the Strands snapshot message format
+// ---------------------------------------------------------------------------
+interface SnapshotContentBlock {
+    type: string;
+    text?: string;
+    id?: string;
+    name?: string;
+    input?: unknown;
+    tool_use_id?: string;
+    content?: unknown;
+}
+interface SnapshotMessage {
+    role: "user" | "assistant";
+    content: SnapshotContentBlock[];
+}
+
+// ---------------------------------------------------------------------------
+// Local types for the /messages endpoint output
+// ---------------------------------------------------------------------------
+type MikeAssistantEvent =
+    | { type: "content"; text: string }
+    | { type: "doc_read"; filename: string; document_id?: string }
+    | { type: "doc_find"; filename: string; query: string; total_matches: number }
+    | { type: "doc_created"; filename: string; download_url: string; document_id?: string; version_id?: string }
+    | { type: "doc_edited"; filename: string; document_id: string; version_id: string; download_url: string; annotations: MikeEditAnnotation[] }
+    | { type: "doc_replicated"; filename: string; count: number; copies?: { new_filename: string; document_id: string; version_id: string }[] };
+
+interface MikeEditAnnotation {
+    edit_id: string;
+    document_id: string;
+    version_id: string;
+    change_id: string;
+    deleted_text: string;
+    inserted_text: string;
+    status: "pending" | "accepted" | "rejected";
+}
+
+interface MikeCitationAnnotation {
+    type: "citation_data";
+    ref: number;
+    doc_id: string;
+    document_id: string;
+    filename: string;
+    page: number | string;
+    quote: string;
+}
+
+interface MikeMessage {
+    role: "user" | "assistant";
+    content: string;
+    annotations?: MikeCitationAnnotation[];
+    events?: MikeAssistantEvent[];
+}
+
+// Strip <CITATIONS>...</CITATIONS> from text blocks.
+function stripCitationsTag(text: string): string {
+    return text.replace(/<CITATIONS>[\s\S]*?<\/CITATIONS>/g, "").trim();
+}
+
+function extractCitationsFromText(
+    text: string,
+): MikeCitationAnnotation[] {
+    const match = text.match(/<CITATIONS>([\s\S]*?)<\/CITATIONS>/);
+    if (!match) return [];
+    try {
+        const parsed = JSON.parse(match[1]) as unknown;
+        if (Array.isArray(parsed)) {
+            return parsed as MikeCitationAnnotation[];
+        }
+    } catch {
+        // ignore
+    }
+    return [];
+}
+
+// Convert Strands snapshot messages into MikeMessage[].
+function snapshotMessagesToMikeMessages(
+    messages: SnapshotMessage[],
+): MikeMessage[] {
+    const result: MikeMessage[] = [];
+
+    // Build a map of tool_use_id -> tool result content for lookup.
+    const toolResults = new Map<string, unknown>();
+    for (const msg of messages) {
+        if (msg.role === "user") {
+            for (const block of msg.content) {
+                if (
+                    block.type === "tool_result" &&
+                    typeof block.tool_use_id === "string"
+                ) {
+                    toolResults.set(block.tool_use_id, block.content);
+                }
+            }
+        }
+    }
+
+    for (const msg of messages) {
+        if (msg.role === "user") {
+            // Only include user text blocks (skip tool_result blocks).
+            const textBlocks = msg.content.filter(
+                (b) => b.type === "text" && typeof b.text === "string",
+            );
+            if (textBlocks.length === 0) continue;
+            const content = textBlocks
+                .map((b) => b.text ?? "")
+                .join("\n")
+                .trim();
+            if (!content) continue;
+            result.push({ role: "user", content });
+        } else {
+            // assistant message
+            const textBlocks = msg.content.filter(
+                (b) => b.type === "text" && typeof b.text === "string",
+            );
+            const toolUseBlocks = msg.content.filter(
+                (b) => b.type === "tool_use",
+            );
+
+            const fullText = textBlocks.map((b) => b.text ?? "").join("\n");
+            const content = stripCitationsTag(fullText);
+            const annotations = extractCitationsFromText(fullText);
+
+            const events: MikeAssistantEvent[] = [];
+            if (content) {
+                events.push({ type: "content", text: content });
+            }
+
+            for (const toolUse of toolUseBlocks) {
+                const toolName = toolUse.name ?? "";
+                const toolId = toolUse.id ?? "";
+                const resultRaw = toolResults.get(toolId);
+                let resultObj: Record<string, unknown> = {};
+                try {
+                    if (typeof resultRaw === "string") {
+                        resultObj = JSON.parse(resultRaw) as Record<
+                            string,
+                            unknown
+                        >;
+                    } else if (Array.isArray(resultRaw)) {
+                        // content array from tool_result
+                        const textEntry = (
+                            resultRaw as { type: string; text?: string }[]
+                        ).find((e) => e.type === "text" && e.text);
+                        if (textEntry?.text) {
+                            resultObj = JSON.parse(textEntry.text) as Record<
+                                string,
+                                unknown
+                            >;
+                        }
+                    }
+                } catch {
+                    // ignore parse errors
+                }
+
+                switch (toolName) {
+                    case "read_document":
+                        events.push({
+                            type: "doc_read",
+                            filename: (resultObj.filename as string) ?? "",
+                        });
+                        break;
+                    case "find_in_document":
+                        events.push({
+                            type: "doc_find",
+                            filename: (resultObj.filename as string) ?? "",
+                            query: (resultObj.query as string) ?? "",
+                            total_matches:
+                                (resultObj.total_matches as number) ?? 0,
+                        });
+                        break;
+                    case "generate_docx":
+                        events.push({
+                            type: "doc_created",
+                            filename: (resultObj.filename as string) ?? "",
+                            download_url:
+                                (resultObj.download_url as string) ?? "",
+                            document_id:
+                                (resultObj.document_id as string) ?? undefined,
+                            version_id:
+                                (resultObj.version_id as string) ?? undefined,
+                        });
+                        break;
+                    case "edit_document":
+                        events.push({
+                            type: "doc_edited",
+                            filename: (resultObj.filename as string) ?? "",
+                            document_id:
+                                (resultObj.document_id as string) ?? "",
+                            version_id: (resultObj.version_id as string) ?? "",
+                            download_url:
+                                (resultObj.download_url as string) ?? "",
+                            annotations: Array.isArray(resultObj.annotations)
+                                ? (resultObj.annotations as MikeEditAnnotation[])
+                                : [],
+                        });
+                        break;
+                    case "replicate_document":
+                        events.push({
+                            type: "doc_replicated",
+                            filename: (resultObj.filename as string) ?? "",
+                            count: (resultObj.count as number) ?? 0,
+                            copies: Array.isArray(resultObj.copies)
+                                ? (resultObj.copies as {
+                                      new_filename: string;
+                                      document_id: string;
+                                      version_id: string;
+                                  }[])
+                                : undefined,
+                        });
+                        break;
+                    // list_documents, fetch_documents, read_table_cells,
+                    // list_workflows, read_workflow → no UI card, skip.
+                    default:
+                        break;
+                }
+            }
+
+            result.push({
+                role: "assistant",
+                content,
+                annotations: annotations.length ? annotations : undefined,
+                events,
+            });
+        }
+    }
+
+    return result;
+}
 
 export const chatRouter = Router();
 
@@ -218,6 +462,89 @@ async function hydrateEditStatuses(
         return next;
     });
 }
+
+// GET /chat/:chatId/messages — read conversation history from S3 snapshot
+chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const { chatId } = req.params;
+    const db = createServerSupabase();
+
+    // Look up the S3 session ID stored on the chat row.
+    const { data: chat, error } = await db
+        .from("chats")
+        .select("agentcore_session_id, user_id")
+        .eq("id", chatId)
+        .single();
+
+    if (error || !chat)
+        return void res.status(404).json({ detail: "Chat not found" });
+    if (chat.user_id !== userId)
+        return void res.status(404).json({ detail: "Chat not found" });
+
+    const sessionId = chat.agentcore_session_id as string | null;
+    if (!sessionId) return void res.json({ messages: [] });
+
+    const bucket = process.env.SESSIONS_BUCKET_NAME;
+    if (!bucket)
+        return void res.status(500).json({ detail: "Sessions bucket not configured" });
+
+    try {
+        const s3 = getSessionS3();
+
+        // List objects under sessions/{sessionId}/scopes/agent/ to find the agentId.
+        const prefix = `sessions/${sessionId}/scopes/agent/`;
+        const listCmd = new ListObjectsV2Command({
+            Bucket: bucket,
+            Prefix: prefix,
+            MaxKeys: 10,
+        });
+        const listResult = await s3.send(listCmd);
+        const keys = (listResult.Contents ?? []).map((o) => o.Key ?? "");
+
+        // Extract the first path segment after "agent/" as the agentId.
+        let agentId: string | undefined;
+        for (const key of keys) {
+            const rest = key.slice(prefix.length);
+            const segment = rest.split("/")[0];
+            if (segment) {
+                agentId = segment;
+                break;
+            }
+        }
+
+        if (!agentId) return void res.json({ messages: [] });
+
+        const snapshotKey = `sessions/${sessionId}/scopes/agent/${agentId}/snapshots/snapshot_latest.json`;
+        const getCmd = new GetObjectCommand({ Bucket: bucket, Key: snapshotKey });
+
+        let snapshotBody: string;
+        try {
+            const getResult = await s3.send(getCmd);
+            const chunks: Uint8Array[] = [];
+            for await (const chunk of getResult.Body as AsyncIterable<Uint8Array>) {
+                chunks.push(chunk);
+            }
+            snapshotBody = Buffer.concat(chunks).toString("utf-8");
+        } catch (err: unknown) {
+            const code = (err as { name?: string }).name;
+            if (code === "NoSuchKey" || code === "NoSuchBucket") {
+                return void res.json({ messages: [] });
+            }
+            throw err;
+        }
+
+        const snapshot = JSON.parse(snapshotBody) as {
+            data?: { messages?: SnapshotMessage[] };
+        };
+        const rawMessages = snapshot.data?.messages ?? [];
+        const messages = snapshotMessagesToMikeMessages(rawMessages);
+
+        res.json({ messages });
+    } catch (err) {
+        console.error("[chat/messages] error:", err);
+        res.status(500).json({ detail: "Failed to read session snapshot" });
+    }
+});
 
 // PATCH /chat/:chatId
 chatRouter.patch("/:chatId", requireAuth, async (req, res) => {

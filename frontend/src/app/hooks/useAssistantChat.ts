@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { streamChat } from "@/app/lib/mikeApi";
+import { streamChat, apiRequest } from "@/app/lib/mikeApi";
 import { supabase } from "@/lib/supabase";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useGenerateChatTitle } from "./useGenerateChatTitle";
@@ -70,36 +70,17 @@ export function useAssistantChat({
                 }
             });
 
-        // Hydrate messages from Supabase only when no initial messages were provided.
+        // Hydrate messages from S3 snapshot via backend only when no initial messages were provided.
         if (initialMessages.length > 0) return;
 
-        supabase
-            .from("chat_messages")
-            .select("*")
-            .eq("chat_id", initialChatId)
-            .order("created_at")
-            .then(({ data }) => {
-                if (!data?.length) return;
-                const hydrated: MikeMessage[] = data.map((row) => {
-                    if (row.role === "user") {
-                        const contentArr = Array.isArray(row.content) ? row.content : [];
-                        const text = contentArr.find((b: { type: string }) => b.type === "text");
-                        return {
-                            role: "user" as const,
-                            content: text ? (text as { type: string; text: string }).text : "",
-                        };
-                    }
-                    const contentArr = Array.isArray(row.content) ? row.content : [];
-                    const text = contentArr.find((b: { type: string }) => b.type === "text");
-                    const fullText = text ? (text as { type: string; text: string }).text : "";
-                    return {
-                        role: "assistant" as const,
-                        content: fullText,
-                        annotations: (row.annotations as MikeCitationAnnotation[]) ?? undefined,
-                        events: [{ type: "content" as const, text: fullText }],
-                    };
-                });
-                setMessages(hydrated);
+        apiRequest<{ messages: MikeMessage[] }>(`/chat/${initialChatId}/messages`)
+            .then(({ messages: loaded }) => {
+                if (loaded.length > 0) {
+                    setMessages(loaded);
+                }
+            })
+            .catch((err) => {
+                console.warn("[useAssistantChat] failed to load messages:", err);
             });
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialChatId]);
@@ -372,15 +353,6 @@ export function useAssistantChat({
                 filename: f.filename,
                 document_id: f.document_id as string,
             }));
-
-            // Persist the user message before streaming.
-            if (chatId) {
-                await supabase.from("chat_messages").insert({
-                    chat_id: chatId,
-                    role: "user",
-                    content: [{ type: "text", text: prompt }],
-                });
-            }
 
             const response = await streamChat({
                 prompt,
@@ -839,17 +811,7 @@ export function useAssistantChat({
             setIsResponseLoading(false);
             setIsLoadingCitations(false);
 
-            // Persist the assistant message now that the stream is complete.
             const finalChatId = streamedChatId || chatId || null;
-            if (finalChatId && fullText) {
-                await supabase.from("chat_messages").insert({
-                    chat_id: finalChatId,
-                    role: "assistant",
-                    content: [{ type: "text", text: fullText }],
-                    annotations: streamAnnotations.length > 0 ? streamAnnotations : null,
-                });
-            }
-
             if (finalChatId && finalChatId !== chatId) {
                 if (chatId) {
                     replaceChatId(
