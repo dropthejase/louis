@@ -1,16 +1,10 @@
 // backend/src/lib/storage.ts
 //
-// Document storage — AWS S3 in prod (Lambda IAM role), Cloudflare R2 in local dev.
+// Document storage — AWS S3 via IAM role (no explicit credentials).
 //
-// Prod env vars (Lambda):
+// Required env vars (Lambda):
 //   S3_BUCKET_NAME  — documents bucket name (CDK output)
 //   AWS_REGION      — injected by Lambda runtime automatically
-//
-// Local dev env vars (R2 fallback — unchanged):
-//   R2_ENDPOINT_URL
-//   R2_ACCESS_KEY_ID
-//   R2_SECRET_ACCESS_KEY
-//   R2_BUCKET_NAME  (default: "mike")
 
 import {
   S3Client,
@@ -21,46 +15,18 @@ import {
 import { getSignedUrl as awsGetSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 // ---------------------------------------------------------------------------
-// Client + bucket selection
+// Client + bucket
 // ---------------------------------------------------------------------------
 
-function isLambda(): boolean {
-  // Lambda runtime always sets AWS_LAMBDA_FUNCTION_NAME.
-  return Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME);
-}
-
 function getClient(): S3Client {
-  if (isLambda()) {
-    // IAM role via instance metadata — no explicit credentials.
-    return new S3Client({ region: process.env.AWS_REGION ?? "eu-west-1" });
-  }
-  // Local dev: R2
-  return new S3Client({
-    region: "auto",
-    endpoint: process.env.R2_ENDPOINT_URL!,
-    credentials: {
-      accessKeyId: process.env.R2_ACCESS_KEY_ID!,
-      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
-    },
-  });
+  return new S3Client({ region: process.env.AWS_REGION ?? "eu-west-1" });
 }
 
 function getBucket(): string {
-  if (isLambda()) {
-    const bucket = process.env.S3_BUCKET_NAME;
-    if (!bucket) throw new Error("S3_BUCKET_NAME is not set");
-    return bucket;
-  }
-  return process.env.R2_BUCKET_NAME ?? "mike";
+  const bucket = process.env.S3_BUCKET_NAME;
+  if (!bucket) throw new Error("S3_BUCKET_NAME is not set");
+  return bucket;
 }
-
-export const storageEnabled: boolean = isLambda()
-  ? Boolean(process.env.S3_BUCKET_NAME)
-  : Boolean(
-      process.env.R2_ENDPOINT_URL &&
-      process.env.R2_ACCESS_KEY_ID &&
-      process.env.R2_SECRET_ACCESS_KEY,
-    );
 
 // ---------------------------------------------------------------------------
 // Upload
@@ -71,8 +37,7 @@ export async function uploadFile(
   content: ArrayBuffer,
   contentType: string,
 ): Promise<void> {
-  const client = getClient();
-  await client.send(
+  await getClient().send(
     new PutObjectCommand({
       Bucket: getBucket(),
       Key: key,
@@ -87,10 +52,8 @@ export async function uploadFile(
 // ---------------------------------------------------------------------------
 
 export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
-  if (!storageEnabled) return null;
   try {
-    const client = getClient();
-    const response = await client.send(
+    const response = await getClient().send(
       new GetObjectCommand({ Bucket: getBucket(), Key: key }),
     );
     if (!response.Body) return null;
@@ -106,9 +69,7 @@ export async function downloadFile(key: string): Promise<ArrayBuffer | null> {
 // ---------------------------------------------------------------------------
 
 export async function deleteFile(key: string): Promise<void> {
-  if (!storageEnabled) return;
-  const client = getClient();
-  await client.send(new DeleteObjectCommand({ Bucket: getBucket(), Key: key }));
+  await getClient().send(new DeleteObjectCommand({ Bucket: getBucket(), Key: key }));
 }
 
 // ---------------------------------------------------------------------------
@@ -120,9 +81,7 @@ export async function getSignedUrl(
   expiresIn = 3600,
   downloadFilename?: string,
 ): Promise<string | null> {
-  if (!storageEnabled) return null;
   try {
-    const client = getClient();
     const responseContentDisposition = downloadFilename
       ? buildContentDisposition("attachment", downloadFilename)
       : undefined;
@@ -131,7 +90,7 @@ export async function getSignedUrl(
       Key: key,
       ResponseContentDisposition: responseContentDisposition,
     });
-    return await awsGetSignedUrl(client, command, { expiresIn });
+    return await awsGetSignedUrl(getClient(), command, { expiresIn });
   } catch {
     return null;
   }
