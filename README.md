@@ -1,6 +1,6 @@
-# Mike — AWS Migration
+# Louis — AWS Migration
 
-Mike is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
+Louis is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
 
 Licensed AGPL-3.0.
 
@@ -9,29 +9,29 @@ Licensed AGPL-3.0.
 ```
 CloudFront → S3 (static Next.js export)
 
-API Gateway REST API (Lambda Token authorizer — Supabase JWT via JWKS)
+API Gateway REST API (Cognito User Pool authorizer)
 └→ Lambda container (Express + serverless-http + Lambda Powertools)
-└→ Supabase Postgres (unchanged)
+└→ Supabase Postgres (application data)
 
-AgentCore Runtime (JWT inbound authorizer — Supabase OIDC)
+AgentCore Runtime (JWT inbound authorizer — Cognito OIDC)
 └→ Strands agent (10 tools, Bedrock Claude)
 └→ Supabase Postgres
 
 S3 PutObject (.docx) → Lambda container (LibreOffice DOCX→PDF)
 
-Cognito Identity Pool (OIDC-federated from Supabase JWT)
+Cognito Identity Pool (native User Pool federation)
 └→ temporary IAM creds for frontend S3 uploads
 
 LLM → Amazon Bedrock Converse API (Claude only)
 ```
 
-Auth: Supabase JWT is the single token. API Gateway and AgentCore validate it directly via JWKS/OIDC. S3 access uses the JWT exchanged for IAM creds via Cognito Identity Pool — no Cognito User Pool.
+Auth: Cognito User Pool issues the id token. API Gateway validates it via the native Cognito authorizer. AgentCore validates it via JWT inbound authorizer. S3 access uses the id token exchanged for IAM creds via the Cognito Identity Pool. A Pre-Token Generation Lambda (V2_0) injects `role: "authenticated"` into every id token so Supabase Third-Party Auth accepts Cognito users as authenticated Postgres users.
 
 ## Repo Structure
 
 ```
 backend/        Express API (unchanged routes, new Lambda entrypoint)
-frontend/       Next.js app (unchanged UI, AWS transport layer)
+frontend/       Next.js app (unchanged UI, Amplify Auth transport layer)
 infra/          CDK app — StorageStack, AuthStack, ApiStack, ConversionStack
 agent/          AgentCore agent (Strands, 10 tools, ARM64 container)
 conversion/     LibreOffice Lambda container (DOCX→PDF, x86_64)
@@ -47,13 +47,7 @@ scripts/        Deploy and utility scripts
 
 ## First-Time Setup
 
-### 1. Register Supabase as an IAM OIDC provider (once per account)
-
-```bash
-SUPABASE_URL=https://YOUR_PROJECT.supabase.co ./scripts/create-oidc-provider.sh
-```
-
-### 2. Run DB migration
+### 1. Run DB migration
 
 In the Supabase SQL editor:
 
@@ -61,20 +55,20 @@ In the Supabase SQL editor:
 ALTER TABLE chats ADD COLUMN IF NOT EXISTS agentcore_session_id TEXT;
 ```
 
-### 3. Deploy CDK stacks (in order)
+### 2. Deploy CDK stacks (in order)
 
 ```bash
 cd infra && npm install
 
-npx cdk deploy StorageStack -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
-npx cdk deploy AuthStack    -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
-npx cdk deploy ApiStack     -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
-npx cdk deploy ConversionStack -c stage=dev -c supabaseProjectUrl=https://YOUR_PROJECT.supabase.co
+npx cdk deploy StorageStack    -c stage=dev
+npx cdk deploy AuthStack       -c stage=dev
+npx cdk deploy ApiStack        -c stage=dev
+npx cdk deploy ConversionStack -c stage=dev
 ```
 
 Note the outputs — you'll need them below.
 
-### 4. Populate the Supabase secret
+### 3. Populate the Supabase secret
 
 ```bash
 aws secretsmanager put-secret-value \
@@ -82,6 +76,13 @@ aws secretsmanager put-secret-value \
   --secret-string '{"url":"https://YOUR_PROJECT.supabase.co","serviceRoleKey":"YOUR_SERVICE_ROLE_KEY"}' \
   --region eu-west-1
 ```
+
+### 4. Configure Supabase Third-Party Auth (once)
+
+In Supabase Dashboard → Authentication → Sign In / Sign Up → Third-Party Auth → Add provider → OpenID Connect:
+
+- **Issuer URL:** `https://cognito-idp.eu-west-1.amazonaws.com/<UserPoolId>` (from AuthStack output)
+- **Client ID:** leave blank
 
 ### 5. Deploy the AgentCore agent
 
@@ -122,33 +123,17 @@ Both values come from the `StorageStack` CDK outputs.
 | Stack | Provisions |
 |---|---|
 | `StorageStack` | S3 docs bucket (private, per-user prefix), S3 frontend bucket, CloudFront + OAC |
-| `AuthStack` | Cognito Identity Pool (Supabase OIDC), Lambda Token authorizer |
-| `ApiStack` | REST API Gateway, API Lambda (ARM64 container), Secrets Manager secret |
+| `AuthStack` | Cognito User Pool (TOTP MFA, strong password, email verification), App Client, Pre-Token Gen Lambda, Identity Pool |
+| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container), Secrets Manager secret |
 | `ConversionStack` | LibreOffice Lambda (x86_64 container), S3 event trigger |
 
-All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC — frontend bucket has no public access. API Gateway: Lambda Token authorizer on all routes.
+All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC. API Gateway: native Cognito User Pool authorizer on all routes.
 
 Synth without deploying:
 
 ```bash
-cd infra && npx cdk synth -c stage=dev -c supabaseProjectUrl=https://example.supabase.co
+cd infra && npx cdk synth -c stage=dev
 ```
-
-## Local Development
-
-Backend and frontend both run locally against Supabase + Cloudflare R2 (no AWS needed).
-
-```bash
-cp backend/.env.example backend/.env      # fill in Supabase + R2 credentials
-cp frontend/.env.local.example frontend/.env.local  # set NEXT_PUBLIC_API_URL=http://localhost:3001
-
-npm run dev --prefix backend
-npm run dev --prefix frontend
-```
-
-Open `http://localhost:3000`.
-
-Local dev uses Supabase `getUser()` for auth (fallback path in `auth.ts`) and R2 for storage. No Lambda, no Bedrock, no CDK needed.
 
 ## Environment Variables
 
@@ -159,18 +144,18 @@ Local dev uses Supabase `getUser()` for auth (fallback path in `auth.ts`) and R2
 | `SUPABASE_SECRET_ARN` | Secrets Manager ARN for `{ url, serviceRoleKey }` |
 | `S3_BUCKET_NAME` | Documents S3 bucket (from StorageStack output) |
 | `FRONTEND_URL` | CloudFront domain for CORS |
-| `POWERTOOLS_SERVICE_NAME` | `mike-api` |
+| `POWERTOOLS_SERVICE_NAME` | `louis-api` |
 
 ### Frontend (build-time, `NEXT_PUBLIC_*`)
 
 | Var | Description |
 |---|---|
+| `NEXT_PUBLIC_USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
+| `NEXT_PUBLIC_USER_POOL_CLIENT_ID` | Cognito App Client ID (AuthStack output) |
 | `NEXT_PUBLIC_IDENTITY_POOL_ID` | Cognito Identity Pool ID (AuthStack output) |
 | `NEXT_PUBLIC_DOCS_BUCKET_NAME` | S3 docs bucket name (StorageStack output) |
 | `NEXT_PUBLIC_API_URL` | API Gateway URL (ApiStack output) |
 | `NEXT_PUBLIC_AGENTCORE_URL` | AgentCore invocation endpoint |
-| `NEXT_PUBLIC_SUPABASE_URL` | Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon key |
 
 ## Models
 

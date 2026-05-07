@@ -1,8 +1,8 @@
-# Mike — Architecture
+# Louis — Architecture
 
 ## Overview
 
-Mike is an AI-powered legal document workspace (AGPL-3.0) that lets users upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues. This repo is a migration of the original stack (Railway + Cloudflare Workers/R2 + direct Anthropic/Gemini API keys) onto AWS: the frontend is a static Next.js export served via CloudFront + S3, the Express backend runs as an ARM64 Lambda container behind API Gateway, AI chat is handled by an Amazon Bedrock AgentCore runtime running a Strands agent, DOCX-to-PDF conversion is an x86_64 Lambda container triggered by S3 events, and all LLM calls route through Amazon Bedrock. Supabase Auth and Supabase Postgres are unchanged.
+Louis is an AI-powered legal document workspace (AGPL-3.0) that lets users upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues. This repo is a migration of the original stack (Railway + Cloudflare Workers/R2 + direct Anthropic/Gemini API keys) onto AWS: the frontend is a static Next.js export served via CloudFront + S3, the Express backend runs as an ARM64 Lambda container behind API Gateway, AI chat is handled by an Amazon Bedrock AgentCore runtime running a Strands agent, DOCX-to-PDF conversion is an x86_64 Lambda container triggered by S3 events, and all LLM calls route through Amazon Bedrock. Authentication is handled entirely by Amazon Cognito User Pool (replacing Supabase Auth). Supabase Postgres remains for application data.
 
 ---
 
@@ -16,7 +16,7 @@ Mike is an AI-powered legal document workspace (AGPL-3.0) that lets users upload
        ▼                       ▼                       ▼
 ┌─────────────┐   ┌───────────────────────┐   ┌─────────────────────────┐
 │ CloudFront  │   │   API Gateway (REST)   │   │  AgentCore Runtime      │
-│ (OAC)       │   │   Token authorizer     │   │  JWT inbound authorizer │
+│ (OAC)       │   │   Cognito authorizer    │   │  JWT inbound authorizer │
 └──────┬──────┘   └──────────┬────────────┘   └──────────┬──────────────┘
        │                     │ validated JWT               │ validated JWT
        ▼                     ▼                             ▼
@@ -43,7 +43,7 @@ Mike is an AI-powered legal document workspace (AGPL-3.0) that lets users upload
                   └────────────────────┘
 
   Browser direct S3 upload path:
-  Browser → Cognito Identity Pool (exchange Supabase JWT → IAM creds)
+  Browser → Cognito Identity Pool (exchange Cognito id token → IAM creds)
           → S3 docs bucket (per-user prefix, IAM-enforced)
           → S3 PutObject event → Conversion Lambda
 ```
@@ -52,27 +52,27 @@ Mike is an AI-powered legal document workspace (AGPL-3.0) that lets users upload
 
 ## Auth Flow
 
-Supabase JWT is the single auth token. The frontend calls `supabase.auth.getSession()` once per interaction and reuses the resulting `access_token` as a Bearer token for all downstream consumers.
+Cognito id token is the single auth token. The frontend uses AWS Amplify Auth v6 (`fetchAuthSession()`) to obtain the token and passes it as `Authorization: Bearer <id_token>` to all downstream consumers.
 
 | Consumer | Validation method | What happens |
 |---|---|---|
-| API Gateway REST API | Lambda Token authorizer — fetches Supabase JWKS (`/auth/v1/.well-known/jwks.json`), validates signature and issuer locally, caches result 300 s | Authorizer extracts `sub` and `email` from JWT claims and injects them into the API Gateway request context; Express reads them from there (no network round-trip per request) |
-| AgentCore Runtime | JWT inbound authorizer — Supabase OIDC discovery URL (`https://<project>.supabase.co/auth/v1`) | AgentCore validates the Bearer JWT before the `/invocations` handler is called; agent handler re-extracts `sub` from the token for per-user data scoping |
-| S3 direct upload (frontend) | Cognito Identity Pool — OIDC-federated from Supabase JWT via a registered IAM OIDC provider | Identity Pool exchanges the JWT for temporary STS credentials scoped to the authenticated IAM role; frontend uses those credentials for `PutObject`/`GetObject` calls directly to S3 |
+| API Gateway REST API | Native Cognito User Pool authorizer — validates signature against Cognito JWKS; no Lambda cold start | API Gateway injects all JWT claims into `requestContext.authorizer.claims`; Express reads `claims.sub` and `claims.email` from there |
+| AgentCore Runtime | JWT inbound authorizer — Cognito User Pool OIDC discovery URL | AgentCore validates the Bearer JWT before the `/invocations` handler is called; agent handler re-extracts `sub` from the token for per-user data scoping |
+| S3 direct upload (frontend) | Cognito Identity Pool — natively federated from Cognito User Pool via `cognitoIdentityProviders` | Identity Pool exchanges the id token for temporary STS credentials scoped to the authenticated IAM role; frontend uses those credentials for `PutObject`/`GetObject` calls directly to S3 |
 
-No Cognito User Pool exists. The Identity Pool federates directly from the Supabase OIDC provider.
+A Pre-Token Generation Lambda (V2_0) runs on every token issue and injects `role: "authenticated"` into the id token. Supabase Third-Party Auth trusts this claim to treat Cognito users as authenticated Supabase Postgres users.
 
 ---
 
 ## CDK Stacks
 
-All stacks live in `infra/`, deployed with `npx cdk deploy <StackName> -c stage=<stage> -c supabaseProjectUrl=<url>`. Resource names are CDK-generated (no explicit names). Cross-stack values flow via CDK `CfnOutput` exports or are passed as constructor props.
+All stacks live in `infra/`, deployed with `npx cdk deploy <StackName> -c stage=<stage>`. Resource names are CDK-generated (no explicit names). Cross-stack values flow via CDK `CfnOutput` exports or are passed as constructor props.
 
 | Stack | What it provisions | Key outputs |
 |---|---|---|
 | `StorageStack` | S3 docs bucket (private, S3-managed encryption, CORS for direct upload); S3 frontend bucket (private); CloudFront distribution with OAC pointing at frontend bucket; SPA 404→200 fallback | `DocsBucketName`, `FrontendBucketName`, `DistributionDomainName`, `DistributionId` |
-| `AuthStack` | Cognito Identity Pool (OIDC provider: Supabase, no unauthenticated access); IAM authenticated role with per-user S3 prefix policy; Lambda Token authorizer (Node 20, esbuild-bundled, 256 MB, 10 s timeout, JWKS URI + issuer injected as env vars) | `IdentityPoolId`, `AuthorizerFunctionArn`, `AuthenticatedRoleArn` |
-| `ApiStack` | Secrets Manager secret for Supabase URL + service role key; API Lambda (ARM64 Docker container, 1024 MB, 29 s timeout, X-Ray active tracing, Bedrock invoke permissions for 3 model ARNs, S3 read/write, Secrets Manager read); REST API Gateway with Token authorizer on all routes (`{proxy+}` + root), CORS headers, per-stage logging | `ApiUrl`, `ApiLambdaArn`, `SupabaseSecretArn` |
+| `AuthStack` | Cognito User Pool (`louis-<stage>`, TOTP-only MFA, strong password policy, required givenName/familyName/email, email verification); App Client (SRP auth, no client secret); Pre-Token Gen V2_0 Lambda (injects `role: "authenticated"`); Cognito Identity Pool (native User Pool federation, no unauthenticated access); IAM authenticated role with per-user S3 prefix policy | `UserPoolId`, `UserPoolClientId`, `IdentityPoolId`, `AuthenticatedRoleArn` |
+| `ApiStack` | Secrets Manager secret for Supabase URL + service role key; API Lambda (ARM64 Docker container, 1024 MB, 29 s timeout, X-Ray active tracing, Bedrock invoke permissions for 3 model ARNs, S3 read/write, Secrets Manager read); REST API Gateway with native Cognito User Pool authorizer on all routes (`{proxy+}` + root), CORS headers, per-stage logging | `ApiUrl`, `ApiLambdaArn`, `SupabaseSecretArn` |
 | `ConversionStack` | Conversion Lambda (x86_64 Docker container, 2048 MB, 5 min timeout); S3 event notification on `documents/*.docx` and `documents/*.doc` PutObject → Lambda; S3 read/write + Secrets Manager read for the Lambda role | `ConversionLambdaArn` |
 
 AgentCore is deployed separately via the `@aws/agentcore` CLI (`scripts/deploy-agent.sh`) using `agentcore/agentcore.json` — not through CDK.
@@ -147,8 +147,8 @@ The agent streams over Server-Sent Events. The invocation handler in `agent/src/
 ### Page reload (loading an existing chat)
 
 1. `useAssistantChat` `useEffect` fires on `initialChatId`.
-2. Supabase query fetches `chats.agentcore_session_id` → stored in `runtimeSessionIdRef.current` for turn continuity.
-3. If no `initialMessages` were provided (navigating directly to `/assistant/chat/:id`), a second Supabase query fetches `chat_messages` rows ordered by `created_at` and hydrates local React state — the UI reconstructs the full conversation from Supabase, not from AgentCore.
+2. `GET /chat/:chatId/session-id` backend API call fetches `chats.agentcore_session_id` → stored in `runtimeSessionIdRef.current` for turn continuity.
+3. If no `initialMessages` were provided (navigating directly to `/assistant/chat/:id`), `GET /chat/:chatId/messages` fetches the AgentCore session snapshot from S3 and hydrates local React state.
 
 ---
 
@@ -176,7 +176,7 @@ The IAM policy on the Cognito Identity Pool authenticated role restricts users t
 
 ```
 1. Browser → POST /projects/:id/documents (multipart, Bearer JWT)
-            → API Gateway → Lambda Token authorizer → API Lambda
+            → API Gateway → Cognito authorizer → API Lambda
 2. API Lambda receives file bytes, writes to S3:
    s3.PutObject("documents/<sub>/<doc-id>/<filename>.docx")
    Inserts document row in Supabase Postgres.
@@ -200,7 +200,7 @@ Conversion Lambda timeout is 5 minutes (LibreOffice can be slow on large documen
 - All S3 buckets use `blockPublicAccess: BLOCK_ALL`. No bucket policies grant public read.
 - Frontend bucket is accessible only via CloudFront using OAC (SigV4-signed origin requests). Direct S3 URLs for the frontend bucket are blocked.
 - Docs bucket: per-user S3 prefix enforced at the IAM level via the Cognito Identity Pool authenticated role using the `${cognito-identity.amazonaws.com:sub}` policy variable. Users cannot access each other's prefixes directly.
-- API Gateway: Lambda Token authorizer is required on all methods. Authorizer result cached for 300 seconds, reducing JWKS round-trips.
+- API Gateway: native Cognito User Pool authorizer is required on all methods. No Lambda cold start; authorizer result cached for 300 seconds.
 - AgentCore: JWT inbound authorizer validates the Supabase OIDC token before routing to the agent container.
 - CORS: API Gateway `allowOrigins` is configured for restriction to the CloudFront domain post-deploy (placeholder `*` during initial deploy).
 - No Lambda function URLs exist. API Lambda is invoked only by API Gateway. Conversion Lambda is invoked only by S3 event notification.
@@ -228,12 +228,21 @@ The agent resolves the logical ID to the Bedrock model ID in `agent/src/agent.ts
 | Concern | Owner | Notes |
 |---|---|---|
 | Postgres database | Supabase | All application tables (`chats`, `chat_messages`, `documents`, `projects`, `workflows`, `tabular_reviews`, etc.), RLS policies, and schema — zero query rewrite |
-| Auth JWT issuance | Supabase | Login, signup, password reset, email flows — unchanged. The JWT Supabase issues is the single token consumed by API Gateway, AgentCore, and Cognito Identity Pool |
-| JWKS endpoint | Supabase | `/auth/v1/.well-known/jwks.json` — used by the Lambda Token authorizer for local signature validation |
-| OIDC discovery | Supabase | `/auth/v1` — used by AgentCore JWT inbound authorizer and Cognito Identity Pool OIDC federation |
-| Row-level security | Supabase | RLS remains the last-mile data isolation layer for Postgres queries made by the API Lambda (using the service role key) and any direct Supabase client calls |
+| Row-level security | Supabase | RLS remains the last-mile data isolation layer for Postgres queries made by the API Lambda (using the service role key) |
+| Third-Party Auth trust | Supabase | Supabase is configured to trust Cognito User Pool as a Third-Party Auth OIDC provider. The Pre-Token Gen Lambda injects `role: "authenticated"` into id tokens so Supabase accepts them as authenticated sessions |
 
-What moved to AWS: compute (Lambda, AgentCore), storage (S3 replaces Cloudflare R2), CDN (CloudFront replaces Cloudflare Workers), LLM (Bedrock replaces direct Anthropic/Gemini keys), auth middleware (Lambda authorizer replaces `supabase.auth.getUser()` network call per request).
+What moved to AWS: compute (Lambda, AgentCore), storage (S3 replaces Cloudflare R2), CDN (CloudFront replaces Cloudflare Workers), LLM (Bedrock replaces direct Anthropic/Gemini keys), **auth (Cognito User Pool replaces Supabase Auth entirely — login, signup, TOTP MFA, JWT issuance, JWKS endpoint, OIDC discovery)**.
+
+## Supabase Third-Party Auth Setup (manual)
+
+After deploying AuthStack, configure Supabase to trust Cognito JWTs:
+
+1. Supabase Dashboard → Authentication → Sign In / Sign Up → Third-Party Auth → Add provider → OpenID Connect
+2. **Issuer URL:** `https://cognito-idp.<region>.amazonaws.com/<UserPoolId>`
+3. **Client ID:** leave blank (id tokens only, not access tokens)
+4. Enable the provider and save
+
+Supabase will auto-discover the JWKS from Cognito's OIDC discovery endpoint. No further config needed — the `role: "authenticated"` claim injected by the Pre-Token Gen Lambda satisfies Supabase's RLS auth.role() checks.
 
 ---
 
