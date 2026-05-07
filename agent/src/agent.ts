@@ -1,4 +1,6 @@
-import { Agent, BedrockModel } from '@strands-agents/sdk';
+import { Agent, BedrockModel, SessionManager } from '@strands-agents/sdk';
+import { S3Storage } from '@strands-agents/sdk/dist/src/session/s3-storage.js';
+import { S3Client } from '@aws-sdk/client-s3';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { DocStore, DocIndex } from './lib/doc-context';
 import { SYSTEM_PROMPT } from './system-prompt';
@@ -32,6 +34,7 @@ export function createAgent(
   db: SupabaseClient,
   projectId?: string,
   modelId?: string,
+  sessionId?: string,
 ): Agent {
   const model = new BedrockModel({
     modelId: resolveBedrockModelId(modelId),
@@ -51,5 +54,18 @@ export function createAgent(
     ...(projectId ? [makeReplicateDocumentTool(userId, docStore, docIndex, db)] : []),
   ];
 
-  return new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools });
+  let sessionManager: SessionManager | undefined;
+  if (sessionId) {
+    const storage = new S3Storage({
+      bucket: process.env.SESSIONS_BUCKET_NAME!,
+      prefix: 'sessions',
+      s3Client: new S3Client({ region: process.env.AWS_REGION ?? 'eu-west-1' }),
+    });
+    sessionManager = new SessionManager({
+      storage: { snapshot: storage },
+      sessionId,
+    });
+  }
+
+  return new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, sessionManager });
 }

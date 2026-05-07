@@ -59,7 +59,7 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       ? await buildProjectDocContext(projectId, db)
       : await buildDocContext(userId, db);
 
-    const agent = createAgent(userId, docStore, docIndex, db, projectId, model);
+    const agent = createAgent(userId, docStore, docIndex, db, projectId, model, body.runtimeSessionId);
 
     let fullText = '';
 
