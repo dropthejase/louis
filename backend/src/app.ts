@@ -2,7 +2,6 @@ import express from "express";
 import cors from "cors";
 import { chatRouter } from "./routes/chat";
 import { projectsRouter } from "./routes/projects";
-import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
@@ -22,7 +21,6 @@ app.use(express.json({ limit: "50mb" }));
 
 app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
-app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
 app.use("/tabular-review", tabularRouter);
 app.use("/workflows", workflowsRouter);
