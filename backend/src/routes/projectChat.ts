@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { queryOne, execute } from "../lib/db";
 import {
     buildProjectDocContext,
     buildMessages,
@@ -12,6 +12,11 @@ import {
     type ChatMessage,
 } from "../lib/chatTools";
 import { checkProjectAccess } from "../lib/access";
+
+// chatTools.ts still expects a Supabase-shaped `db` argument; that will be
+// migrated in the next task. Until then, route handlers pass this stand-in.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const dbStub: any = null;
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -37,14 +42,11 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             attached_documents?: { filename: string; document_id: string }[];
         };
 
-    const db = createServerSupabase();
-
     // Verify the user has access to the project (owner or shared member).
     const projectAccess = await checkProjectAccess(
         projectId,
         userId,
         userEmail,
-        db,
     );
     if (!projectAccess.ok)
         return void res.status(404).json({ detail: "Project not found" });
@@ -53,45 +55,72 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     let chatTitle: string | null = null;
 
     if (chatId) {
-        const { data: existing } = await db
-            .from("chats")
-            .select("id, title, project_id")
-            .eq("id", chatId)
-            .single();
+        const existing = await queryOne<{
+            id: string;
+            title: string | null;
+            project_id: string | null;
+        }>(
+            `SELECT id, title, project_id FROM chats WHERE id = :id`,
+            [{ name: "id", value: { stringValue: chatId } }],
+        );
         const canUse = !!existing && existing.project_id === projectId;
         if (!canUse) chatId = null;
         else chatTitle = existing!.title;
     }
 
     if (!chatId) {
-        const { data: newChat, error } = await db
-            .from("chats")
-            .insert({ user_id: userId, project_id: projectId })
-            .select("id, title")
-            .single();
-        if (error || !newChat)
+        const newChat = await queryOne<{ id: string; title: string | null }>(
+            `INSERT INTO chats (user_id, project_id)
+             VALUES (:userId, :projectId)
+             RETURNING id, title`,
+            [
+                { name: "userId", value: { stringValue: userId } },
+                { name: "projectId", value: { stringValue: projectId } },
+            ],
+        );
+        if (!newChat)
             return void res
                 .status(500)
                 .json({ detail: "Failed to create chat" });
-        chatId = newChat.id as string;
+        chatId = newChat.id;
         chatTitle = newChat.title;
     }
 
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (lastUser) {
-        await db.from("chat_messages").insert({
-            chat_id: chatId,
-            role: "user",
-            content: lastUser.content,
-            files: lastUser.files ?? null,
-            workflow: lastUser.workflow ?? null,
-        });
+        await execute(
+            `INSERT INTO chat_messages (chat_id, role, content, files, workflow)
+             VALUES (:chatId, :role, :content, :files::jsonb, :workflow::jsonb)`,
+            [
+                { name: "chatId", value: { stringValue: chatId } },
+                { name: "role", value: { stringValue: "user" } },
+                {
+                    name: "content",
+                    value:
+                        lastUser.content != null
+                            ? { stringValue: JSON.stringify(lastUser.content) }
+                            : { isNull: true },
+                },
+                {
+                    name: "files",
+                    value: lastUser.files != null
+                        ? { stringValue: JSON.stringify(lastUser.files) }
+                        : { isNull: true },
+                },
+                {
+                    name: "workflow",
+                    value: lastUser.workflow != null
+                        ? { stringValue: JSON.stringify(lastUser.workflow) }
+                        : { isNull: true },
+                },
+            ],
+        );
     }
 
     const { docIndex, docStore, folderPaths } = await buildProjectDocContext(
         projectId,
         userId,
-        db,
+        dbStub,
     );
     const docAvailability = Object.entries(docIndex).map(([doc_id, info]) => ({
         doc_id,
@@ -102,7 +131,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const enrichedMessages = await enrichWithPriorEvents(
         messages,
         chatId,
-        db,
+        dbStub,
         docIndex,
     );
     const messagesForLLM: ChatMessage[] = displayed_doc
@@ -141,7 +170,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         systemPromptExtra,
     );
 
-    const workflowStore = await buildWorkflowStore(userId, userEmail, db);
+    const workflowStore = await buildWorkflowStore(userId, userEmail, dbStub);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -159,7 +188,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             docStore,
             docIndex,
             userId,
-            db,
+            db: dbStub,
             write,
             extraTools: PROJECT_EXTRA_TOOLS,
             workflowStore,
@@ -168,18 +197,38 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         });
 
         const annotations = extractAnnotations(fullText, docIndex, events);
-        await db.from("chat_messages").insert({
-            chat_id: chatId,
-            role: "assistant",
-            content: events.length ? events : null,
-            annotations: annotations.length ? annotations : null,
-        });
+        await execute(
+            `INSERT INTO chat_messages (chat_id, role, content, annotations)
+             VALUES (:chatId, :role, :content::jsonb, :annotations::jsonb)`,
+            [
+                { name: "chatId", value: { stringValue: chatId } },
+                { name: "role", value: { stringValue: "assistant" } },
+                {
+                    name: "content",
+                    value: events.length
+                        ? { stringValue: JSON.stringify(events) }
+                        : { isNull: true },
+                },
+                {
+                    name: "annotations",
+                    value: annotations.length
+                        ? { stringValue: JSON.stringify(annotations) }
+                        : { isNull: true },
+                },
+            ],
+        );
 
         if (!chatTitle && lastUser?.content) {
-            await db
-                .from("chats")
-                .update({ title: lastUser.content.slice(0, 120) })
-                .eq("id", chatId);
+            await execute(
+                `UPDATE chats SET title = :title WHERE id = :id`,
+                [
+                    {
+                        name: "title",
+                        value: { stringValue: lastUser.content.slice(0, 120) },
+                    },
+                    { name: "id", value: { stringValue: chatId } },
+                ],
+            );
         }
     } catch (err) {
         console.error("[project-chat/stream] error:", err);
