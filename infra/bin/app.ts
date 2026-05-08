@@ -25,6 +25,7 @@ const apiStack = new ApiStack(app, 'ApiStack', {
   docsBucket: storageStack.docsBucket,
   sessionsBucket: storageStack.sessionsBucket,
   supabaseSecret: authStack.supabaseSecret,
+  frontendUrl: `https://${storageStack.distribution.distributionDomainName}`,
 });
 apiStack.addDependency(authStack);
 

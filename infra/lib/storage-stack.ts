@@ -18,22 +18,15 @@ export class StorageStack extends Stack {
   constructor(scope: Construct, id: string, props: StorageStackProps) {
     super(scope, id, props);
 
-    // Documents bucket — private, per-user prefix enforced via IAM in AuthStack
+    // Documents bucket — private, per-user prefix enforced via IAM in AuthStack.
+    // CORS is set after the CloudFront distribution is created so we can lock
+    // allowedOrigins to the CF domain rather than '*'.
     this.docsBucket = new s3.Bucket(this, 'DocsBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       versioned: false,
-      removalPolicy: props.stage === 'dev' ? RemovalPolicy.DESTROY : RemovalPolicy.RETAIN,
-      autoDeleteObjects: props.stage === 'dev',
-      cors: [
-        {
-          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.PUT, s3.HttpMethods.POST, s3.HttpMethods.DELETE, s3.HttpMethods.HEAD],
-          allowedOrigins: ['*'], // Tightened to CloudFront domain post-deploy
-          allowedHeaders: ['*'],
-          exposedHeaders: ['ETag'],
-          maxAge: 3000,
-        },
-      ],
+      removalPolicy: RemovalPolicy.RETAIN,
+      autoDeleteObjects: false,
     });
 
     // Sessions bucket — private, stores Strands agent conversation snapshots
@@ -77,6 +70,22 @@ export class StorageStack extends Stack {
         },
       ],
     });
+
+    // Set CORS on docsBucket using the CF escape hatch so allowedOrigins can
+    // reference the distribution domain — a CloudFormation token resolved at
+    // deploy time. Both resources live in this stack so CDK handles ordering.
+    const cfnDocsBucket = this.docsBucket.node.defaultChild as s3.CfnBucket;
+    cfnDocsBucket.corsConfiguration = {
+      corsRules: [
+        {
+          allowedMethods: ['GET', 'PUT', 'POST', 'DELETE', 'HEAD'],
+          allowedOrigins: [`https://${this.distribution.distributionDomainName}`],
+          allowedHeaders: ['*'],
+          exposedHeaders: ['ETag'],
+          maxAge: 3000,
+        },
+      ],
+    };
 
     new CfnOutput(this, 'DocsBucketName', { value: this.docsBucket.bucketName });
     new CfnOutput(this, 'SessionsBucketName', { value: this.sessionsBucket.bucketName });

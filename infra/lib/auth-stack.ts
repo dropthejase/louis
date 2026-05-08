@@ -140,7 +140,7 @@ export class AuthStack extends Stack {
         {
           clientId: this.userPoolClient.userPoolClientId,
           providerName: this.userPool.userPoolProviderName,
-          serverSideTokenCheck: false,
+          serverSideTokenCheck: true,
         },
       ],
     });
