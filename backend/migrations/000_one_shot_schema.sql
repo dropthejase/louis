@@ -12,6 +12,7 @@ create extension if not exists "pgcrypto";
 create table if not exists public.user_profiles (
   id uuid primary key default gen_random_uuid(),
   user_id text not null unique,
+  email text,
   display_name text,
   organisation text,
   tabular_model text,
@@ -76,7 +77,7 @@ create table if not exists public.documents (
   file_type text,
   size_bytes integer not null default 0,
   page_count integer,
-  structure_tree jsonb,
+  structure_tree jsonb not null default '[]'::jsonb,
   status text not null default 'pending',
   folder_id uuid references public.project_subfolders(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -283,6 +284,10 @@ create table if not exists public.tabular_cells (
   status text not null default 'pending',
   created_at timestamptz not null default now()
 );
+
+alter table public.tabular_cells
+  add constraint tabular_cells_review_doc_col_unique
+  unique (review_id, document_id, column_index);
 
 create index if not exists idx_tabular_cells_review
   on public.tabular_cells(review_id, document_id, column_index);
