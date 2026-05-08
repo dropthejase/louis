@@ -50,6 +50,12 @@ export class ApiStack extends Stack {
       ],
     }));
 
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['cognito-idp:AdminDeleteUser'],
+      resources: [props.userPool.userPoolArn],
+    }));
+
     this.apiLambda = new lambda.DockerImageFunction(this, 'ApiLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../backend'), {
         file: 'Dockerfile.lambda',
@@ -62,6 +68,7 @@ export class ApiStack extends Stack {
         SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn,
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
+        USER_POOL_ID: props.userPool.userPoolId,
         FRONTEND_URL: props.frontendUrl ?? '*',
         NODE_ENV: 'production',
         POWERTOOLS_SERVICE_NAME: 'louis-api',

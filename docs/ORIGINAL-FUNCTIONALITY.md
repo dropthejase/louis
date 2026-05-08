@@ -12,7 +12,7 @@ Reference for ensuring feature parity in the AWS migration.
 | TOTP MFA | Not present | Cognito TOTP | ✅ Done |
 | Password policy | Supabase default | min 8, upper+lower+digit+symbol | ✅ Done |
 | Create user profile on signup | Supabase trigger `on_auth_user_created` | Post Confirmation Lambda | ✅ Done |
-| Delete user account | `DELETE /user/account` → `supabase.auth.admin.deleteUser` | Needs Cognito `AdminDeleteUser` | ❌ Not done |
+| Delete user account | `DELETE /user/account` → `supabase.auth.admin.deleteUser` | Cognito `AdminDeleteUser` | ✅ Done |
 | Cleanup on user delete | Supabase cascade from `auth.users` | Post Deletion Lambda (EventBridge + CloudTrail) | ✅ Done |
 | Create profile if missing | `POST /user/profile` (upsert) | Route still exists, Lambda is primary | ✅ Done |
 
@@ -119,7 +119,7 @@ Currently still references Gemini models — needs updating to Bedrock-only mode
 | Route | Description | Status |
 |---|---|---|
 | `POST /user/profile` | Upsert user profile (fallback if Lambda fails) | ✅ |
-| `DELETE /user/account` | Delete account | ❌ Needs Cognito AdminDeleteUser |
+| `DELETE /user/account` | Delete account | ✅ |
 
 ### Downloads (`/download`)
 
@@ -131,11 +131,11 @@ Currently still references Gemini models — needs updating to Bedrock-only mode
 
 ## Outstanding gaps
 
-1. `DELETE /user/account` — must call Cognito `AdminDeleteUser` instead of `supabase.auth.admin.deleteUser`
-2. Task #7 — rename `MikeMessage`, `MikeCitationAnnotation`, `MikeIcon`, `mikeApi.ts`, drag MIME types (`application/mike-doc`, `application/mike-folder`)
+1. Task #7 — rename `MikeMessage`, `MikeCitationAnnotation`, `MikeIcon`, `mikeApi.ts`, drag MIME types (`application/mike-doc`, `application/mike-folder`)
 
 ## Completed gaps
 
+- ✅ `DELETE /user/account` — calls Cognito `AdminDeleteUser`; Lambda role has `cognito-idp:AdminDeleteUser`; `USER_POOL_ID` env var injected from CDK
 - ✅ `userSettings.ts` — dead `claude_api_key`/`gemini_api_key` reads removed; returns Bedrock defaults
 - ✅ Tabular model selector — updated to Bedrock-only model list (Sonnet/Haiku); stored in `user_profiles.tabular_model`
 - ✅ `UserProfileContext.tsx` — dead credits/tier/apiKey fields removed; kept `displayName`, `organisation`, `tabularModel`
