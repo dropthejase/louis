@@ -21,13 +21,12 @@ export class AuthStack extends Stack {
   public readonly userPoolClient: cognito.UserPoolClient;
   public readonly identityPool: cognito.CfnIdentityPool;
   public readonly authenticatedRole: iam.Role;
-  public readonly supabaseSecret: secretsmanager.Secret;
 
   constructor(scope: Construct, id: string, props: AuthStackProps) {
     super(scope, id, props);
 
     // Supabase credentials secret — used by post-confirmation and post-deletion Lambdas
-    this.supabaseSecret = new secretsmanager.Secret(this, 'SupabaseCredentials', {
+    const supabaseSecret = new secretsmanager.Secret(this, 'SupabaseCredentials', {
       description: 'Supabase URL and service role key',
       generateSecretString: {
         secretStringTemplate: JSON.stringify({ url: 'REPLACE_ME', serviceRoleKey: 'REPLACE_ME' }),
@@ -99,9 +98,9 @@ export class AuthStack extends Stack {
       bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
       timeout: Duration.seconds(10),
       memorySize: 128,
-      environment: { SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn },
+      environment: { SUPABASE_SECRET_ARN: supabaseSecret.secretArn },
     });
-    this.supabaseSecret.grantRead(postConfirmationFn);
+    supabaseSecret.grantRead(postConfirmationFn);
     this.userPool.addTrigger(cognito.UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
 
     // Post Deletion Lambda — deletes user_profiles row on Cognito user deletion
@@ -113,9 +112,9 @@ export class AuthStack extends Stack {
       bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
       timeout: Duration.seconds(10),
       memorySize: 128,
-      environment: { SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn },
+      environment: { SUPABASE_SECRET_ARN: supabaseSecret.secretArn },
     });
-    this.supabaseSecret.grantRead(postDeletionFn);
+    supabaseSecret.grantRead(postDeletionFn);
 
     // EventBridge rule: fire postDeletionFn on Cognito DeleteUser / AdminDeleteUser via CloudTrail
     new events.Rule(this, 'CognitoUserDeleteRule', {

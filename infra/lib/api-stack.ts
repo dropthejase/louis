@@ -6,7 +6,6 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Stage } from './shared/stage';
 
@@ -15,19 +14,18 @@ interface ApiStackProps extends StackProps {
   userPool: cognito.UserPool;
   docsBucket: s3.Bucket;
   sessionsBucket: s3.Bucket;
-  supabaseSecret: secretsmanager.Secret;
   frontendUrl?: string;
+  dbClusterArn: string;
+  dbSecretArn: string;
+  dbName: string;
 }
 
 export class ApiStack extends Stack {
   public readonly api: apigateway.RestApi;
   public readonly apiLambda: lambda.Function;
-  public readonly supabaseSecret: secretsmanager.Secret;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
-
-    this.supabaseSecret = props.supabaseSecret;
 
     const lambdaRole = new iam.Role(this, 'ApiLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
@@ -36,7 +34,6 @@ export class ApiStack extends Stack {
       ],
     });
 
-    this.supabaseSecret.grantRead(lambdaRole);
     props.docsBucket.grantReadWrite(lambdaRole);
     props.sessionsBucket.grantRead(lambdaRole);
 
@@ -56,6 +53,24 @@ export class ApiStack extends Stack {
       resources: [props.userPool.userPoolArn],
     }));
 
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'rds-data:ExecuteStatement',
+        'rds-data:BatchExecuteStatement',
+        'rds-data:BeginTransaction',
+        'rds-data:CommitTransaction',
+        'rds-data:RollbackTransaction',
+      ],
+      resources: [props.dbClusterArn],
+    }));
+
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [props.dbSecretArn],
+    }));
+
     this.apiLambda = new lambda.DockerImageFunction(this, 'ApiLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../backend'), {
         file: 'Dockerfile.lambda',
@@ -65,7 +80,9 @@ export class ApiStack extends Stack {
       timeout: cdk.Duration.seconds(29),
       memorySize: 1024,
       environment: {
-        SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn,
+        DB_CLUSTER_ARN: props.dbClusterArn,
+        DB_SECRET_ARN: props.dbSecretArn,
+        DB_NAME: props.dbName,
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
         USER_POOL_ID: props.userPool.userPoolId,
@@ -93,7 +110,6 @@ export class ApiStack extends Stack {
       },
     });
 
-    // Native Cognito User Pool authorizer — no Lambda, no cold start
     const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
       cognitoUserPools: [props.userPool],
       resultsCacheTtl: Duration.seconds(300),
@@ -113,6 +129,5 @@ export class ApiStack extends Stack {
 
     new CfnOutput(this, 'ApiUrl', { value: this.api.url });
     new CfnOutput(this, 'ApiLambdaArn', { value: this.apiLambda.functionArn });
-    new CfnOutput(this, 'SupabaseSecretArn', { value: this.supabaseSecret.secretArn });
   }
 }
