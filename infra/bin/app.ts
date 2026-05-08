@@ -18,8 +18,12 @@ const authStack = new AuthStack(app, 'AuthStack', {
   env,
   stage,
   docsBucket: storageStack.docsBucket,
+  dbClusterArn: databaseStack.clusterArn,
+  dbSecretArn: databaseStack.secretArn,
+  dbName: databaseStack.databaseName,
 });
 authStack.addDependency(storageStack);
+authStack.addDependency(databaseStack);
 
 const apiStack = new ApiStack(app, 'ApiStack', {
   env,

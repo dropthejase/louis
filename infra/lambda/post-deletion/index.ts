@@ -1,20 +1,13 @@
-import type { PreTokenGenerationV2TriggerEvent } from 'aws-lambda';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { createClient } from '@supabase/supabase-js';
+import { RDSDataClient, ExecuteStatementCommand } from '@aws-sdk/client-rds-data';
 
-// Cognito does not have a native PostDelete trigger.
-// This Lambda is invoked via EventBridge rule on CloudTrail event
-// cognito-idp:DeleteUser / AdminDeleteUser.
-// Event shape: { detail: { requestParameters: { username: string } } }
+const client = new RDSDataClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
-const sm = new SecretsManagerClient({});
-
-async function getSupabaseClient() {
-  const { SecretString } = await sm.send(
-    new GetSecretValueCommand({ SecretId: process.env.SUPABASE_SECRET_ARN! }),
-  );
-  const { url, serviceRoleKey } = JSON.parse(SecretString!);
-  return createClient(url, serviceRoleKey, { auth: { persistSession: false } });
+function getConfig() {
+  return {
+    resourceArn: process.env.DB_CLUSTER_ARN!,
+    secretArn: process.env.DB_SECRET_ARN!,
+    database: process.env.DB_NAME!,
+  };
 }
 
 export const handler = async (event: any): Promise<void> => {
@@ -27,7 +20,9 @@ export const handler = async (event: any): Promise<void> => {
     return;
   }
 
-  const db = await getSupabaseClient();
-  const { error } = await db.from('user_profiles').delete().eq('user_id', userId);
-  if (error) console.error('[post-deletion] delete error', error);
+  await client.send(new ExecuteStatementCommand({
+    ...getConfig(),
+    sql: `DELETE FROM user_profiles WHERE user_id = :userId`,
+    parameters: [{ name: 'userId', value: { stringValue: userId } }],
+  }));
 };

@@ -13,6 +13,9 @@ import { Stage } from './shared/stage';
 interface AuthStackProps extends StackProps {
   stage: Stage;
   docsBucket: s3.Bucket;
+  dbClusterArn?: string;
+  dbSecretArn?: string;
+  dbName?: string;
 }
 
 export class AuthStack extends Stack {
@@ -88,7 +91,26 @@ export class AuthStack extends Stack {
       bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
       timeout: Duration.seconds(10),
       memorySize: 128,
+      environment: {
+        DB_CLUSTER_ARN: props.dbClusterArn ?? '',
+        DB_SECRET_ARN: props.dbSecretArn ?? '',
+        DB_NAME: props.dbName ?? '',
+      },
     });
+    if (props.dbClusterArn) {
+      postConfirmationFn.addToRolePolicy(new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['rds-data:ExecuteStatement'],
+        resources: [props.dbClusterArn],
+      }));
+    }
+    if (props.dbSecretArn) {
+      postConfirmationFn.addToRolePolicy(new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [props.dbSecretArn],
+      }));
+    }
     this.userPool.addTrigger(cognito.UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
 
     // Post Deletion Lambda — deletes user_profiles row on Cognito user deletion
@@ -100,7 +122,26 @@ export class AuthStack extends Stack {
       bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
       timeout: Duration.seconds(10),
       memorySize: 128,
+      environment: {
+        DB_CLUSTER_ARN: props.dbClusterArn ?? '',
+        DB_SECRET_ARN: props.dbSecretArn ?? '',
+        DB_NAME: props.dbName ?? '',
+      },
     });
+    if (props.dbClusterArn) {
+      postDeletionFn.addToRolePolicy(new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['rds-data:ExecuteStatement'],
+        resources: [props.dbClusterArn],
+      }));
+    }
+    if (props.dbSecretArn) {
+      postDeletionFn.addToRolePolicy(new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['secretsmanager:GetSecretValue'],
+        resources: [props.dbSecretArn],
+      }));
+    }
 
     // EventBridge rule: fire postDeletionFn on Cognito DeleteUser / AdminDeleteUser via CloudTrail
     new events.Rule(this, 'CognitoUserDeleteRule', {

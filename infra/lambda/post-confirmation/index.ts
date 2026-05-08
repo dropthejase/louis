@@ -1,30 +1,30 @@
 import type { PostConfirmationTriggerEvent } from 'aws-lambda';
-import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
-import { createClient } from '@supabase/supabase-js';
+import { RDSDataClient, ExecuteStatementCommand } from '@aws-sdk/client-rds-data';
 
-const sm = new SecretsManagerClient({});
+const client = new RDSDataClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
-async function getSupabaseClient() {
-  const { SecretString } = await sm.send(
-    new GetSecretValueCommand({ SecretId: process.env.SUPABASE_SECRET_ARN! }),
-  );
-  const { url, serviceRoleKey } = JSON.parse(SecretString!);
-  return createClient(url, serviceRoleKey, { auth: { persistSession: false } });
+function getConfig() {
+  return {
+    resourceArn: process.env.DB_CLUSTER_ARN!,
+    secretArn: process.env.DB_SECRET_ARN!,
+    database: process.env.DB_NAME!,
+  };
 }
 
 export const handler = async (
   event: PostConfirmationTriggerEvent,
 ): Promise<PostConfirmationTriggerEvent> => {
-  // Only run on email confirmation, not on admin-created users
   if (event.triggerSource !== 'PostConfirmation_ConfirmSignUp') return event;
 
-  const userId = event.userName; // Cognito sub
-  const db = await getSupabaseClient();
+  const userId = event.userName;
 
-  await db.from('user_profiles').upsert(
-    { user_id: userId, updated_at: new Date().toISOString() },
-    { onConflict: 'user_id' },
-  );
+  await client.send(new ExecuteStatementCommand({
+    ...getConfig(),
+    sql: `INSERT INTO user_profiles (user_id, updated_at)
+          VALUES (:userId, NOW())
+          ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()`,
+    parameters: [{ name: 'userId', value: { stringValue: userId } }],
+  }));
 
   return event;
 };
