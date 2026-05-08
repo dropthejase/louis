@@ -19,11 +19,6 @@ import {
     listAccessibleProjectIds,
 } from "../lib/access";
 
-// chatTools.ts still expects a Supabase-shaped `db` argument; that will be
-// migrated in the next task. Until then, route handlers pass this stand-in.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dbStub: any = null;
-
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
         case "bulleted_list":
@@ -300,14 +295,14 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
             .status(500)
             .json({ detail: "Failed to create review" });
 
-    // tabular_cells has no unique constraint on (review_id, doc, col), so
-    // emit a row per cell — uniqueness is enforced at write-time elsewhere.
     for (const docId of document_ids) {
         for (const col of columns_config) {
             await execute(
                 `INSERT INTO tabular_cells
                    (review_id, document_id, column_index, status)
-                 VALUES (:reviewId, :documentId, :columnIndex, :status)`,
+                 VALUES (:reviewId, :documentId, :columnIndex, :status)
+                 ON CONFLICT (review_id, document_id, column_index) DO UPDATE
+                   SET status = EXCLUDED.status`,
                 [
                     { name: "reviewId", value: { stringValue: review.id } },
                     { name: "documentId", value: { stringValue: docId } },
@@ -649,12 +644,12 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
 
         for (const documentId of documentIds) {
             for (const column of activeColumns) {
-                if (existingKeys.has(`${documentId}:${column.index}`)) continue;
                 await execute(
                     `INSERT INTO tabular_cells
                        (review_id, document_id, column_index, status)
                      VALUES
-                       (:reviewId, :documentId, :columnIndex, :status)`,
+                       (:reviewId, :documentId, :columnIndex, :status)
+                     ON CONFLICT (review_id, document_id, column_index) DO NOTHING`,
                     [
                         { name: "reviewId", value: { stringValue: reviewId } },
                         { name: "documentId", value: { stringValue: documentId } },
@@ -945,28 +940,19 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                     write(
                         `data: ${JSON.stringify({ type: "cell_update", document_id: docId, column_index: col.index, content: null, status: "generating" })}\n\n`,
                     );
-                    const existingCell = cellMap.get(`${docId}:${col.index}`);
-                    if (existingCell) {
-                        await execute(
-                            `UPDATE tabular_cells
-                             SET status = 'generating', content = NULL
-                             WHERE id = :id`,
-                            [{ name: "id", value: { stringValue: existingCell.id } }],
-                        );
-                    } else {
-                        await execute(
-                            `INSERT INTO tabular_cells
-                               (review_id, document_id, column_index, status)
-                             VALUES
-                               (:reviewId, :documentId, :columnIndex, :status)`,
-                            [
-                                { name: "reviewId", value: { stringValue: reviewId } },
-                                { name: "documentId", value: { stringValue: docId } },
-                                { name: "columnIndex", value: { longValue: col.index } },
-                                { name: "status", value: { stringValue: "generating" } },
-                            ],
-                        );
-                    }
+                    await execute(
+                        `INSERT INTO tabular_cells
+                           (review_id, document_id, column_index, status, content)
+                         VALUES
+                           (:reviewId, :documentId, :columnIndex, 'generating', NULL)
+                         ON CONFLICT (review_id, document_id, column_index) DO UPDATE
+                           SET status = 'generating', content = NULL`,
+                        [
+                            { name: "reviewId", value: { stringValue: reviewId } },
+                            { name: "documentId", value: { stringValue: docId } },
+                            { name: "columnIndex", value: { longValue: col.index } },
+                        ],
+                    );
                 }
 
                 // Single LLM call for all columns, streaming one JSON line per column
@@ -1390,7 +1376,6 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             docStore: new Map(),
             docIndex: {},
             userId,
-            db: dbStub,
             write,
             extraTools: TABULAR_TOOLS,
             tabularStore,
