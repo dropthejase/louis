@@ -1,6 +1,6 @@
 #!/bin/bash
-# Deploy Mike agent to AgentCore Runtime.
-# Prerequisites: AWS CLI configured, Docker or Finch running,
+# Deploy Louis agent to AgentCore Runtime.
+# Prerequisites: AWS CLI configured, Finch running (https://github.com/runfinch/finch),
 #   @aws/agentcore installed (npm i -g @aws/agentcore)
 # Usage: AWS_ACCOUNT_ID=123456789 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
 
@@ -8,14 +8,18 @@ set -e
 
 ACCOUNT_ID=${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID required}
 REGION=${AWS_REGION:-eu-west-1}
-ECR_REPO="mike-agent"
+ECR_REPO="louis-agent"
 IMAGE_TAG="latest"
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
 
-# Use finch if docker is not available
-CONTAINER_CLI="docker"
-if ! command -v docker &>/dev/null && command -v finch &>/dev/null; then
-  CONTAINER_CLI="finch"
+# Prefer Finch — Docker Desktop not required
+CONTAINER_CLI="finch"
+if ! command -v finch &>/dev/null; then
+  if command -v docker &>/dev/null; then
+    CONTAINER_CLI="docker"
+  else
+    echo "ERROR: Neither finch nor docker found. Install Finch: brew install --cask finch" && exit 1
+  fi
 fi
 
 echo "==> Using container CLI: ${CONTAINER_CLI}"

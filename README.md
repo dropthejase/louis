@@ -1,4 +1,4 @@
-# Louis — AWS Migration
+# Louis — AWS
 
 Louis is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
 
@@ -11,28 +11,27 @@ CloudFront → S3 (static Next.js export)
 
 API Gateway REST API (Cognito User Pool authorizer)
 └→ Lambda container (Express + serverless-http + Lambda Powertools)
-└→ Supabase Postgres (application data)
+└→ Aurora Serverless v2 PostgreSQL (RDS Data API — no VPC)
 
 AgentCore Runtime (JWT inbound authorizer — Cognito OIDC)
 └→ Strands agent (10 tools, Bedrock Claude)
-└→ Supabase Postgres
 
 S3 PutObject (.docx) → Lambda container (LibreOffice DOCX→PDF)
 
 Cognito Identity Pool (native User Pool federation)
 └→ temporary IAM creds for frontend S3 uploads
 
-LLM → Amazon Bedrock Converse API (Claude only)
+LLM → Amazon Bedrock Converse API (Claude only, eu-west-1)
 ```
 
-Auth: Cognito User Pool issues the id token. API Gateway validates it via the native Cognito authorizer. AgentCore validates it via JWT inbound authorizer. S3 access uses the id token exchanged for IAM creds via the Cognito Identity Pool. A Pre-Token Generation Lambda (V2_0) injects `role: "authenticated"` into every id token so Supabase Third-Party Auth accepts Cognito users as authenticated Postgres users.
+Auth: Cognito User Pool issues the id token. API Gateway validates it via the native Cognito authorizer. AgentCore validates it via JWT inbound authorizer. S3 access uses the id token exchanged for IAM creds via the Cognito Identity Pool.
 
 ## Repo Structure
 
 ```
-backend/        Express API (unchanged routes, new Lambda entrypoint)
-frontend/       Next.js app (unchanged UI, Amplify Auth transport layer)
-infra/          CDK app — StorageStack, AuthStack, ApiStack, ConversionStack
+backend/        Express API (Lambda entrypoint via serverless-http)
+frontend/       Next.js app (static export, Amplify Auth)
+infra/          CDK app — StorageStack, AuthStack, DatabaseStack, ApiStack, ConversionStack
 agent/          AgentCore agent (Strands, 10 tools, ARM64 container)
 conversion/     LibreOffice Lambda container (DOCX→PDF, x86_64)
 scripts/        Deploy and utility scripts
@@ -42,49 +41,56 @@ scripts/        Deploy and utility scripts
 
 - AWS CLI configured for `eu-west-1`
 - Node 20
-- Docker (for container Lambda builds)
+- **Finch** (container builds — Docker Desktop not required)
 - CDK bootstrapped: `npx cdk bootstrap aws://ACCOUNT_ID/eu-west-1`
+
+### Installing Finch
+
+Finch is an open-source container runtime from AWS. It replaces Docker Desktop for building Lambda container images.
+
+```bash
+# macOS (Homebrew)
+brew install --cask finch
+
+# Start the Finch VM
+finch vm init
+finch vm start
+```
+
+CDK uses the `CDK_DOCKER` environment variable to select the container build tool:
+
+```bash
+export CDK_DOCKER=finch
+```
+
+Add this to your shell profile (`~/.zshrc` or `~/.bashrc`) so it persists across sessions. CDK will call `finch build` instead of `docker build` for all container image assets.
 
 ## First-Time Setup
 
-### 1. Run DB migration
-
-In the Supabase SQL editor:
-
-```sql
-ALTER TABLE chats ADD COLUMN IF NOT EXISTS agentcore_session_id TEXT;
-```
-
-### 2. Deploy CDK stacks (in order)
+### 1. Deploy CDK stacks (in order)
 
 ```bash
+export CDK_DOCKER=finch
 cd infra && npm install
 
 npx cdk deploy StorageStack    -c stage=dev
+npx cdk deploy DatabaseStack  -c stage=dev
 npx cdk deploy AuthStack       -c stage=dev
 npx cdk deploy ApiStack        -c stage=dev
 npx cdk deploy ConversionStack -c stage=dev
 ```
 
-Note the outputs — you'll need them below.
+Note the outputs — you'll need them in later steps.
 
-### 3. Populate the Supabase secret
+### 2. Initialise the database schema
 
 ```bash
-aws secretsmanager put-secret-value \
-  --secret-id YOUR_SUPABASE_SECRET_ARN \
-  --secret-string '{"url":"https://YOUR_PROJECT.supabase.co","serviceRoleKey":"YOUR_SERVICE_ROLE_KEY"}' \
-  --region eu-west-1
+./scripts/init-db.sh DatabaseStack
 ```
 
-### 4. Configure Supabase Third-Party Auth (once)
+This runs `backend/migrations/000_one_shot_schema.sql` against the Aurora cluster via the RDS Data API. Safe to re-run (all statements are idempotent).
 
-In Supabase Dashboard → Authentication → Sign In / Sign Up → Third-Party Auth → Add provider → OpenID Connect:
-
-- **Issuer URL:** `https://cognito-idp.eu-west-1.amazonaws.com/<UserPoolId>` (from AuthStack output)
-- **Client ID:** leave blank
-
-### 5. Deploy the AgentCore agent
+### 3. Deploy the AgentCore agent
 
 ```bash
 npm install -g @aws/agentcore
@@ -92,14 +98,14 @@ cd agent && npm install && npm run build
 AWS_ACCOUNT_ID=YOUR_ACCOUNT_ID AWS_REGION=eu-west-1 ../scripts/deploy-agent.sh
 ```
 
-### 6. Configure frontend env vars
+### 4. Configure frontend env vars
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local
 # Fill in values from CDK outputs and AgentCore deploy output
 ```
 
-### 7. Deploy frontend
+### 5. Deploy frontend
 
 ```bash
 cd frontend && npm install
@@ -108,41 +114,45 @@ FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ../scripts/deploy-front
 
 ## Redeploying Frontend
 
-Any time you change frontend code, rebuild and redeploy — three steps handled by the script:
-
 ```bash
 FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ./scripts/deploy-frontend.sh
 ```
 
-This runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until the CDN cache is fully cleared before returning.
+Runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until CDN cache clears.
 
-Both values come from the `StorageStack` CDK outputs.
+Both values come from `StorageStack` CDK outputs.
 
 ## CDK Stacks
 
 | Stack | Provisions |
 |---|---|
 | `StorageStack` | S3 docs bucket (private, per-user prefix), S3 frontend bucket, CloudFront + OAC |
+| `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 (min 0 / max 1 ACU, Data API, auto-pause) |
 | `AuthStack` | Cognito User Pool (TOTP MFA, strong password, email verification), App Client, Pre-Token Gen Lambda, Identity Pool |
-| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container), Secrets Manager secret |
+| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container) |
 | `ConversionStack` | LibreOffice Lambda (x86_64 container), S3 event trigger |
 
-All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC. API Gateway: native Cognito User Pool authorizer on all routes.
+All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC. API Gateway: native Cognito User Pool authorizer on all routes. Aurora: RETAIN removal policy — never deleted on stack destroy.
 
 Synth without deploying:
 
 ```bash
+export CDK_DOCKER=finch
 cd infra && npx cdk synth -c stage=dev
 ```
 
 ## Environment Variables
 
-### Backend Lambda (set by CDK — do not configure manually in prod)
+### Backend Lambda (set by CDK — do not configure manually)
 
 | Var | Description |
 |---|---|
-| `SUPABASE_SECRET_ARN` | Secrets Manager ARN for `{ url, serviceRoleKey }` |
-| `S3_BUCKET_NAME` | Documents S3 bucket (from StorageStack output) |
+| `DB_CLUSTER_ARN` | Aurora cluster ARN (DatabaseStack output) |
+| `DB_SECRET_ARN` | RDS-managed credentials secret ARN (DatabaseStack output) |
+| `DB_NAME` | Database name (`louis`) |
+| `DOCS_BUCKET_NAME` | Documents S3 bucket (StorageStack output) |
+| `SESSIONS_BUCKET_NAME` | Sessions S3 bucket (StorageStack output) |
+| `USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
 | `FRONTEND_URL` | CloudFront domain for CORS |
 | `POWERTOOLS_SERVICE_NAME` | `louis-api` |
 
