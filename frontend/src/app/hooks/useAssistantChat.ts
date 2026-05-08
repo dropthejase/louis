@@ -44,6 +44,8 @@ export function useAssistantChat({
     const [isResponseLoading, setIsResponseLoading] = useState(false);
     const [isLoadingCitations, setIsLoadingCitations] = useState(false);
     const [chatId, setChatId] = useState<string | undefined>(initialChatId);
+    const [creditsExhausted, setCreditsExhausted] = useState(false);
+    const [creditsResetDate, setCreditsResetDate] = useState("");
 
     const abortControllerRef = useRef<AbortController | null>(null);
     const runtimeSessionIdRef = useRef<string | undefined>(undefined);
@@ -368,6 +370,20 @@ export function useAssistantChat({
             });
 
             if (!response.ok) {
+                if (response.status === 429) {
+                    try {
+                        const body = await response.json() as { error?: string; reset_date?: string };
+                        if (body.error === 'credits_exhausted') {
+                            setCreditsExhausted(true);
+                            setCreditsResetDate(body.reset_date ?? "");
+                            setMessages((prev) => prev.slice(0, -1));
+                            setIsResponseLoading(false);
+                            return null;
+                        }
+                    } catch {
+                        // fall through to generic error
+                    }
+                }
                 const errText = await response.text();
                 throw new Error(`HTTP ${response.status}: ${errText}`);
             }
@@ -963,5 +979,8 @@ export function useAssistantChat({
         setMessages,
         cancel,
         chatId,
+        creditsExhausted,
+        creditsResetDate,
+        dismissCreditsModal: () => setCreditsExhausted(false),
     };
 }

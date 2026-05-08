@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Stage } from './shared/stage';
@@ -23,6 +24,9 @@ interface ApiStackProps extends StackProps {
 export class ApiStack extends Stack {
   public readonly api: apigateway.RestApi;
   public readonly apiLambda: lambda.Function;
+  public readonly agentCoreExecutionRoleArn: string;
+  public readonly creditsTableName: string;
+  public readonly creditsTableArn: string;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -71,6 +75,20 @@ export class ApiStack extends Stack {
       resources: [props.dbSecretArn],
     }));
 
+    const creditsTable = new dynamodb.Table(this, 'CreditsTable', {
+      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'month', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    creditsTable.grantReadWriteData(lambdaRole);
+
+    new CfnOutput(this, 'CreditsTableName', { value: creditsTable.tableName });
+
+    this.creditsTableName = creditsTable.tableName;
+    this.creditsTableArn = creditsTable.tableArn;
+
     this.apiLambda = new lambda.DockerImageFunction(this, 'ApiLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../backend'), {
         file: 'Dockerfile.lambda',
@@ -87,6 +105,7 @@ export class ApiStack extends Stack {
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
         USER_POOL_ID: props.userPool.userPoolId,
         FRONTEND_URL: props.frontendUrl ?? '*',
+        CREDITS_TABLE_NAME: creditsTable.tableName,
         NODE_ENV: 'production',
         POWERTOOLS_SERVICE_NAME: 'louis-api',
         POWERTOOLS_LOG_LEVEL: 'INFO',
@@ -127,7 +146,67 @@ export class ApiStack extends Stack {
       authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
+    // AgentCore Runtime execution role — used by deploy-agent.sh to populate agentcore.json.
+    const agentCoreRole = new iam.Role(this, 'AgentCoreExecutionRole', {
+      roleName: 'MikeAgentCoreExecutionRole',
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': this.account },
+          ArnLike: { 'aws:SourceArn': `arn:aws:bedrock-agentcore:${this.region}:${this.account}:*` },
+        },
+      }),
+      description: 'AgentCore Runtime execution role for Mike agent',
+    });
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchLogs',
+      effect: iam.Effect.ALLOW,
+      actions: ['logs:CreateLogGroup', 'logs:DescribeLogGroups', 'logs:DescribeLogStreams', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+      resources: [
+        `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/bedrock-agentcore/runtimes/*`,
+        `arn:aws:logs:${this.region}:${this.account}:log-group:*`,
+      ],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'XRayTracing',
+      effect: iam.Effect.ALLOW,
+      actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords', 'xray:GetSamplingRules', 'xray:GetSamplingTargets'],
+      resources: ['*'],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchMetrics',
+      effect: iam.Effect.ALLOW,
+      actions: ['cloudwatch:PutMetricData'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'cloudwatch:namespace': 'bedrock-agentcore' } },
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'BedrockModelAccess',
+      effect: iam.Effect.ALLOW,
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      resources: [
+        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0`,
+        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0`,
+        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0`,
+      ],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'DynamoDBCredits',
+      effect: iam.Effect.ALLOW,
+      actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
+      resources: [creditsTable.tableArn],
+    }));
+
+    new CfnOutput(this, 'CreditsTableArn', { value: creditsTable.tableArn });
+
+    this.agentCoreExecutionRoleArn = agentCoreRole.roleArn;
+
     new CfnOutput(this, 'ApiUrl', { value: this.api.url });
     new CfnOutput(this, 'ApiLambdaArn', { value: this.apiLambda.functionArn });
+    new CfnOutput(this, 'AgentCoreExecutionRoleArn', { value: agentCoreRole.roleArn });
   }
 }

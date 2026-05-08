@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { queryOne, execute } from "../lib/db";
+import { checkCredits } from "../lib/credits";
 import {
     buildProjectDocContext,
     buildMessages,
@@ -12,11 +13,6 @@ import {
     type ChatMessage,
 } from "../lib/chatTools";
 import { checkProjectAccess } from "../lib/access";
-
-// chatTools.ts still expects a Supabase-shaped `db` argument; that will be
-// migrated in the next task. Until then, route handlers pass this stand-in.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dbStub: any = null;
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
 You are operating within a project folder that contains a collection of legal documents the user has organised for a single matter. The user's questions will usually refer to one or more documents in this project — your job is to find the relevant files to work on. Use list_documents to see what is available and fetch_documents / read_document to pull in any documents you need before answering.
@@ -31,6 +27,12 @@ export const projectChatRouter = Router({ mergeParams: true });
 // POST /projects/:projectId/chat — streaming
 projectChatRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+
+    const credits = await checkCredits(userId);
+    if (!credits.allowed) {
+        return void res.status(429).json({ error: 'credits_exhausted', reset_date: credits.resetDate });
+    }
+
     const userEmail = res.locals.userEmail as string | undefined;
     const { projectId } = req.params;
     const { messages, chat_id, model, displayed_doc, attached_documents } =
@@ -120,7 +122,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const { docIndex, docStore, folderPaths } = await buildProjectDocContext(
         projectId,
         userId,
-        dbStub,
     );
     const docAvailability = Object.entries(docIndex).map(([doc_id, info]) => ({
         doc_id,
@@ -131,7 +132,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
     const enrichedMessages = await enrichWithPriorEvents(
         messages,
         chatId,
-        dbStub,
         docIndex,
     );
     const messagesForLLM: ChatMessage[] = displayed_doc
@@ -170,7 +170,7 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
         systemPromptExtra,
     );
 
-    const workflowStore = await buildWorkflowStore(userId, userEmail, dbStub);
+    const workflowStore = await buildWorkflowStore(userId, userEmail);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -188,7 +188,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             docStore,
             docIndex,
             userId,
-            db: dbStub,
             write,
             extraTools: PROJECT_EXTRA_TOOLS,
             workflowStore,

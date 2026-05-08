@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { query, queryOne, execute } from "../lib/db";
+import { checkCredits } from "../lib/credits";
 import {
     buildDocContext,
     buildMessages,
@@ -28,11 +29,6 @@ function getSessionS3(): S3Client {
     }
     return _s3;
 }
-
-// chatTools.ts still expects a Supabase-shaped `db` argument; that will be
-// migrated in the next task. Until then, route handlers pass this stand-in.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const dbStub: any = null;
 
 // ---------------------------------------------------------------------------
 // Types mirroring the Strands snapshot message format
@@ -732,6 +728,12 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
 // POST /chat — streaming
 chatRouter.post("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
+
+    const credits = await checkCredits(userId);
+    if (!credits.allowed) {
+        return void res.status(429).json({ error: 'credits_exhausted', reset_date: credits.resetDate });
+    }
+
     const { messages, chat_id, project_id, model } = req.body as {
         messages: ChatMessage[];
         chat_id?: string;
@@ -849,7 +851,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const { docIndex, docStore } = await buildDocContext(
         messages,
         userId,
-        dbStub,
         chatId,
     );
     const docAvailability = Object.entries(docIndex).map(([doc_id, info]) => ({
@@ -859,12 +860,11 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const enrichedMessages = await enrichWithPriorEvents(
         messages,
         chatId,
-        dbStub,
         docIndex,
     );
     const apiMessages = buildMessages(enrichedMessages, docAvailability);
 
-    const workflowStore = await buildWorkflowStore(userId, userEmail, dbStub);
+    const workflowStore = await buildWorkflowStore(userId, userEmail);
 
     console.log("[chat/stream] starting LLM stream", {
         apiMessageCount: apiMessages.length,
@@ -888,7 +888,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             docStore,
             docIndex,
             userId,
-            db: dbStub,
             write,
             workflowStore,
             model,
