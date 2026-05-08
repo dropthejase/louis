@@ -37,7 +37,7 @@ Original supported two providers. User stored personal API keys in `user_profile
 **Tabular model:** user-selectable in account settings, stored in `user_profiles.tabular_model`.
 Currently still references Gemini models — needs updating to Bedrock-only model list. ❌ Not done.
 
-**`userSettings.ts`:** reads `claude_api_key`, `gemini_api_key`, `tabular_model` from DB and passes to chat/tabular routes. Dead code now columns are dropped. ❌ Not cleaned up.
+**`userSettings.ts`:** reads `claude_api_key`, `gemini_api_key`, `tabular_model` from DB and passes to chat/tabular routes. Dead code now columns are dropped. ✅ Cleaned up — returns Bedrock defaults, no DB reads.
 
 ---
 
@@ -100,7 +100,7 @@ Currently still references Gemini models — needs updating to Bedrock-only mode
 | Route | Description | Status |
 |---|---|---|
 | CRUD reviews | Create, list, get, delete | ✅ |
-| Run AI analysis | Per-cell LLM analysis using `tabular_model` | Needs model fix ❌ |
+| Run AI analysis | Per-cell LLM analysis using `tabular_model` | ✅ Fixed — uses Bedrock `DEFAULT_TABULAR_MODEL` |
 | Per-review chats | Chat within a review | ✅ |
 | Workflows | Apply workflow to review | ✅ |
 
@@ -133,6 +133,6 @@ Currently still references Gemini models — needs updating to Bedrock-only mode
 
 1. `DELETE /user/account` — must call Cognito `AdminDeleteUser` instead of `supabase.auth.admin.deleteUser`
 2. `userSettings.ts` — remove dead `claude_api_key`/`gemini_api_key` reads; simplify to Bedrock-only model resolution
-3. Tabular model selector — update to Bedrock model list (`claude-sonnet-4-6`, `claude-haiku-4-5`), remove Gemini options from UI
-4. `UserProfileContext.tsx` — remove dead `credits`, `tier`, `tabularModel`, `claudeApiKey`, `geminiApiKey` state and Supabase direct queries
+3. Tabular model selector — ✅ Removed from UI; model held as local state in TRChatPanel, backend uses `DEFAULT_TABULAR_MODEL`
+4. `UserProfileContext.tsx` — ✅ Stripped to `displayName` + `organisation` only; all dead fields removed
 5. Task #7 — rename `MikeMessage`, `MikeCitationAnnotation`, `MikeIcon`, `mikeApi.ts`, drag MIME types
