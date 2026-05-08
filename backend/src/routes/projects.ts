@@ -224,7 +224,7 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
 
   const owner = {
     user_id: project.user_id,
-    email: null as string | null,
+    email: isOwner ? (userEmail ?? null) : null,
     display_name: ownerProfile?.display_name ?? null,
   };
   const members = sharedWith.map((email) => ({
