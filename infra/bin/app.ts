@@ -24,6 +24,7 @@ const apiStack = new ApiStack(app, 'ApiStack', {
   userPool: authStack.userPool,
   docsBucket: storageStack.docsBucket,
   sessionsBucket: storageStack.sessionsBucket,
+  supabaseSecret: authStack.supabaseSecret,
 });
 apiStack.addDependency(authStack);
 
@@ -32,7 +33,7 @@ const conversionStack = new ConversionStack(app, 'ConversionStack', {
   stage,
   docsBucketArn: storageStack.docsBucket.bucketArn,
   docsBucketName: storageStack.docsBucket.bucketName,
-  supabaseSecret: apiStack.supabaseSecret,
+  supabaseSecret: authStack.supabaseSecret,
 });
 conversionStack.addDependency(apiStack);
 

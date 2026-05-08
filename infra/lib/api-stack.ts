@@ -15,6 +15,7 @@ interface ApiStackProps extends StackProps {
   userPool: cognito.UserPool;
   docsBucket: s3.Bucket;
   sessionsBucket: s3.Bucket;
+  supabaseSecret: secretsmanager.Secret;
   frontendUrl?: string;
 }
 
@@ -26,13 +27,7 @@ export class ApiStack extends Stack {
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
-    this.supabaseSecret = new secretsmanager.Secret(this, 'SupabaseCredentials', {
-      description: 'Supabase URL and service role key for Louis API Lambda',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ url: 'REPLACE_ME', serviceRoleKey: 'REPLACE_ME' }),
-        generateStringKey: '_unused',
-      },
-    });
+    this.supabaseSecret = props.supabaseSecret;
 
     const lambdaRole = new iam.Role(this, 'ApiLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),

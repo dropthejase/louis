@@ -5,6 +5,9 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as path from 'path';
 import { Stage } from './shared/stage';
 
@@ -18,9 +21,19 @@ export class AuthStack extends Stack {
   public readonly userPoolClient: cognito.UserPoolClient;
   public readonly identityPool: cognito.CfnIdentityPool;
   public readonly authenticatedRole: iam.Role;
+  public readonly supabaseSecret: secretsmanager.Secret;
 
   constructor(scope: Construct, id: string, props: AuthStackProps) {
     super(scope, id, props);
+
+    // Supabase credentials secret — used by post-confirmation and post-deletion Lambdas
+    this.supabaseSecret = new secretsmanager.Secret(this, 'SupabaseCredentials', {
+      description: 'Supabase URL and service role key',
+      generateSecretString: {
+        secretStringTemplate: JSON.stringify({ url: 'REPLACE_ME', serviceRoleKey: 'REPLACE_ME' }),
+        generateStringKey: '_unused',
+      },
+    });
 
     // Pre-Token Generation v2 Lambda — injects role: "authenticated" into id token
     const preTokenGenFn = new lambdaNodejs.NodejsFunction(this, 'PreTokenGen', {
@@ -76,6 +89,48 @@ export class AuthStack extends Stack {
         userSrp: true,
       },
       preventUserExistenceErrors: true,
+    });
+
+    // Post Confirmation Lambda — creates user_profiles row after email verification
+    const postConfirmationFn = new lambdaNodejs.NodejsFunction(this, 'PostConfirmation', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../lambda/post-confirmation/index.ts'),
+      handler: 'handler',
+      bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
+      timeout: Duration.seconds(10),
+      memorySize: 128,
+      environment: { SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn },
+    });
+    this.supabaseSecret.grantRead(postConfirmationFn);
+    this.userPool.addTrigger(cognito.UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
+
+    // Post Deletion Lambda — deletes user_profiles row on Cognito user deletion
+    // Cognito has no native delete trigger; invoked via EventBridge + CloudTrail
+    const postDeletionFn = new lambdaNodejs.NodejsFunction(this, 'PostDeletion', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      entry: path.join(__dirname, '../lambda/post-deletion/index.ts'),
+      handler: 'handler',
+      bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
+      timeout: Duration.seconds(10),
+      memorySize: 128,
+      environment: { SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn },
+    });
+    this.supabaseSecret.grantRead(postDeletionFn);
+
+    // EventBridge rule: fire postDeletionFn on Cognito DeleteUser / AdminDeleteUser via CloudTrail
+    new events.Rule(this, 'CognitoUserDeleteRule', {
+      eventPattern: {
+        source: ['aws.cognito-idp'],
+        detailType: ['AWS API Call via CloudTrail'],
+        detail: {
+          eventSource: ['cognito-idp.amazonaws.com'],
+          eventName: ['DeleteUser', 'AdminDeleteUser'],
+          requestParameters: {
+            userPoolId: [this.userPool.userPoolId],
+          },
+        },
+      },
+      targets: [new targets.LambdaFunction(postDeletionFn)],
     });
 
     // Cognito Identity Pool — native User Pool federation
