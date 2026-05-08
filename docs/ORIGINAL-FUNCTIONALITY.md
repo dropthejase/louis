@@ -132,7 +132,12 @@ Currently still references Gemini models — needs updating to Bedrock-only mode
 ## Outstanding gaps
 
 1. `DELETE /user/account` — must call Cognito `AdminDeleteUser` instead of `supabase.auth.admin.deleteUser`
-2. `userSettings.ts` — remove dead `claude_api_key`/`gemini_api_key` reads; simplify to Bedrock-only model resolution
-3. Tabular model selector — ✅ Removed from UI; model held as local state in TRChatPanel, backend uses `DEFAULT_TABULAR_MODEL`
-4. `UserProfileContext.tsx` — ✅ Stripped to `displayName` + `organisation` only; all dead fields removed
-5. Task #7 — rename `MikeMessage`, `MikeCitationAnnotation`, `MikeIcon`, `mikeApi.ts`, drag MIME types
+2. Task #7 — rename `MikeMessage`, `MikeCitationAnnotation`, `MikeIcon`, `mikeApi.ts`, drag MIME types (`application/mike-doc`, `application/mike-folder`)
+
+## Completed gaps
+
+- ✅ `userSettings.ts` — dead `claude_api_key`/`gemini_api_key` reads removed; returns Bedrock defaults
+- ✅ Tabular model selector — updated to Bedrock-only model list (Sonnet/Haiku); stored in `user_profiles.tabular_model`
+- ✅ `UserProfileContext.tsx` — dead credits/tier/apiKey fields removed; kept `displayName`, `organisation`, `tabularModel`
+- ✅ Frontend env vars — removed Supabase vars, added `NEXT_PUBLIC_USER_POOL_ID` + `NEXT_PUBLIC_USER_POOL_CLIENT_ID`
+- ✅ `useAssistantChat.ts` — replaced direct Supabase session ID query with `GET /chat/:chatId/session-id` API call
