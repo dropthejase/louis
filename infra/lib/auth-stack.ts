@@ -5,8 +5,6 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as events from 'aws-cdk-lib/aws-events';
-import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as path from 'path';
 import { Stage } from './shared/stage';
 
@@ -91,52 +89,6 @@ export class AuthStack extends Stack {
       }));
     }
     this.userPool.addTrigger(cognito.UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
-
-    // Post Deletion Lambda — deletes user_profiles row on Cognito user deletion
-    // Cognito has no native delete trigger; invoked via EventBridge + CloudTrail
-    const postDeletionFn = new lambdaNodejs.NodejsFunction(this, 'PostDeletion', {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: path.join(__dirname, '../lambda/post-deletion/index.ts'),
-      handler: 'handler',
-      bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
-      timeout: Duration.seconds(10),
-      memorySize: 128,
-      environment: {
-        DB_CLUSTER_ARN: props.dbClusterArn ?? '',
-        DB_SECRET_ARN: props.dbSecretArn ?? '',
-        DB_NAME: props.dbName ?? '',
-      },
-    });
-    if (props.dbClusterArn) {
-      postDeletionFn.addToRolePolicy(new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ['rds-data:ExecuteStatement'],
-        resources: [props.dbClusterArn],
-      }));
-    }
-    if (props.dbSecretArn) {
-      postDeletionFn.addToRolePolicy(new iam.PolicyStatement({
-        effect: iam.Effect.ALLOW,
-        actions: ['secretsmanager:GetSecretValue'],
-        resources: [props.dbSecretArn],
-      }));
-    }
-
-    // EventBridge rule: fire postDeletionFn on Cognito DeleteUser / AdminDeleteUser via CloudTrail
-    new events.Rule(this, 'CognitoUserDeleteRule', {
-      eventPattern: {
-        source: ['aws.cognito-idp'],
-        detailType: ['AWS API Call via CloudTrail'],
-        detail: {
-          eventSource: ['cognito-idp.amazonaws.com'],
-          eventName: ['DeleteUser', 'AdminDeleteUser'],
-          requestParameters: {
-            userPoolId: [this.userPool.userPoolId],
-          },
-        },
-      },
-      targets: [new targets.LambdaFunction(postDeletionFn)],
-    });
 
     // Cognito Identity Pool — native User Pool federation
     this.identityPool = new cognito.CfnIdentityPool(this, 'IdentityPool', {
