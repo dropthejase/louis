@@ -27,16 +27,6 @@ export class AuthStack extends Stack {
   constructor(scope: Construct, id: string, props: AuthStackProps) {
     super(scope, id, props);
 
-    // Pre-Token Generation v2 Lambda — injects role: "authenticated" into id token
-    const preTokenGenFn = new lambdaNodejs.NodejsFunction(this, 'PreTokenGen', {
-      runtime: lambda.Runtime.NODEJS_20_X,
-      entry: path.join(__dirname, '../lambda/pre-token-gen/index.ts'),
-      handler: 'handler',
-      bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
-      timeout: Duration.seconds(5),
-      memorySize: 128,
-    });
-
     // Cognito User Pool
     this.userPool = new cognito.UserPool(this, 'UserPool', {
       userPoolName: 'louis',
@@ -62,17 +52,6 @@ export class AuthStack extends Stack {
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: RemovalPolicy.DESTROY,
-      lambdaTriggers: {
-        preTokenGeneration: preTokenGenFn,
-      },
-    });
-
-    // Upgrade Pre-Token Generation trigger to V2_0 via CFN escape hatch
-    // (CDK high-level API only exposes V1; V2 is required for claimsAndScopeOverrideDetails)
-    const cfnUserPool = this.userPool.node.defaultChild as cognito.CfnUserPool;
-    cfnUserPool.addPropertyOverride('LambdaConfig.PreTokenGenerationConfig', {
-      LambdaArn: preTokenGenFn.functionArn,
-      LambdaVersion: 'V2_0',
     });
 
     // App Client — SRP auth, no client secret (browser-safe)
