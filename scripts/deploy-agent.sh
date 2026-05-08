@@ -1,26 +1,15 @@
 #!/bin/bash
 # Deploy Louis agent to AgentCore Runtime.
-# Prerequisites: AWS CLI configured, Finch running (https://github.com/runfinch/finch),
-#   @aws/agentcore installed (npm i -g @aws/agentcore)
+# Prerequisites: AWS CLI configured, @aws/agentcore installed (npm i -g @aws/agentcore)
+# Note: No container build needed — AgentCore CLI zips built output directly.
+# Finch is only required for the LibreOffice conversion Lambda (ConversionStack).
 # Usage: AWS_ACCOUNT_ID=123456789 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
 
 set -e
 
 ACCOUNT_ID=${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID required}
 REGION=${AWS_REGION:-eu-west-1}
-ECR_REPO="louis-agent"
-IMAGE_TAG="latest"
-ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
 ROLE_NAME="LouisAgentCoreExecutionRole"
-
-# Finch is required — Docker Desktop not supported
-if ! command -v finch &>/dev/null; then
-  echo "ERROR: finch not found. Install: brew install --cask finch && finch vm init && finch vm start"
-  exit 1
-fi
-CONTAINER_CLI="finch"
-
-echo "==> Using container CLI: ${CONTAINER_CLI}"
 
 # Create or retrieve the AgentCore execution role (idempotent)
 echo "==> Creating AgentCore execution role (if not exists)..."
@@ -52,18 +41,6 @@ EOF
 {
   "Version": "2012-10-17",
   "Statement": [
-    {
-      "Sid": "ECRImageAccess",
-      "Effect": "Allow",
-      "Action": ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"],
-      "Resource": "arn:aws:ecr:${REGION}:${ACCOUNT_ID}:repository/*"
-    },
-    {
-      "Sid": "ECRTokenAccess",
-      "Effect": "Allow",
-      "Action": "ecr:GetAuthorizationToken",
-      "Resource": "*"
-    },
     {
       "Sid": "CloudWatchLogs",
       "Effect": "Allow",
@@ -110,26 +87,6 @@ fi
 
 ROLE_ARN="${EXISTING_ROLE_ARN}"
 
-echo "==> Building agent..."
-cd agent && npm run build
-cd ..
-
-echo "==> Building container image (ARM64)..."
-${CONTAINER_CLI} build --platform linux/arm64 -t "${ECR_REPO}:${IMAGE_TAG}" agent/
-
-echo "==> Authenticating with ECR..."
-aws ecr get-login-password --region "${REGION}" | \
-  ${CONTAINER_CLI} login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
-
-echo "==> Creating ECR repo if needed..."
-aws ecr describe-repositories --repository-names "${ECR_REPO}" --region "${REGION}" 2>/dev/null || \
-  aws ecr create-repository --repository-name "${ECR_REPO}" --region "${REGION}"
-
-echo "==> Pushing image..."
-${CONTAINER_CLI} tag "${ECR_REPO}:${IMAGE_TAG}" "${ECR_URI}"
-${CONTAINER_CLI} push "${ECR_URI}"
-
-# Inject executionRoleArn into agentcore.json before deploy
 echo "==> Wiring execution role into agentcore.json..."
 node -e "
   const fs = require('fs');
@@ -138,6 +95,10 @@ node -e "
   cfg.agents[0].executionRoleArn = '${ROLE_ARN}';
   fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
 "
+
+echo "==> Building agent..."
+cd agent && npm run build
+cd ..
 
 echo "==> Deploying to AgentCore..."
 cd agent && agentcore deploy

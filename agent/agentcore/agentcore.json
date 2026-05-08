@@ -7,7 +7,7 @@
       "type": "create",
       "codeLocation": ".",
       "entrypoint": "dist/index.js",
-      "build": "Container",
+      "build": "Zip",
       "modelProvider": "Bedrock",
       "protocol": "HTTP",
       "networkMode": "PUBLIC",
