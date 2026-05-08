@@ -17,13 +17,17 @@ export const handler = async (
   if (event.triggerSource !== 'PostConfirmation_ConfirmSignUp') return event;
 
   const userId = event.userName;
+  const email = event.request.userAttributes['email'] ?? null;
 
   await client.send(new ExecuteStatementCommand({
     ...getConfig(),
-    sql: `INSERT INTO user_profiles (user_id, updated_at)
-          VALUES (:userId, NOW())
-          ON CONFLICT (user_id) DO UPDATE SET updated_at = NOW()`,
-    parameters: [{ name: 'userId', value: { stringValue: userId } }],
+    sql: `INSERT INTO user_profiles (user_id, email, updated_at)
+          VALUES (:userId, :email, NOW())
+          ON CONFLICT (user_id) DO UPDATE SET email = EXCLUDED.email, updated_at = NOW()`,
+    parameters: [
+      { name: 'userId', value: { stringValue: userId } },
+      { name: 'email', value: email ? { stringValue: email } : { isNull: true } },
+    ],
   }));
 
   return event;
