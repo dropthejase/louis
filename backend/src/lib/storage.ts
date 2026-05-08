@@ -3,8 +3,8 @@
 // Document storage — AWS S3 via IAM role (no explicit credentials).
 //
 // Required env vars (Lambda):
-//   S3_BUCKET_NAME  — documents bucket name (CDK output)
-//   AWS_REGION      — injected by Lambda runtime automatically
+//   DOCS_BUCKET_NAME — documents bucket name (CDK output)
+//   AWS_REGION       — injected by Lambda runtime automatically
 
 import {
   S3Client,
@@ -23,8 +23,8 @@ function getClient(): S3Client {
 }
 
 function getBucket(): string {
-  const bucket = process.env.S3_BUCKET_NAME;
-  if (!bucket) throw new Error("S3_BUCKET_NAME is not set");
+  const bucket = process.env.DOCS_BUCKET_NAME;
+  if (!bucket) throw new Error("DOCS_BUCKET_NAME is not set");
   return bucket;
 }
 

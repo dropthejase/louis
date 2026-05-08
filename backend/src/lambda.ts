@@ -8,7 +8,7 @@
 //   POWERTOOLS_LOG_LEVEL     — defaults to "INFO"
 //   AWS_REGION               — set automatically by Lambda runtime
 //   SUPABASE_SECRET_ARN      — ARN of the Secrets Manager secret
-//   S3_BUCKET_NAME           — documents bucket
+//   DOCS_BUCKET_NAME         — documents bucket
 //   FRONTEND_URL             — CloudFront domain for CORS
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from "aws-lambda";
