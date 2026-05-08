@@ -118,11 +118,11 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
     if (wfs.length > 0) {
       // Fetch sharer profiles for display name
       const sharerIds = [...new Set(shares.map((s) => s.shared_by_user_id).filter(Boolean))];
-      let profiles: { user_id: string; display_name: string | null }[] = [];
+      let profiles: { user_id: string; email: string | null; display_name: string | null }[] = [];
       if (sharerIds.length > 0) {
         const profPlaceholders = sharerIds.map((_, i) => `:sid${i}`).join(", ");
-        profiles = await query<{ user_id: string; display_name: string | null }>(
-          `SELECT user_id, display_name FROM user_profiles
+        profiles = await query<{ user_id: string; email: string | null; display_name: string | null }>(
+          `SELECT user_id, email, display_name FROM user_profiles
            WHERE user_id IN (${profPlaceholders})`,
           sharerIds.map((id, i) => ({ name: `sid${i}`, value: { stringValue: id } })),
         );
@@ -132,9 +132,7 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
         const share = shares.find((s) => s.workflow_id === wf.id);
         const sharerId = share?.shared_by_user_id;
         const profile = profiles.find((p) => p.user_id === sharerId);
-        // With Cognito as the IdP we no longer cheaply enumerate auth users —
-        // surface the display_name when available, else null.
-        const shared_by_name = profile?.display_name ?? null;
+        const shared_by_name = profile?.display_name ?? profile?.email ?? null;
         return withWorkflowAccess(wf, {
           allowEdit: !!share?.allow_edit,
           isOwner: false,
