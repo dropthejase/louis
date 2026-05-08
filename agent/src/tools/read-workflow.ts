@@ -1,8 +1,8 @@
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { queryOne } from '../lib/db';
 
-export function makeReadWorkflowTool(db: SupabaseClient) {
+export function makeReadWorkflowTool(userId: string) {
   return tool({
     name: 'read_workflow',
     description: 'Load the full prompt instructions for a workflow.',
@@ -10,13 +10,16 @@ export function makeReadWorkflowTool(db: SupabaseClient) {
       workflow_id: z.string().describe('Workflow ID'),
     }),
     callback: async ({ workflow_id }): Promise<string> => {
-      const { data, error } = await db
-        .from('workflows')
-        .select('title, prompt_md')
-        .eq('id', workflow_id)
-        .single();
-      if (error || !data) return `Error: workflow ${workflow_id} not found.`;
-      return `# ${(data as { title: string; prompt_md: string }).title}\n\n${(data as { title: string; prompt_md: string }).prompt_md}`;
+      const row = await queryOne<{ title: string; prompt_md: string }>(
+        `SELECT title, prompt_md FROM workflows
+         WHERE id = :workflowId AND (user_id = :userId OR is_system = true)`,
+        [
+          { name: 'workflowId', value: { stringValue: workflow_id } },
+          { name: 'userId', value: { stringValue: userId } },
+        ],
+      );
+      if (!row) return `Error: workflow ${workflow_id} not found.`;
+      return `# ${row.title}\n\n${row.prompt_md}`;
     },
   });
 }

@@ -1,7 +1,7 @@
-import { Agent, BedrockModel, SessionManager } from '@strands-agents/sdk';
+import { Agent, BedrockModel, SessionManager, AfterModelCallEvent } from '@strands-agents/sdk';
 import { S3Storage } from '@strands-agents/sdk/dist/src/session/s3-storage.js';
 import { S3Client } from '@aws-sdk/client-s3';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { DocStore, DocIndex } from './lib/doc-context';
 import { SYSTEM_PROMPT } from './system-prompt';
 import { makeReadDocumentTool } from './tools/read-document';
@@ -27,11 +27,22 @@ function resolveBedrockModelId(logicalModel?: string): string {
   return BEDROCK_MODEL_IDS[logicalModel ?? ''] ?? DEFAULT_BEDROCK_MODEL_ID;
 }
 
+const dynamo = new DynamoDBClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
+
+async function incrementCredits(userId: string): Promise<void> {
+  const month = new Date().toISOString().slice(0, 7);
+  await dynamo.send(new UpdateItemCommand({
+    TableName: process.env.CREDITS_TABLE_NAME!,
+    Key: { userId: { S: userId }, month: { S: month } },
+    UpdateExpression: 'ADD credits_used :one',
+    ExpressionAttributeValues: { ':one': { N: '1' } },
+  }));
+}
+
 export function createAgent(
   userId: string,
   docStore: DocStore,
   docIndex: DocIndex,
-  db: SupabaseClient,
   projectId?: string,
   modelId?: string,
   sessionId?: string,
@@ -46,12 +57,12 @@ export function createAgent(
     makeFindInDocumentTool(docStore),
     makeListDocumentsTool(docIndex),
     makeFetchDocumentsTool(docStore),
-    makeGenerateDocxTool(userId, docStore, docIndex, db),
-    makeEditDocumentTool(userId, docStore, docIndex, db),
-    makeReadTableCellsTool(db),
-    makeListWorkflowsTool(userId, db),
-    makeReadWorkflowTool(db),
-    ...(projectId ? [makeReplicateDocumentTool(userId, docStore, docIndex, db)] : []),
+    makeGenerateDocxTool(userId, docStore, docIndex),
+    makeEditDocumentTool(userId, docStore, docIndex),
+    makeReadTableCellsTool(userId),
+    makeListWorkflowsTool(userId),
+    makeReadWorkflowTool(userId),
+    ...(projectId ? [makeReplicateDocumentTool(userId, docStore, docIndex)] : []),
   ];
 
   let sessionManager: SessionManager | undefined;
@@ -67,5 +78,15 @@ export function createAgent(
     });
   }
 
-  return new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, sessionManager });
+  const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, sessionManager });
+
+  agent.addHook(AfterModelCallEvent, async () => {
+    try {
+      await incrementCredits(userId);
+    } catch (err) {
+      console.error('[credits] failed to increment:', err);
+    }
+  });
+
+  return agent;
 }

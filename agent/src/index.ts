@@ -1,7 +1,7 @@
 import express from 'express';
-import { getSupabaseClient } from './lib/supabase';
 import { buildDocContext, buildProjectDocContext, DocIndex } from './lib/doc-context';
 import { extractAnnotations } from './lib/citations';
+import { execute } from './lib/db';
 import { createAgent } from './agent';
 
 const PORT = process.env.PORT ?? 8080;
@@ -53,13 +53,11 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const db = await getSupabaseClient();
-
     const { docIndex, docStore } = projectId
-      ? await buildProjectDocContext(projectId, db)
-      : await buildDocContext(userId, db);
+      ? await buildProjectDocContext(projectId)
+      : await buildDocContext(userId);
 
-    const agent = createAgent(userId, docStore, docIndex, db, projectId, model, body.runtimeSessionId);
+    const agent = createAgent(userId, docStore, docIndex, projectId, model, body.runtimeSessionId);
 
     let fullText = '';
 
@@ -159,7 +157,13 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
 
     // Store AgentCore session ID for multi-turn continuity
     if (body.runtimeSessionId) {
-      await db.from('chats').update({ agentcore_session_id: body.runtimeSessionId }).eq('id', chatId);
+      await execute(
+        'UPDATE chats SET agentcore_session_id = :sessionId WHERE id = :chatId',
+        [
+          { name: 'sessionId', value: { stringValue: body.runtimeSessionId } },
+          { name: 'chatId', value: { stringValue: chatId } },
+        ],
+      );
     }
 
     res.write('data: [DONE]\n\n');

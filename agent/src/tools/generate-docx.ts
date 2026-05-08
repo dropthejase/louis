@@ -5,7 +5,7 @@ import {
   Table, TableRow, TableCell, WidthType,
 } from 'docx';
 import { uploadFile, getPresignedUrl } from '../lib/storage';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { query, execute } from '../lib/db';
 import { DocStore, DocIndex } from '../lib/doc-context';
 
 const SectionSchema = z.object({
@@ -23,7 +23,6 @@ export function makeGenerateDocxTool(
   userId: string,
   docStore: DocStore,
   docIndex: DocIndex,
-  db: SupabaseClient
 ) {
   return tool({
     name: 'generate_docx',
@@ -89,30 +88,38 @@ export function makeGenerateDocxTool(
 
       await uploadFile(storageKey, buf, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 
-      // Record in DB
-      const { data: docRow } = await db.from('documents').insert({
-        id: docId,
-        user_id: userId,
-        filename,
-        file_type: 'docx',
-        size_bytes: buf.length,
-        status: 'ready',
-      }).select().single();
+      // Insert document record
+      await execute(
+        `INSERT INTO documents (id, user_id, filename, file_type, size_bytes, status)
+         VALUES (:id, :userId, :filename, 'docx', :sizeBytes, 'ready')`,
+        [
+          { name: 'id', value: { stringValue: docId } },
+          { name: 'userId', value: { stringValue: userId } },
+          { name: 'filename', value: { stringValue: filename } },
+          { name: 'sizeBytes', value: { longValue: buf.length } },
+        ],
+      );
+
+      const versionRows = await query<{ id: string }>(
+        `INSERT INTO document_versions (document_id, storage_path, source, version_number, display_name)
+         VALUES (:documentId, :storagePath, 'assistant_generated', 1, 'Generated')
+         RETURNING id`,
+        [
+          { name: 'documentId', value: { stringValue: docId } },
+          { name: 'storagePath', value: { stringValue: storageKey } },
+        ],
+      );
 
       let versionId: string | undefined;
-      if (docRow) {
-        const { data: versionRow } = await db.from('document_versions').insert({
-          document_id: docId,
-          storage_path: storageKey,
-          source: 'assistant_generated',
-          version_number: 1,
-          display_name: 'Generated',
-        }).select().single();
-
-        if (versionRow) {
-          versionId = versionRow.id as string;
-          await db.from('documents').update({ current_version_id: versionRow.id }).eq('id', docId);
-        }
+      if (versionRows.length > 0) {
+        versionId = versionRows[0].id;
+        await execute(
+          `UPDATE documents SET current_version_id = :versionId WHERE id = :documentId`,
+          [
+            { name: 'versionId', value: { stringValue: versionId } },
+            { name: 'documentId', value: { stringValue: docId } },
+          ],
+        );
       }
 
       // Add to docStore for immediate use in same session

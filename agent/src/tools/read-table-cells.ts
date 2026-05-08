@@ -1,8 +1,9 @@
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { query } from '../lib/db';
+import type { SqlParameter } from '@aws-sdk/client-rds-data';
 
-export function makeReadTableCellsTool(db: SupabaseClient) {
+export function makeReadTableCellsTool(userId: string) {
   return tool({
     name: 'read_table_cells',
     description: 'Read cells from a tabular review.',
@@ -11,11 +12,21 @@ export function makeReadTableCellsTool(db: SupabaseClient) {
       column_index: z.number().int().optional().describe('Filter to specific column index'),
     }),
     callback: async ({ review_id, column_index }): Promise<string> => {
-      let query = db.from('tabular_cells').select('column_index, content, citations, document_id').eq('review_id', review_id);
-      if (column_index !== undefined) query = query.eq('column_index', column_index);
-      const { data, error } = await query;
-      if (error) return `Error: ${error.message}`;
-      if (!data || data.length === 0) return 'No cells found.';
+      let sql = `SELECT tc.column_index, tc.content, tc.citations, tc.document_id
+        FROM tabular_cells tc
+        JOIN tabular_reviews tr ON tr.id = tc.review_id
+        WHERE tc.review_id = :reviewId AND tr.user_id = :userId`;
+      const params: SqlParameter[] = [
+        { name: 'reviewId', value: { stringValue: review_id } },
+        { name: 'userId', value: { stringValue: userId } },
+      ];
+      if (column_index !== undefined) {
+        sql += ` AND tc.column_index = :columnIndex`;
+        params.push({ name: 'columnIndex', value: { longValue: column_index } });
+      }
+
+      const data = await query(sql, params);
+      if (data.length === 0) return 'No cells found.';
       return JSON.stringify(data);
     },
   });

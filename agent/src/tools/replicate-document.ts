@@ -1,14 +1,13 @@
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile, uploadFile } from '../lib/storage';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { query, execute } from '../lib/db';
 import { DocStore, DocIndex } from '../lib/doc-context';
 
 export function makeReplicateDocumentTool(
   userId: string,
   docStore: DocStore,
   docIndex: DocIndex,
-  db: SupabaseClient
 ) {
   return tool({
     name: 'replicate_document',
@@ -21,6 +20,19 @@ export function makeReplicateDocumentTool(
       const entry = docStore.get(doc_id);
       if (!entry) return `Error: document ${doc_id} not found.`;
 
+      const meta = docIndex[doc_id];
+      if (!meta) return `Error: no index entry for ${doc_id}.`;
+
+      // Ownership check on source document
+      const owned = await query<{ id: string }>(
+        `SELECT id FROM documents WHERE id = :documentId AND user_id = :userId`,
+        [
+          { name: 'documentId', value: { stringValue: meta.document_id } },
+          { name: 'userId', value: { stringValue: userId } },
+        ],
+      );
+      if (owned.length === 0) return `Error: document ${doc_id} not found or access denied.`;
+
       const buf = await downloadFile(entry.storage_path);
       const newDocId = crypto.randomUUID();
       const filename = new_filename ?? `Copy of ${entry.filename}`;
@@ -29,23 +41,30 @@ export function makeReplicateDocumentTool(
 
       await uploadFile(newKey, Buffer.from(buf), `application/vnd.openxmlformats-officedocument.wordprocessingml.document`);
 
-      const { data: versionRow } = await db.from('document_versions').insert({
-        document_id: newDocId,
-        storage_path: newKey,
-        source: 'replicated',
-        version_number: 1,
-        display_name: 'v1',
-      }).select().single();
+      const versionRows = await query<{ id: string }>(
+        `INSERT INTO document_versions (document_id, storage_path, source, version_number, display_name)
+         VALUES (:documentId, :storagePath, 'replicated', 1, 'v1')
+         RETURNING id`,
+        [
+          { name: 'documentId', value: { stringValue: newDocId } },
+          { name: 'storagePath', value: { stringValue: newKey } },
+        ],
+      );
 
-      await db.from('documents').insert({
-        id: newDocId,
-        user_id: userId,
-        filename,
-        file_type: entry.file_type,
-        size_bytes: buf.byteLength,
-        status: 'ready',
-        current_version_id: versionRow ? (versionRow as { id: string }).id : null,
-      });
+      const versionId = versionRows.length > 0 ? versionRows[0].id : null;
+
+      await execute(
+        `INSERT INTO documents (id, user_id, filename, file_type, size_bytes, status, current_version_id)
+         VALUES (:id, :userId, :filename, :fileType, :sizeBytes, 'ready', :versionId)`,
+        [
+          { name: 'id', value: { stringValue: newDocId } },
+          { name: 'userId', value: { stringValue: userId } },
+          { name: 'filename', value: { stringValue: filename } },
+          { name: 'fileType', value: { stringValue: entry.file_type } },
+          { name: 'sizeBytes', value: { longValue: buf.byteLength } },
+          { name: 'versionId', value: versionId ? { stringValue: versionId } : { isNull: true } },
+        ],
+      );
 
       const label = `doc-${Object.keys(docIndex).length}`;
       docStore.set(label, { storage_path: newKey, file_type: entry.file_type, filename });

@@ -1,11 +1,9 @@
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { query } from '../lib/db';
+import type { SqlParameter } from '@aws-sdk/client-rds-data';
 
-export function makeListWorkflowsTool(
-  userId: string,
-  db: SupabaseClient
-) {
+export function makeListWorkflowsTool(userId: string) {
   return tool({
     name: 'list_workflows',
     description: 'List available workflow templates.',
@@ -13,15 +11,20 @@ export function makeListWorkflowsTool(
       type: z.enum(['assistant', 'tabular']).optional().describe('Filter by workflow type'),
     }),
     callback: async ({ type }): Promise<string> => {
-      let query = db
-        .from('workflows')
-        .select('id, title, type, practice')
-        .or(`user_id.eq.${userId},is_system.eq.true`);
-      if (type) query = query.eq('type', type);
-      const { data, error } = await query.order('title');
-      if (error) return `Error: ${error.message}`;
-      if (!data || data.length === 0) return 'No workflows found.';
-      return data.map((w: { title: string; id: string; type: string }) => `[Workflow: ${w.title} (id: ${w.id})] type=${w.type}`).join('\n');
+      let sql = `SELECT id, title, type, practice FROM workflows
+        WHERE (user_id = :userId OR is_system = true)`;
+      const params: SqlParameter[] = [
+        { name: 'userId', value: { stringValue: userId } },
+      ];
+      if (type) {
+        sql += ` AND type = :type`;
+        params.push({ name: 'type', value: { stringValue: type } });
+      }
+      sql += ` ORDER BY title ASC`;
+
+      const data = await query<{ id: string; title: string; type: string; practice: string }>(sql, params);
+      if (data.length === 0) return 'No workflows found.';
+      return data.map(w => `[Workflow: ${w.title} (id: ${w.id})] type=${w.type}`).join('\n');
     },
   });
 }

@@ -1,7 +1,7 @@
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile, uploadFile, getPresignedUrl } from '../lib/storage';
-import { SupabaseClient } from '@supabase/supabase-js';
+import { query, execute } from '../lib/db';
 import { DocStore, DocIndex } from '../lib/doc-context';
 import { applyTrackedEdits, type EditInput } from '../lib/docx-tracked-changes';
 
@@ -17,7 +17,6 @@ export function makeEditDocumentTool(
   userId: string,
   docStore: DocStore,
   docIndex: DocIndex,
-  db: SupabaseClient
 ) {
   return tool({
     name: 'edit_document',
@@ -54,33 +53,49 @@ export function makeEditDocumentTool(
 
       await uploadFile(newKey, editedBuf, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 
-      const { data: versionRow } = await db.from('document_versions').insert({
-        document_id: docId,
-        storage_path: newKey,
-        source: 'assistant_edit',
-        version_number: newVersionNumber,
-        display_name: versionSlug,
-      }).select().single();
+      const versionRows = await query<{ id: string }>(
+        `INSERT INTO document_versions (document_id, storage_path, source, version_number, display_name)
+         VALUES (:documentId, :storagePath, 'assistant_edit', :versionNumber, :displayName)
+         RETURNING id`,
+        [
+          { name: 'documentId', value: { stringValue: docId } },
+          { name: 'storagePath', value: { stringValue: newKey } },
+          { name: 'versionNumber', value: { longValue: newVersionNumber } },
+          { name: 'displayName', value: { stringValue: versionSlug } },
+        ],
+      );
 
       let versionId: string | undefined;
       const annotations: unknown[] = [];
 
-      if (versionRow) {
-        versionId = versionRow.id as string;
-        await db.from('documents').update({ current_version_id: versionRow.id }).eq('id', docId);
-        // Record individual edits
+      if (versionRows.length > 0) {
+        versionId = versionRows[0].id;
+
+        await execute(
+          `UPDATE documents SET current_version_id = :versionId WHERE id = :documentId AND user_id = :userId`,
+          [
+            { name: 'versionId', value: { stringValue: versionId } },
+            { name: 'documentId', value: { stringValue: docId } },
+            { name: 'userId', value: { stringValue: userId } },
+          ],
+        );
+
         for (const edit of edits) {
-          const { data: editRow } = await db.from('document_edits').insert({
-            document_id: docId,
-            version_id: versionRow.id,
-            deleted_text: edit.find,
-            inserted_text: edit.replace,
-            status: 'pending',
-          }).select().single();
-          if (editRow) {
+          const editRows = await query<{ id: string }>(
+            `INSERT INTO document_edits (document_id, version_id, deleted_text, inserted_text, status)
+             VALUES (:documentId, :versionId, :deletedText, :insertedText, 'pending')
+             RETURNING id`,
+            [
+              { name: 'documentId', value: { stringValue: docId } },
+              { name: 'versionId', value: { stringValue: versionId } },
+              { name: 'deletedText', value: { stringValue: edit.find } },
+              { name: 'insertedText', value: { stringValue: edit.replace } },
+            ],
+          );
+          if (editRows.length > 0) {
             annotations.push({
               type: 'edit_data',
-              id: (editRow as { id: string }).id,
+              id: editRows[0].id,
               document_id: docId,
               version_id: versionId,
               deleted_text: edit.find,
@@ -88,7 +103,7 @@ export function makeEditDocumentTool(
             });
           }
         }
-        // Update docStore
+
         docStore.set(doc_id, { ...entry, storage_path: newKey });
         meta.version_id = versionId;
         meta.version_number = newVersionNumber;
