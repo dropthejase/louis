@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { query, queryOne, execute } from "../lib/db";
 import {
     buildDocContext,
     buildMessages,
@@ -18,6 +18,7 @@ import {
     ListObjectsV2Command,
     GetObjectCommand,
 } from "@aws-sdk/client-s3";
+import type { SqlParameter } from "@aws-sdk/client-rds-data";
 
 // Lazy singleton S3 client for reading session snapshots.
 let _s3: S3Client | undefined;
@@ -27,6 +28,11 @@ function getSessionS3(): S3Client {
     }
     return _s3;
 }
+
+// chatTools.ts still expects a Supabase-shaped `db` argument; that will be
+// migrated in the next task. Until then, route handlers pass this stand-in.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const dbStub: any = null;
 
 // ---------------------------------------------------------------------------
 // Types mirroring the Strands snapshot message format
@@ -260,6 +266,16 @@ function snapshotMessagesToMikeMessages(
 
 export const chatRouter = Router();
 
+interface ChatRow {
+    id: string;
+    user_id: string;
+    project_id: string | null;
+    title: string | null;
+    agentcore_session_id: string | null;
+    agentcore_session_created_at: string | null;
+    created_at: string;
+}
+
 // GET /chat
 // Visible chats = the user's own chats + every chat under a project the
 // user owns (so a project owner sees all collaborator chats in their
@@ -268,43 +284,54 @@ export const chatRouter = Router();
 // listed per-project via GET /projects/:projectId/chats.
 chatRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
 
-    const { data: ownProjects, error: projErr } = await db
-        .from("projects")
-        .select("id")
-        .eq("user_id", userId);
-    if (projErr) return void res.status(500).json({ detail: projErr.message });
-    const ownProjectIds = ((ownProjects ?? []) as { id: string }[]).map(
-        (p) => p.id,
+    const ownProjects = await query<{ id: string }>(
+        `SELECT id FROM projects WHERE user_id = :userId`,
+        [{ name: "userId", value: { stringValue: userId } }],
     );
+    const ownProjectIds = ownProjects.map((p) => p.id);
 
-    const filter =
-        ownProjectIds.length > 0
-            ? `user_id.eq.${userId},project_id.in.(${ownProjectIds.join(",")})`
-            : `user_id.eq.${userId}`;
-
-    const { data, error } = await db
-        .from("chats")
-        .select("*")
-        .or(filter)
-        .order("created_at", { ascending: false });
-    if (error) return void res.status(500).json({ detail: error.message });
-    res.json(data ?? []);
+    let chats: ChatRow[];
+    if (ownProjectIds.length > 0) {
+        const placeholders = ownProjectIds.map((_, i) => `:pid${i}`).join(", ");
+        const params: SqlParameter[] = [
+            { name: "userId", value: { stringValue: userId } },
+            ...ownProjectIds.map((id, i) => ({
+                name: `pid${i}`,
+                value: { stringValue: id },
+            })),
+        ];
+        chats = await query<ChatRow>(
+            `SELECT * FROM chats
+             WHERE user_id = :userId OR project_id IN (${placeholders})
+             ORDER BY created_at DESC`,
+            params,
+        );
+    } else {
+        chats = await query<ChatRow>(
+            `SELECT * FROM chats WHERE user_id = :userId ORDER BY created_at DESC`,
+            [{ name: "userId", value: { stringValue: userId } }],
+        );
+    }
+    res.json(chats);
 });
 
 // POST /chat/create
 chatRouter.post("/create", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const projectId: string | null = req.body.project_id ?? null;
-    const db = createServerSupabase();
-    const { data, error } = await db
-        .from("chats")
-        .insert({ user_id: userId, project_id: projectId ?? undefined })
-        .select("id")
-        .single();
-
-    if (error) return void res.status(500).json({ detail: error.message });
+    const data = await queryOne<{ id: string }>(
+        `INSERT INTO chats (user_id, project_id) VALUES (:userId, :projectId) RETURNING id`,
+        [
+            { name: "userId", value: { stringValue: userId } },
+            {
+                name: "projectId",
+                value: projectId != null ? { stringValue: projectId } : { isNull: true },
+            },
+        ],
+    );
+    if (!data)
+        return void res.status(500).json({ detail: "Failed to create chat" });
     res.json({ id: data.id });
 });
 
@@ -313,14 +340,12 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
-    const db = createServerSupabase();
 
-    const { data: chat, error } = await db
-        .from("chats")
-        .select("*")
-        .eq("id", chatId)
-        .single();
-    if (error || !chat)
+    const chat = await queryOne<ChatRow>(
+        `SELECT * FROM chats WHERE id = :id`,
+        [{ name: "id", value: { stringValue: chatId } }],
+    );
+    if (!chat)
         return void res.status(404).json({ detail: "Chat not found" });
     // Owner of the chat OR a member of the chat's project can view it.
     let canView = chat.user_id === userId;
@@ -329,20 +354,18 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
             chat.project_id,
             userId,
             userEmail,
-            db,
         );
         canView = access.ok;
     }
     if (!canView)
         return void res.status(404).json({ detail: "Chat not found" });
 
-    const { data: messages } = await db
-        .from("chat_messages")
-        .select("*")
-        .eq("chat_id", chatId)
-        .order("created_at", { ascending: true });
+    const messages = await query<Record<string, unknown>>(
+        `SELECT * FROM chat_messages WHERE chat_id = :chatId ORDER BY created_at ASC`,
+        [{ name: "chatId", value: { stringValue: chatId } }],
+    );
 
-    const hydrated = await hydrateEditStatuses(messages ?? [], db);
+    const hydrated = await hydrateEditStatuses(messages);
     res.json({ chat, messages: hydrated });
 });
 
@@ -353,7 +376,6 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
 // EditCards render with the real state.
 async function hydrateEditStatuses(
     messages: Record<string, unknown>[],
-    db: ReturnType<typeof createServerSupabase>,
 ): Promise<Record<string, unknown>[]> {
     const editIds = new Set<string>();
     const versionIds = new Set<string>();
@@ -383,11 +405,16 @@ async function hydrateEditStatuses(
     // Edit status patch.
     const statusById = new Map<string, "pending" | "accepted" | "rejected">();
     if (editIds.size > 0) {
-        const { data: rows } = await db
-            .from("document_edits")
-            .select("id, status")
-            .in("id", Array.from(editIds));
-        for (const r of (rows ?? []) as { id: string; status: string }[]) {
+        const idArr = Array.from(editIds);
+        const placeholders = idArr.map((_, i) => `:eid${i}`).join(", ");
+        const rows = await query<{ id: string; status: string }>(
+            `SELECT id, status FROM document_edits WHERE id IN (${placeholders})`,
+            idArr.map((id, i) => ({
+                name: `eid${i}`,
+                value: { stringValue: id },
+            })),
+        );
+        for (const r of rows) {
             if (
                 r.status === "pending" ||
                 r.status === "accepted" ||
@@ -403,14 +430,19 @@ async function hydrateEditStatuses(
     // document_versions so the UI can render "V3" chips + download filenames.
     const versionNumberById = new Map<string, number | null>();
     if (versionIds.size > 0) {
-        const { data: vrows } = await db
-            .from("document_versions")
-            .select("id, version_number")
-            .in("id", Array.from(versionIds));
-        for (const r of (vrows ?? []) as {
+        const idArr = Array.from(versionIds);
+        const placeholders = idArr.map((_, i) => `:vid${i}`).join(", ");
+        const vrows = await query<{
             id: string;
             version_number: number | null;
-        }[]) {
+        }>(
+            `SELECT id, version_number FROM document_versions WHERE id IN (${placeholders})`,
+            idArr.map((id, i) => ({
+                name: `vid${i}`,
+                value: { stringValue: id },
+            })),
+        );
+        for (const r of vrows) {
             versionNumberById.set(r.id, r.version_number ?? null);
         }
     }
@@ -467,21 +499,22 @@ async function hydrateEditStatuses(
 chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
-    const db = createServerSupabase();
 
     // Look up the S3 session ID stored on the chat row.
-    const { data: chat, error } = await db
-        .from("chats")
-        .select("agentcore_session_id, user_id")
-        .eq("id", chatId)
-        .single();
+    const chat = await queryOne<{
+        agentcore_session_id: string | null;
+        user_id: string;
+    }>(
+        `SELECT agentcore_session_id, user_id FROM chats WHERE id = :id`,
+        [{ name: "id", value: { stringValue: chatId } }],
+    );
 
-    if (error || !chat)
+    if (!chat)
         return void res.status(404).json({ detail: "Chat not found" });
     if (chat.user_id !== userId)
         return void res.status(404).json({ detail: "Chat not found" });
 
-    const sessionId = chat.agentcore_session_id as string | null;
+    const sessionId = chat.agentcore_session_id;
     if (!sessionId) return void res.json({ messages: [] });
 
     const bucket = process.env.SESSIONS_BUCKET_NAME;
@@ -555,13 +588,14 @@ chatRouter.put("/:chatId/session-id", requireAuth, async (req, res) => {
     if (!sessionId)
         return void res.status(400).json({ detail: "agentcore_session_id is required" });
 
-    const db = createServerSupabase();
-    const { data: chat, error } = await db
-        .from("chats")
-        .select("user_id, agentcore_session_id")
-        .eq("id", chatId)
-        .single();
-    if (error || !chat || chat.user_id !== userId)
+    const chat = await queryOne<{
+        user_id: string;
+        agentcore_session_id: string | null;
+    }>(
+        `SELECT user_id, agentcore_session_id FROM chats WHERE id = :id`,
+        [{ name: "id", value: { stringValue: chatId } }],
+    );
+    if (!chat || chat.user_id !== userId)
         return void res.status(404).json({ detail: "Chat not found" });
 
     // Never overwrite an existing session — return existing one silently.
@@ -569,15 +603,16 @@ chatRouter.put("/:chatId/session-id", requireAuth, async (req, res) => {
         return void res.json({ agentcore_session_id: chat.agentcore_session_id });
     }
 
-    const { error: updateError } = await db
-        .from("chats")
-        .update({
-            agentcore_session_id: sessionId,
-            agentcore_session_created_at: new Date().toISOString(),
-        })
-        .eq("id", chatId);
-    if (updateError)
-        return void res.status(500).json({ detail: updateError.message });
+    await execute(
+        `UPDATE chats
+         SET agentcore_session_id = :sessionId,
+             agentcore_session_created_at = NOW()
+         WHERE id = :id`,
+        [
+            { name: "sessionId", value: { stringValue: sessionId } },
+            { name: "id", value: { stringValue: chatId } },
+        ],
+    );
 
     res.json({ agentcore_session_id: sessionId });
 });
@@ -586,13 +621,14 @@ chatRouter.put("/:chatId/session-id", requireAuth, async (req, res) => {
 chatRouter.get("/:chatId/session-id", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
-    const db = createServerSupabase();
-    const { data: chat, error } = await db
-        .from("chats")
-        .select("agentcore_session_id, user_id")
-        .eq("id", chatId)
-        .single();
-    if (error || !chat || chat.user_id !== userId)
+    const chat = await queryOne<{
+        agentcore_session_id: string | null;
+        user_id: string;
+    }>(
+        `SELECT agentcore_session_id, user_id FROM chats WHERE id = :id`,
+        [{ name: "id", value: { stringValue: chatId } }],
+    );
+    if (!chat || chat.user_id !== userId)
         return void res.status(404).json({ detail: "Chat not found" });
     res.json({ agentcore_session_id: chat.agentcore_session_id ?? null });
 });
@@ -605,16 +641,18 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     if (!title)
         return void res.status(400).json({ detail: "title is required" });
 
-    const db = createServerSupabase();
-    const { data, error } = await db
-        .from("chats")
-        .update({ title })
-        .eq("id", chatId)
-        .eq("user_id", userId)
-        .select("id, title")
-        .single();
+    const data = await queryOne<{ id: string; title: string }>(
+        `UPDATE chats SET title = :title
+         WHERE id = :id AND user_id = :userId
+         RETURNING id, title`,
+        [
+            { name: "title", value: { stringValue: title } },
+            { name: "id", value: { stringValue: chatId } },
+            { name: "userId", value: { stringValue: userId } },
+        ],
+    );
 
-    if (error || !data)
+    if (!data)
         return void res.status(404).json({ detail: "Chat not found" });
     res.json(data);
 });
@@ -623,14 +661,13 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
-    const db = createServerSupabase();
-    const { error } = await db
-        .from("chats")
-        .delete()
-        .eq("id", chatId)
-        .eq("user_id", userId);
-
-    if (error) return void res.status(500).json({ detail: error.message });
+    await execute(
+        `DELETE FROM chats WHERE id = :id AND user_id = :userId`,
+        [
+            { name: "id", value: { stringValue: chatId } },
+            { name: "userId", value: { stringValue: userId } },
+        ],
+    );
     res.status(204).send();
 });
 
@@ -643,14 +680,16 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
     if (!message)
         return void res.status(400).json({ detail: "message is required" });
 
-    const db = createServerSupabase();
-    const { data: chat, error } = await db
-        .from("chats")
-        .select("id, user_id, project_id")
-        .eq("id", chatId)
-        .single();
+    const chat = await queryOne<{
+        id: string;
+        user_id: string;
+        project_id: string | null;
+    }>(
+        `SELECT id, user_id, project_id FROM chats WHERE id = :id`,
+        [{ name: "id", value: { stringValue: chatId } }],
+    );
 
-    if (error || !chat)
+    if (!chat)
         return void res.status(404).json({ detail: "Chat not found" });
     let canTitle = chat.user_id === userId;
     if (!canTitle && chat.project_id) {
@@ -658,7 +697,6 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
             chat.project_id,
             userId,
             userEmail,
-            db,
         );
         canTitle = access.ok;
     }
@@ -674,11 +712,15 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         });
         const title = titleText.trim() || message.slice(0, 60);
 
-        await db
-            .from("chats")
-            .update({ title })
-            .eq("id", chatId)
-            .eq("user_id", userId);
+        await execute(
+            `UPDATE chats SET title = :title
+             WHERE id = :id AND user_id = :userId`,
+            [
+                { name: "title", value: { stringValue: title } },
+                { name: "id", value: { stringValue: chatId } },
+                { name: "userId", value: { stringValue: userId } },
+            ],
+        );
 
         res.json({ title });
     } catch (err) {
@@ -706,24 +748,26 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     });
 
     const userEmail = res.locals.userEmail as string | undefined;
-    const db = createServerSupabase();
     let chatId = chat_id ?? null;
     let chatTitle: string | null = null;
 
     if (chatId) {
         // Either chat owner OR a member of the chat's project can post.
-        const { data: existing } = await db
-            .from("chats")
-            .select("id, title, user_id, project_id")
-            .eq("id", chatId)
-            .single();
+        const existing = await queryOne<{
+            id: string;
+            title: string | null;
+            user_id: string;
+            project_id: string | null;
+        }>(
+            `SELECT id, title, user_id, project_id FROM chats WHERE id = :id`,
+            [{ name: "id", value: { stringValue: chatId } }],
+        );
         let canUse = !!existing && existing.user_id === userId;
         if (!canUse && existing?.project_id) {
             const access = await checkProjectAccess(
                 existing.project_id,
                 userId,
                 userEmail,
-                db,
             );
             canUse = access.ok;
         }
@@ -739,25 +783,33 @@ chatRouter.post("/", requireAuth, async (req, res) => {
                 project_id,
                 userId,
                 userEmail,
-                db,
             );
             if (!access.ok)
                 return void res
                     .status(404)
                     .json({ detail: "Project not found" });
         }
-        const { data: newChat, error } = await db
-            .from("chats")
-            .insert({ user_id: userId, project_id: project_id ?? null })
-            .select("id, title")
-            .single();
-        if (error || !newChat) {
-            console.error("[chat/stream] failed to create chat", error);
+        const newChat = await queryOne<{ id: string; title: string | null }>(
+            `INSERT INTO chats (user_id, project_id)
+             VALUES (:userId, :projectId)
+             RETURNING id, title`,
+            [
+                { name: "userId", value: { stringValue: userId } },
+                {
+                    name: "projectId",
+                    value: project_id != null
+                        ? { stringValue: project_id }
+                        : { isNull: true },
+                },
+            ],
+        );
+        if (!newChat) {
+            console.error("[chat/stream] failed to create chat");
             return void res
                 .status(500)
                 .json({ detail: "Failed to create chat" });
         }
-        chatId = newChat.id as string;
+        chatId = newChat.id;
         chatTitle = newChat.title;
     }
 
@@ -765,19 +817,39 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 
     const lastUser = [...messages].reverse().find((m) => m.role === "user");
     if (lastUser) {
-        await db.from("chat_messages").insert({
-            chat_id: chatId,
-            role: "user",
-            content: lastUser.content,
-            files: lastUser.files ?? null,
-            workflow: lastUser.workflow ?? null,
-        });
+        await execute(
+            `INSERT INTO chat_messages (chat_id, role, content, files, workflow)
+             VALUES (:chatId, :role, :content, :files::jsonb, :workflow::jsonb)`,
+            [
+                { name: "chatId", value: { stringValue: chatId } },
+                { name: "role", value: { stringValue: "user" } },
+                {
+                    name: "content",
+                    value:
+                        lastUser.content != null
+                            ? { stringValue: JSON.stringify(lastUser.content) }
+                            : { isNull: true },
+                },
+                {
+                    name: "files",
+                    value: lastUser.files != null
+                        ? { stringValue: JSON.stringify(lastUser.files) }
+                        : { isNull: true },
+                },
+                {
+                    name: "workflow",
+                    value: lastUser.workflow != null
+                        ? { stringValue: JSON.stringify(lastUser.workflow) }
+                        : { isNull: true },
+                },
+            ],
+        );
     }
 
     const { docIndex, docStore } = await buildDocContext(
         messages,
         userId,
-        db,
+        dbStub,
         chatId,
     );
     const docAvailability = Object.entries(docIndex).map(([doc_id, info]) => ({
@@ -787,12 +859,12 @@ chatRouter.post("/", requireAuth, async (req, res) => {
     const enrichedMessages = await enrichWithPriorEvents(
         messages,
         chatId,
-        db,
+        dbStub,
         docIndex,
     );
     const apiMessages = buildMessages(enrichedMessages, docAvailability);
 
-    const workflowStore = await buildWorkflowStore(userId, userEmail, db);
+    const workflowStore = await buildWorkflowStore(userId, userEmail, dbStub);
 
     console.log("[chat/stream] starting LLM stream", {
         apiMessageCount: apiMessages.length,
@@ -816,7 +888,7 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             docStore,
             docIndex,
             userId,
-            db,
+            db: dbStub,
             write,
             workflowStore,
             model,
@@ -829,18 +901,38 @@ chatRouter.post("/", requireAuth, async (req, res) => {
         });
 
         const annotations = extractAnnotations(fullText, docIndex, events);
-        await db.from("chat_messages").insert({
-            chat_id: chatId,
-            role: "assistant",
-            content: events.length ? events : null,
-            annotations: annotations.length ? annotations : null,
-        });
+        await execute(
+            `INSERT INTO chat_messages (chat_id, role, content, annotations)
+             VALUES (:chatId, :role, :content::jsonb, :annotations::jsonb)`,
+            [
+                { name: "chatId", value: { stringValue: chatId } },
+                { name: "role", value: { stringValue: "assistant" } },
+                {
+                    name: "content",
+                    value: events.length
+                        ? { stringValue: JSON.stringify(events) }
+                        : { isNull: true },
+                },
+                {
+                    name: "annotations",
+                    value: annotations.length
+                        ? { stringValue: JSON.stringify(annotations) }
+                        : { isNull: true },
+                },
+            ],
+        );
 
         if (!chatTitle && lastUser?.content) {
-            await db
-                .from("chats")
-                .update({ title: lastUser.content.slice(0, 120) })
-                .eq("id", chatId);
+            await execute(
+                `UPDATE chats SET title = :title WHERE id = :id`,
+                [
+                    {
+                        name: "title",
+                        value: { stringValue: lastUser.content.slice(0, 120) },
+                    },
+                    { name: "id", value: { stringValue: chatId } },
+                ],
+            );
         }
     } catch (err) {
         console.error("[chat/stream] error:", err);
