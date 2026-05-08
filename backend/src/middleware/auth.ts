@@ -37,7 +37,7 @@ export async function requireAuth(
   }
 
   res.locals.userId = claims.sub;
-  res.locals.userEmail = (claims.email ?? "").toLowerCase();
+  res.locals.userEmail = claims.email ? claims.email.toLowerCase() : undefined;
   const auth = req.headers.authorization ?? "";
   res.locals.token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   next();
