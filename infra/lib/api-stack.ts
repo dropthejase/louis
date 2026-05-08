@@ -89,7 +89,7 @@ export class ApiStack extends Stack {
         FRONTEND_URL: props.frontendUrl ?? '*',
         NODE_ENV: 'production',
         POWERTOOLS_SERVICE_NAME: 'louis-api',
-        POWERTOOLS_LOG_LEVEL: props.stage === 'dev' ? 'DEBUG' : 'INFO',
+        POWERTOOLS_LOG_LEVEL: 'INFO',
         AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       },
       tracing: lambda.Tracing.ACTIVE,
@@ -100,7 +100,7 @@ export class ApiStack extends Stack {
       deployOptions: {
         stageName: props.stage,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: props.stage === 'dev',
+        dataTraceEnabled: false,
         metricsEnabled: true,
       },
       defaultCorsPreflightOptions: {

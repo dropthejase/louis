@@ -1,5 +1,6 @@
 import { Stack, StackProps, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
 import { Stage } from './shared/stage';
 
@@ -17,6 +18,14 @@ export class DatabaseStack extends Stack {
 
     this.databaseName = 'louis';
 
+    const vpc = new ec2.Vpc(this, 'AuroraVpc', {
+      maxAzs: 2,
+      natGateways: 0,
+      subnetConfiguration: [
+        { name: 'isolated', subnetType: ec2.SubnetType.PRIVATE_ISOLATED, cidrMask: 24 },
+      ],
+    });
+
     const cluster = new rds.DatabaseCluster(this, 'AuroraCluster', {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
         version: rds.AuroraPostgresEngineVersion.VER_16_3,
@@ -27,6 +36,8 @@ export class DatabaseStack extends Stack {
       defaultDatabaseName: this.databaseName,
       enableDataApi: true,
       removalPolicy: RemovalPolicy.DESTROY,
+      vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
     });
 
     this.clusterArn = cluster.clusterArn;

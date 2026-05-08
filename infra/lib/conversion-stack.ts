@@ -45,7 +45,7 @@ export class ConversionStack extends Stack {
       environment: {
         DOCS_BUCKET_NAME: props.docsBucketName,
         POWERTOOLS_SERVICE_NAME: 'mike-conversion',
-        POWERTOOLS_LOG_LEVEL: props.stage === 'dev' ? 'DEBUG' : 'INFO',
+        POWERTOOLS_LOG_LEVEL: 'INFO',
       },
     });
 

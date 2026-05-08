@@ -5,7 +5,6 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as path from 'path';
@@ -25,15 +24,6 @@ export class AuthStack extends Stack {
   constructor(scope: Construct, id: string, props: AuthStackProps) {
     super(scope, id, props);
 
-    // Supabase credentials secret — used by post-confirmation and post-deletion Lambdas
-    const supabaseSecret = new secretsmanager.Secret(this, 'SupabaseCredentials', {
-      description: 'Supabase URL and service role key',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ url: 'REPLACE_ME', serviceRoleKey: 'REPLACE_ME' }),
-        generateStringKey: '_unused',
-      },
-    });
-
     // Pre-Token Generation v2 Lambda — injects role: "authenticated" into id token
     const preTokenGenFn = new lambdaNodejs.NodejsFunction(this, 'PreTokenGen', {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -46,7 +36,7 @@ export class AuthStack extends Stack {
 
     // Cognito User Pool
     this.userPool = new cognito.UserPool(this, 'UserPool', {
-      userPoolName: `louis-${props.stage}`,
+      userPoolName: 'louis',
       selfSignUpEnabled: true,
       signInAliases: { email: true },
       autoVerify: { email: true },
@@ -68,7 +58,7 @@ export class AuthStack extends Stack {
         otp: true, // TOTP only
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
-      removalPolicy: props.stage === 'dev' ? RemovalPolicy.DESTROY : RemovalPolicy.RETAIN,
+      removalPolicy: RemovalPolicy.DESTROY,
       lambdaTriggers: {
         preTokenGeneration: preTokenGenFn,
       },
@@ -98,9 +88,7 @@ export class AuthStack extends Stack {
       bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
       timeout: Duration.seconds(10),
       memorySize: 128,
-      environment: { SUPABASE_SECRET_ARN: supabaseSecret.secretArn },
     });
-    supabaseSecret.grantRead(postConfirmationFn);
     this.userPool.addTrigger(cognito.UserPoolOperation.POST_CONFIRMATION, postConfirmationFn);
 
     // Post Deletion Lambda — deletes user_profiles row on Cognito user deletion
@@ -112,9 +100,7 @@ export class AuthStack extends Stack {
       bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
       timeout: Duration.seconds(10),
       memorySize: 128,
-      environment: { SUPABASE_SECRET_ARN: supabaseSecret.secretArn },
     });
-    supabaseSecret.grantRead(postDeletionFn);
 
     // EventBridge rule: fire postDeletionFn on Cognito DeleteUser / AdminDeleteUser via CloudTrail
     new events.Rule(this, 'CognitoUserDeleteRule', {
