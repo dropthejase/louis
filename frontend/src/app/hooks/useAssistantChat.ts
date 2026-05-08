@@ -402,6 +402,17 @@ export function useAssistantChat({
                             streamedChatId = data.chatId;
                             setChatId(data.chatId);
                             setCurrentChatId(data.chatId);
+                            // Persist session ID immediately — before AgentCore
+                            // runs — so a tab-close mid-stream still saves it.
+                            if (runtimeSessionIdRef.current) {
+                                void apiRequest(`/chat/${data.chatId}/session-id`, {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        agentcore_session_id: runtimeSessionIdRef.current,
+                                    }),
+                                }).catch(() => {});
+                            }
                             continue;
                         }
 
@@ -825,19 +836,6 @@ export function useAssistantChat({
             }
 
             await loadChats();
-
-            // Persist the AgentCore session ID after the first turn so it
-            // survives page refresh. PUT is a no-op if already set.
-            const persistChatId = streamedChatId || chatId || null;
-            if (persistChatId && runtimeSessionIdRef.current) {
-                void apiRequest(`/chat/${persistChatId}/session-id`, {
-                    method: "PUT",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        agentcore_session_id: runtimeSessionIdRef.current,
-                    }),
-                }).catch(() => {});
-            }
 
             const finalChatIdForTitle = streamedChatId || chatId || null;
             if (finalChatIdForTitle && newMessages.length === 1) {
