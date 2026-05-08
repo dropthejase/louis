@@ -4,35 +4,13 @@ import {
   GetObjectCommand,
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
-import {
-  SecretsManagerClient,
-  GetSecretValueCommand,
-} from '@aws-sdk/client-secrets-manager';
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Logger } from '@aws-lambda-powertools/logger';
 import { docxToPdf, convertedPdfKey } from './convert';
+import { query, execute } from './lib/db';
 
 const logger = new Logger({ serviceName: 'mike-conversion' });
 
 const s3 = new S3Client({});
-const secretsManager = new SecretsManagerClient({});
-
-// Cached across warm invocations
-let supabase: SupabaseClient | null = null;
-
-async function getSupabase(): Promise<SupabaseClient> {
-  if (supabase) return supabase;
-
-  const secretArn = process.env.SUPABASE_SECRET_ARN!;
-  const result = await secretsManager.send(
-    new GetSecretValueCommand({ SecretId: secretArn })
-  );
-  const { url, serviceRoleKey } = JSON.parse(result.SecretString!);
-  supabase = createClient(url, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
-  return supabase;
-}
 
 export const handler = async (event: S3Event): Promise<void> => {
   for (const record of event.Records) {
@@ -74,42 +52,38 @@ async function convertDocument(bucket: string, sourceKey: string): Promise<void>
   );
   logger.info('PDF uploaded', { pdfKey });
 
-  // 4. Update document_versions: set pdf_storage_path where storage_path = sourceKey
-  const db = await getSupabase();
-  const { data: versions, error: fetchErr } = await db
-    .from('document_versions')
-    .select('id, document_id')
-    .eq('storage_path', sourceKey);
+  // 4. Find document_versions rows by storage_path
+  const versions = await query<{ id: string; document_id: string }>(
+    'SELECT id, document_id FROM document_versions WHERE storage_path = :sourceKey',
+    [{ name: 'sourceKey', value: { stringValue: sourceKey } }],
+  );
 
-  if (fetchErr) throw new Error(`DB fetch failed: ${fetchErr.message}`);
-  if (!versions || versions.length === 0) {
+  if (versions.length === 0) {
     logger.warn('No document_versions row found for source key', { sourceKey });
     return;
   }
 
-  const versionIds = versions.map((v: { id: string }) => v.id);
-
-  const { error: updateVersionErr } = await db
-    .from('document_versions')
-    .update({ pdf_storage_path: pdfKey })
-    .in('id', versionIds);
-
-  if (updateVersionErr) {
-    throw new Error(`document_versions update failed: ${updateVersionErr.message}`);
+  // 5. Update pdf_storage_path for each version
+  for (const version of versions) {
+    await execute(
+      'UPDATE document_versions SET pdf_storage_path = :pdfKey WHERE id = :versionId',
+      [
+        { name: 'pdfKey', value: { stringValue: pdfKey } },
+        { name: 'versionId', value: { stringValue: version.id } },
+      ],
+    );
   }
-  logger.info('document_versions updated', { versionIds, pdfKey });
+  logger.info('document_versions updated', { versionIds: versions.map(v => v.id), pdfKey });
 
-  // 5. Update documents: set status = 'ready' where current_version_id is one of ours
-  const docIds = [...new Set(versions.map((v: { document_id: string }) => v.document_id))];
-
-  const { error: updateDocErr } = await db
-    .from('documents')
-    .update({ status: 'ready' })
-    .in('current_version_id', versionIds)
-    .in('id', docIds);
-
-  if (updateDocErr) {
-    throw new Error(`documents status update failed: ${updateDocErr.message}`);
+  // 6. Update documents status for each version's document
+  for (const version of versions) {
+    await execute(
+      "UPDATE documents SET status = 'ready' WHERE id = :docId AND current_version_id = :versionId",
+      [
+        { name: 'docId', value: { stringValue: version.document_id } },
+        { name: 'versionId', value: { stringValue: version.id } },
+      ],
+    );
   }
-  logger.info('documents status set to ready', { docIds });
+  logger.info('documents status set to ready', { docIds: versions.map(v => v.document_id) });
 }

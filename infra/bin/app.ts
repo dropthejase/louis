@@ -44,7 +44,11 @@ const conversionStack = new ConversionStack(app, 'ConversionStack', {
   stage,
   docsBucketArn: storageStack.docsBucket.bucketArn,
   docsBucketName: storageStack.docsBucket.bucketName,
+  dbClusterArn: databaseStack.clusterArn,
+  dbSecretArn: databaseStack.secretArn,
+  dbName: databaseStack.databaseName,
 });
 conversionStack.addDependency(apiStack);
+conversionStack.addDependency(databaseStack);
 
 app.synth();
