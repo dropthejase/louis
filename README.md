@@ -132,7 +132,7 @@ Both values come from `StorageStack` CDK outputs.
 | `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container) |
 | `ConversionStack` | LibreOffice Lambda (x86_64 container), S3 event trigger |
 
-All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC. API Gateway: native Cognito User Pool authorizer on all routes. Aurora: RETAIN removal policy — never deleted on stack destroy.
+All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC. API Gateway: native Cognito User Pool authorizer on all routes. Aurora: DESTROY removal policy — fully cleaned up on `cdk destroy`.
 
 Synth without deploying:
 
