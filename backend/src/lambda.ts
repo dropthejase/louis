@@ -7,8 +7,12 @@
 //   POWERTOOLS_SERVICE_NAME  — defaults to "mike-api"
 //   POWERTOOLS_LOG_LEVEL     — defaults to "INFO"
 //   AWS_REGION               — set automatically by Lambda runtime
-//   SUPABASE_SECRET_ARN      — ARN of the Secrets Manager secret
+//   DB_CLUSTER_ARN           — Aurora cluster ARN
+//   DB_SECRET_ARN            — RDS-managed credentials secret ARN
+//   DB_NAME                  — database name
 //   DOCS_BUCKET_NAME         — documents bucket
+//   SESSIONS_BUCKET_NAME     — sessions bucket
+//   USER_POOL_ID             — Cognito User Pool ID
 //   FRONTEND_URL             — CloudFront domain for CORS
 
 import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from "aws-lambda";
@@ -22,7 +26,7 @@ import { captureLambdaHandler } from "@aws-lambda-powertools/tracer/middleware";
 import { logMetrics } from "@aws-lambda-powertools/metrics/middleware";
 
 import { app } from "./app";
-import { loadSupabaseSecrets } from "./lib/secrets";
+import { loadSecrets } from "./lib/secrets";
 
 const logger = new Logger({ serviceName: process.env.POWERTOOLS_SERVICE_NAME ?? "mike-api" });
 const tracer = new Tracer({ serviceName: process.env.POWERTOOLS_SERVICE_NAME ?? "mike-api" });
@@ -34,8 +38,7 @@ async function lambdaHandler(
   event: APIGatewayProxyEvent,
   context: Context,
 ): Promise<APIGatewayProxyResult> {
-  // Load Supabase secrets from Secrets Manager on cold start (cached after first call).
-  await loadSupabaseSecrets();
+  await loadSecrets();
 
   metrics.addMetric("InvocationCount", MetricUnit.Count, 1);
 
