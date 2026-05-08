@@ -131,7 +131,11 @@ projectsRouter.post("/", requireAuth, async (req, res) => {
       },
       {
         name: "sharedWith",
-        value: { stringValue: JSON.stringify(shared_with ?? []) },
+        value: {
+          stringValue: JSON.stringify(
+            (shared_with ?? []).map((e) => e.trim().toLowerCase()).filter(Boolean),
+          ),
+        },
       },
     ],
   );
@@ -216,21 +220,34 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
     return void res.status(404).json({ detail: "Project not found" });
 
   const ownerProfile = await queryOne<{
+    email: string | null;
     display_name: string | null;
   }>(
-    `SELECT display_name FROM user_profiles WHERE user_id = :userId`,
+    `SELECT email, display_name FROM user_profiles WHERE user_id = :userId`,
     [{ name: "userId", value: { stringValue: project.user_id } }],
   );
 
   const owner = {
     user_id: project.user_id,
-    email: isOwner ? (userEmail ?? null) : null,
+    email: isOwner ? (userEmail ?? null) : (ownerProfile?.email ?? null),
     display_name: ownerProfile?.display_name ?? null,
   };
-  const members = sharedWith.map((email) => ({
-    email,
-    display_name: null as string | null,
-  }));
+
+  // Lookup display_names for shared members by email
+  let memberProfiles: { email: string | null; display_name: string | null }[] = [];
+  if (sharedWith.length > 0) {
+    const placeholders = sharedWith.map((_, i) => `:e${i}`).join(", ");
+    const params = sharedWith.map((e, i) => ({ name: `e${i}`, value: { stringValue: e } }));
+    memberProfiles = await query<{ email: string | null; display_name: string | null }>(
+      `SELECT email, display_name FROM user_profiles WHERE email IN (${placeholders})`,
+      params,
+    );
+  }
+
+  const members = sharedWith.map((email) => {
+    const profile = memberProfiles.find((p) => p.email?.toLowerCase() === email.toLowerCase());
+    return { email, display_name: profile?.display_name ?? null };
+  });
 
   res.json({ owner, members });
 });
