@@ -1,38 +1,39 @@
-# Louis — AWS
+# Mike — AWS
 
-Louis is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
+Mike is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
 
 Licensed AGPL-3.0.
 
 ## Architecture
 
-```
+```text
 CloudFront → S3 (static Next.js export)
 
 API Gateway REST API (Cognito User Pool authorizer)
 └→ Lambda container (Express + serverless-http + Lambda Powertools)
-└→ Aurora Serverless v2 PostgreSQL (RDS Data API — no VPC)
+└→ Aurora Serverless v2 PostgreSQL 16.3 (RDS Data API, VPC isolated subnets)
 
 AgentCore Runtime (JWT inbound authorizer — Cognito OIDC)
 └→ Strands agent (10 tools, Bedrock Claude)
+└→ DynamoDB (per-user monthly credits tracking via after_model_call hook)
 
-S3 PutObject (.docx) → Lambda container (LibreOffice DOCX→PDF)
+S3 PutObject (.docx/.doc) → EventBridge → Lambda container (LibreOffice DOCX→PDF)
 
 Cognito Identity Pool (native User Pool federation)
 └→ temporary IAM creds for frontend S3 uploads
 
-LLM → Amazon Bedrock Converse API (Claude only, eu-west-1)
+LLM → Amazon Bedrock Converse API (Claude only, eu-west-1 cross-region inference)
 ```
 
-Auth: Cognito User Pool issues the id token. API Gateway validates it via the native Cognito authorizer. AgentCore validates it via JWT inbound authorizer. S3 access uses the id token exchanged for IAM creds via the Cognito Identity Pool.
+Auth: Cognito User Pool issues the id token. API Gateway validates it via the native Cognito authorizer. AgentCore validates it via JWT inbound authorizer. S3 access uses the id token exchanged for temporary IAM creds via the Cognito Identity Pool.
 
 ## Repo Structure
 
-```
+```text
 backend/        Express API (Lambda entrypoint via serverless-http)
 frontend/       Next.js app (static export, Amplify Auth)
-infra/          CDK app — StorageStack, AuthStack, DatabaseStack, ApiStack, ConversionStack
-agent/          AgentCore agent (Strands, 10 tools, ARM64 container)
+infra/          CDK app — StorageStack, DatabaseStack, AuthStack, ApiStack, ConversionStack
+agent/          AgentCore agent (Strands, 10 tools)
 conversion/     LibreOffice Lambda container (DOCX→PDF, x86_64)
 scripts/        Deploy and utility scripts
 ```
@@ -41,18 +42,16 @@ scripts/        Deploy and utility scripts
 
 - AWS CLI configured for `eu-west-1`
 - Node 20
-- **Finch** (container builds — Docker Desktop not required)
+- **Finch** — required only for building the LibreOffice conversion Lambda container
 - CDK bootstrapped: `npx cdk bootstrap aws://ACCOUNT_ID/eu-west-1`
 
 ### Installing Finch
 
-Finch is an open-source container runtime from AWS. It replaces Docker Desktop for building Lambda container images.
+Finch is an open-source container runtime from AWS (replaces Docker Desktop for container builds).
 
 ```bash
 # macOS (Homebrew)
 brew install --cask finch
-
-# Start the Finch VM
 finch vm init
 finch vm start
 ```
@@ -63,42 +62,49 @@ CDK uses the `CDK_DOCKER` environment variable to select the container build too
 export CDK_DOCKER=finch
 ```
 
-Add this to your shell profile (`~/.zshrc` or `~/.bashrc`) so it persists across sessions. CDK will call `finch build` instead of `docker build` for all container image assets.
+Add to your shell profile (`~/.zshrc` or `~/.bashrc`) so it persists. CDK calls `finch build` instead of `docker build` for container image assets.
 
-## First-Time Setup
+> **Note:** Finch is only required when deploying `ConversionStack`. All other stacks (including the AgentCore agent) use zip-based packaging — no container build needed.
 
-### 1. Deploy CDK stacks (in order)
+## First-Time Deployment
+
+### 1. Deploy CDK stacks
 
 ```bash
 export CDK_DOCKER=finch
 cd infra && npm install
 
-npx cdk deploy StorageStack    -c stage=dev
-npx cdk deploy DatabaseStack  -c stage=dev
-npx cdk deploy AuthStack       -c stage=dev
-npx cdk deploy ApiStack        -c stage=dev
-npx cdk deploy ConversionStack -c stage=dev
+npx cdk deploy StorageStack
+npx cdk deploy DatabaseStack
+npx cdk deploy AuthStack
+npx cdk deploy ApiStack
+npx cdk deploy ConversionStack   # requires Finch
 ```
 
-Note the outputs — you'll need them in later steps.
+Deploy order matters: DatabaseStack before AuthStack and ApiStack. ConversionStack last.
 
 ### 2. Initialise the database schema
 
 ```bash
-./scripts/init-db.sh DatabaseStack
+# From repo root
+./scripts/init-db.sh
 ```
 
-This runs `backend/migrations/000_one_shot_schema.sql` against the Aurora cluster via the RDS Data API. Safe to re-run (all statements are idempotent).
+Reads `ClusterArn`, `SecretArn`, `DatabaseName` from the `DatabaseStack` CloudFormation outputs and runs `backend/migrations/000_one_shot_schema.sql` via the RDS Data API. Safe to re-run (all statements are idempotent).
 
 ### 3. Deploy the AgentCore agent
 
 ```bash
 npm install -g @aws/agentcore
-cd agent && npm install && npm run build
-AWS_ACCOUNT_ID=YOUR_ACCOUNT_ID AWS_REGION=eu-west-1 ../scripts/deploy-agent.sh
+cd agent && npm install
+
+# From repo root — reads AgentCoreExecutionRoleArn from ApiStack CFN outputs
+AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
 ```
 
-### 4. Configure frontend env vars
+On first run the script reads the `AgentCoreExecutionRoleArn` output from `ApiStack`, injects it into `agent/agentcore/agentcore.json`, builds the agent (zip), and deploys via `agentcore deploy`. Subsequent runs skip the role injection if the ARN is already set.
+
+### 4. Configure frontend environment
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local
@@ -108,85 +114,119 @@ cp frontend/.env.local.example frontend/.env.local
 ### 5. Deploy frontend
 
 ```bash
-cd frontend && npm install
-FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ../scripts/deploy-frontend.sh
+# From repo root
+FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ./scripts/deploy-frontend.sh
 ```
 
-## Redeploying Frontend
+Runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until the CDN cache clears.
+
+Both values come from `StorageStack` CDK outputs.
+
+## Redeploying
+
+**Backend / API changes:**
+
+```bash
+export CDK_DOCKER=finch
+cd infra && npx cdk deploy ApiStack
+```
+
+**Agent changes:**
+
+```bash
+AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
+```
+
+**Frontend changes:**
 
 ```bash
 FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ./scripts/deploy-frontend.sh
 ```
 
-Runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until CDN cache clears.
+**Conversion Lambda changes** (requires Finch):
 
-Both values come from `StorageStack` CDK outputs.
+```bash
+export CDK_DOCKER=finch
+cd infra && npx cdk deploy ConversionStack
+```
 
 ## CDK Stacks
 
 | Stack | Provisions |
-|---|---|
-| `StorageStack` | S3 docs bucket (private, per-user prefix), S3 frontend bucket, CloudFront + OAC |
-| `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 (min 0 / max 1 ACU, Data API, auto-pause) |
-| `AuthStack` | Cognito User Pool (TOTP MFA, strong password, email verification), App Client, Pre-Token Gen Lambda, Identity Pool |
-| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container) |
-| `ConversionStack` | LibreOffice Lambda (x86_64 container), S3 event trigger |
+| --- | --- |
+| `StorageStack` | S3 docs bucket (private, EventBridge enabled), S3 sessions + frontend buckets, CloudFront + OAC |
+| `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 (min 0 / max 1 ACU, RDS Data API, VPC isolated subnets, auto-pause) |
+| `AuthStack` | Cognito User Pool (TOTP MFA, email verification), App Client, Pre-Token Gen Lambda, Identity Pool, post-confirmation and post-deletion trigger Lambdas |
+| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container), AgentCore execution IAM role, DynamoDB credits table |
+| `ConversionStack` | LibreOffice Lambda (x86_64 container), EventBridge rule triggering on `.docx`/`.doc` uploads to `documents/` prefix |
 
-All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC. API Gateway: native Cognito User Pool authorizer on all routes. Aurora: DESTROY removal policy — fully cleaned up on `cdk destroy`.
+All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC (no public S3 access). Aurora: `DESTROY` removal policy — fully cleaned up on `cdk destroy`.
 
 Synth without deploying:
 
 ```bash
 export CDK_DOCKER=finch
-cd infra && npx cdk synth -c stage=dev
+cd infra && npx tsc --noEmit && npx cdk synth
 ```
+
+## Credits / Usage Metering
+
+Per-user monthly credit tracking via DynamoDB:
+
+- **Table:** `PK=userId`, `SK=YYYY-MM`, `credits_used` (atomic `UpdateItem ADD`)
+- **Increment:** Strands `after_model_call` hook runs after each successful AgentCore model invocation
+- **Enforcement:** backend returns 429 before allowing chat when limit exceeded; frontend wires to `CreditsExhaustedModal`
+- **IAM:** AgentCore execution role has `dynamodb:GetItem` + `dynamodb:UpdateItem` on credits table only
 
 ## Environment Variables
 
 ### Backend Lambda (set by CDK — do not configure manually)
 
 | Var | Description |
-|---|---|
+| --- | --- |
 | `DB_CLUSTER_ARN` | Aurora cluster ARN (DatabaseStack output) |
 | `DB_SECRET_ARN` | RDS-managed credentials secret ARN (DatabaseStack output) |
-| `DB_NAME` | Database name (`louis`) |
-| `DOCS_BUCKET_NAME` | Documents S3 bucket (StorageStack output) |
-| `SESSIONS_BUCKET_NAME` | Sessions S3 bucket (StorageStack output) |
+| `DB_NAME` | Database name (`mike`) |
+| `DOCS_BUCKET_NAME` | Documents S3 bucket name (StorageStack output) |
+| `SESSIONS_BUCKET_NAME` | Sessions S3 bucket name (StorageStack output) |
 | `USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
-| `FRONTEND_URL` | CloudFront domain for CORS |
-| `POWERTOOLS_SERVICE_NAME` | `louis-api` |
+| `FRONTEND_URL` | CloudFront domain for CORS (StorageStack output) |
 
 ### Frontend (build-time, `NEXT_PUBLIC_*`)
 
 | Var | Description |
-|---|---|
+| --- | --- |
 | `NEXT_PUBLIC_USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
 | `NEXT_PUBLIC_USER_POOL_CLIENT_ID` | Cognito App Client ID (AuthStack output) |
 | `NEXT_PUBLIC_IDENTITY_POOL_ID` | Cognito Identity Pool ID (AuthStack output) |
 | `NEXT_PUBLIC_DOCS_BUCKET_NAME` | S3 docs bucket name (StorageStack output) |
-| `NEXT_PUBLIC_API_URL` | API Gateway URL (ApiStack output) |
-| `NEXT_PUBLIC_AGENTCORE_URL` | AgentCore invocation endpoint |
+| `NEXT_PUBLIC_API_URL` | API Gateway invoke URL (ApiStack output) |
+| `NEXT_PUBLIC_AGENTCORE_URL` | AgentCore invocation endpoint (agentcore deploy output) |
 
 ## Models
 
 Three Claude tiers via Bedrock (eu-west-1 cross-region inference):
 
-| UI label | Logical ID | Bedrock model |
-|---|---|---|
-| Claude Opus 4.7 | `claude-opus-4-7` | `eu.anthropic.claude-opus-4-7-20251101-v1:0` |
-| Claude Sonnet 4.6 *(default)* | `claude-sonnet-4-6` | `eu.anthropic.claude-sonnet-4-6-20250922-v1:0` |
-| Claude Haiku 4.5 | `claude-haiku-4-5` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| UI label | Bedrock model ID |
+| --- | --- |
+| Claude Opus 4.7 | `eu.anthropic.claude-opus-4-7-20251101-v1:0` |
+| Claude Sonnet 4.6 *(default)* | `eu.anthropic.claude-sonnet-4-6-20250922-v1:0` |
+| Claude Haiku 4.5 | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
 
-Model is selected per conversation — switching mid-conversation is supported.
-
-## Checks
+## Build Checks
 
 ```bash
-npm run build:lambda --prefix backend
+# Backend
+cd backend && npx tsc --noEmit
+
+# Infra
 cd infra && npx tsc --noEmit
+
+# Agent
 cd agent && npm run build
-cd conversion && npm run build
-npm run build --prefix frontend
+
+# Frontend
+cd frontend && npm run build
 ```
 
 ## License
