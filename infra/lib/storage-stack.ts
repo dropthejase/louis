@@ -4,6 +4,8 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as origins from 'aws-cdk-lib/aws-cloudfront-origins';
 import { Stage } from './shared/stage';
+// EventBridgeNotifications enabled on docsBucket so ConversionStack can subscribe
+// via EventBridge rules instead of direct S3 notifications (avoids imported-bucket issues).
 
 interface StorageStackProps extends StackProps {
   stage: Stage;
@@ -27,6 +29,7 @@ export class StorageStack extends Stack {
       versioned: false,
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+      eventBridgeEnabled: true,
     });
 
     // Sessions bucket — private, stores Strands agent conversation snapshots
