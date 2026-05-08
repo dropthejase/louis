@@ -192,11 +192,32 @@ Auth context and login/signup pages **unchanged** — Supabase Auth stays.
 - Backend checks `shared_with` contains requesting user's email on each access
 - S3 file isolation maintained: Lambda checks `shared_with`, returns presigned URL for shared files — user never accesses another user's prefix directly
 
+## Planned (in-progress)
+
+### Aurora Serverless v2 Migration
+Replace Supabase Postgres with Aurora Serverless v2 + RDS Data API. Eliminates last Supabase dependency.
+- CDK `DatabaseStack`: Aurora PostgreSQL 16.3, min 0 / max 1 ACU, auto-pause, Data API enabled, eu-west-1
+- `backend/src/lib/db.ts`: thin RDS Data API wrapper, `formatRecordsAs: JSON`
+- Migrate all ~228 Supabase queries to parameterised SQL across 12 backend files
+- Delete `downloadTokens.ts` — replace with direct S3 presigned URLs (15 min expiry)
+- Delete `@supabase/supabase-js` from backend + frontend entirely
+- Lambda triggers (post-confirmation, post-deletion) migrate to Data API
+- Frontend: delete dead Supabase files, replace `UserProfileContext` direct DB calls with `/user/profile` REST endpoints
+- `scripts/init-db.sh`: post-deploy schema init via Data API CLI
+
+### Per-User Credits Tracking
+- DynamoDB table: PK=`userId`, SK=`YYYY-MM`, `credits_used` (atomic increment via `UpdateItem ADD`)
+- Strands `after_model_call` hook increments `credits_used` after each successful model invocation
+- Backend enforces limit (100 msg/month) before allowing chat — returns 429 with reset date
+- Frontend wires existing `CreditsExhaustedModal` (currently dead code) to 429 response
+- AgentCore execution role granted `dynamodb:GetItem`, `dynamodb:UpdateItem` on credits table
+- No TTL for now — historical rows retained, cleanup deferred
+
 ## Future (post-migration)
 
 - Sharing: invite-accept flow (invitations table, consent before access granted)
 - Sharing: org-scoped with `org_id` on all tables
-- Multi-tenancy: RLS-enforced org isolation at DB level
+- Multi-tenancy: org isolation at DB level
 - Refactor `chatTools.ts` to Strands Agents (tool decorators, built-in orchestration)
 - Bedrock Guardrails for content filtering
 - WAF on CloudFront for rate limiting
