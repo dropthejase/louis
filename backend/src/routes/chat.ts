@@ -546,6 +546,42 @@ chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
     }
 });
 
+// PUT /chat/:chatId/session-id — persist AgentCore session ID on first turn.
+// No-ops if the chat already has a session ID (never overwrites an existing session).
+chatRouter.put("/:chatId/session-id", requireAuth, async (req, res) => {
+    const userId = res.locals.userId as string;
+    const { chatId } = req.params;
+    const sessionId: string = (req.body.agentcore_session_id ?? "").trim();
+    if (!sessionId)
+        return void res.status(400).json({ detail: "agentcore_session_id is required" });
+
+    const db = createServerSupabase();
+    const { data: chat, error } = await db
+        .from("chats")
+        .select("user_id, agentcore_session_id")
+        .eq("id", chatId)
+        .single();
+    if (error || !chat || chat.user_id !== userId)
+        return void res.status(404).json({ detail: "Chat not found" });
+
+    // Never overwrite an existing session — return existing one silently.
+    if (chat.agentcore_session_id) {
+        return void res.json({ agentcore_session_id: chat.agentcore_session_id });
+    }
+
+    const { error: updateError } = await db
+        .from("chats")
+        .update({
+            agentcore_session_id: sessionId,
+            agentcore_session_created_at: new Date().toISOString(),
+        })
+        .eq("id", chatId);
+    if (updateError)
+        return void res.status(500).json({ detail: updateError.message });
+
+    res.json({ agentcore_session_id: sessionId });
+});
+
 // GET /chat/:chatId/session-id
 chatRouter.get("/:chatId/session-id", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;

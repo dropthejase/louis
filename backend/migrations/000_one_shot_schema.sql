@@ -206,6 +206,8 @@ create table if not exists public.chats (
   project_id uuid references public.projects(id) on delete cascade,
   user_id text not null,
   title text,
+  agentcore_session_id text,
+  agentcore_session_created_at timestamptz,
   created_at timestamptz not null default now()
 );
 

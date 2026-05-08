@@ -826,6 +826,19 @@ export function useAssistantChat({
 
             await loadChats();
 
+            // Persist the AgentCore session ID after the first turn so it
+            // survives page refresh. PUT is a no-op if already set.
+            const persistChatId = streamedChatId || chatId || null;
+            if (persistChatId && runtimeSessionIdRef.current) {
+                void apiRequest(`/chat/${persistChatId}/session-id`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        agentcore_session_id: runtimeSessionIdRef.current,
+                    }),
+                }).catch(() => {});
+            }
+
             const finalChatIdForTitle = streamedChatId || chatId || null;
             if (finalChatIdForTitle && newMessages.length === 1) {
                 const titleParts = [message.content];
