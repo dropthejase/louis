@@ -1,21 +1,19 @@
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
+import { query, queryOne, execute } from "../lib/db";
 import {
   buildContentDisposition,
   downloadFile,
   deleteFile,
   getSignedUrl,
-  storageKey,
-  uploadFile,
   versionStorageKey,
+  uploadFile,
 } from "../lib/storage";
-import { docxToPdf, convertedPdfKey } from "../lib/convert";
+import { docxToPdf } from "../lib/convert";
 import {
   extractTrackedChangeIds,
   resolveTrackedChange,
 } from "../lib/docxTrackedChanges";
-import { buildDownloadUrl } from "../lib/downloadTokens";
 import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
@@ -23,27 +21,42 @@ import {
 } from "../lib/documentVersions";
 import { ensureDocAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
+import { handleDocumentUpload } from "./projects";
 
 export const documentsRouter = Router();
-const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
+
+// Build a permalink to /download for a stored object. Frontend hits this
+// route to fetch bytes; query params encode the storage path + display name.
+function buildDownloadUrl(storagePath: string, filename: string): string {
+  const path = encodeURIComponent(storagePath);
+  const name = encodeURIComponent(filename);
+  return `/download?path=${path}&filename=${name}`;
+}
+
+interface DocumentRow {
+  id: string;
+  project_id: string | null;
+  user_id: string;
+  filename: string;
+  file_type: string | null;
+  current_version_id: string | null;
+  size_bytes: number;
+  page_count: number | null;
+  status: string;
+  [k: string]: unknown;
+}
 
 // GET /single-documents
 documentsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
-  const db = createServerSupabase();
-  const { data, error } = await db
-    .from("documents")
-    .select("*")
-    .eq("user_id", userId)
-    .is("project_id", null)
-    .order("created_at", { ascending: false });
-  if (error) return void res.status(500).json({ detail: error.message });
-  const docs = (data ?? []) as unknown as {
-    id: string;
-    current_version_id?: string | null;
-  }[];
-  await attachLatestVersionNumbers(db, docs);
-  await attachActiveVersionPaths(db, docs);
+  const docs = await query<DocumentRow>(
+    `SELECT * FROM documents
+     WHERE user_id = :userId AND project_id IS NULL
+     ORDER BY created_at DESC`,
+    [{ name: "userId", value: { stringValue: userId } }],
+  );
+  await attachLatestVersionNumbers(docs);
+  await attachActiveVersionPaths(docs);
   res.json(docs);
 });
 
@@ -54,8 +67,7 @@ documentsRouter.post(
   singleFileUpload("file"),
   async (req, res) => {
     const userId = res.locals.userId as string;
-    const db = createServerSupabase();
-    await handleDocumentUpload(req, res, userId, null, db);
+    await handleDocumentUpload(req, res, userId, null);
   },
 );
 
@@ -63,31 +75,38 @@ documentsRouter.post(
 documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { documentId } = req.params;
-  const db = createServerSupabase();
 
-  const { data: doc, error } = await db
-    .from("documents")
-    .select("id")
-    .eq("id", documentId)
-    .eq("user_id", userId)
-    .single();
-  if (error || !doc)
+  const doc = await queryOne<{ id: string }>(
+    `SELECT id FROM documents WHERE id = :id AND user_id = :userId`,
+    [
+      { name: "id", value: { stringValue: documentId } },
+      { name: "userId", value: { stringValue: userId } },
+    ],
+  );
+  if (!doc)
     return void res.status(404).json({ detail: "Document not found" });
 
   // Storage now lives on document_versions — fan out and delete each
   // version's bytes (DOCX + PDF rendition) before dropping rows.
-  const { data: versions } = await db
-    .from("document_versions")
-    .select("storage_path, pdf_storage_path")
-    .eq("document_id", documentId);
+  const versions = await query<{
+    storage_path: string | null;
+    pdf_storage_path: string | null;
+  }>(
+    `SELECT storage_path, pdf_storage_path FROM document_versions
+     WHERE document_id = :documentId`,
+    [{ name: "documentId", value: { stringValue: documentId } }],
+  );
   await Promise.all(
-    (versions ?? []).flatMap((v) =>
+    versions.flatMap((v) =>
       [v.storage_path, v.pdf_storage_path]
         .filter((p): p is string => typeof p === "string" && p.length > 0)
         .map((p) => deleteFile(p).catch(() => {})),
     ),
   );
-  await db.from("documents").delete().eq("id", documentId);
+  await execute(
+    `DELETE FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
   res.status(204).send();
 });
 
@@ -100,24 +119,29 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
   const { documentId } = req.params;
   const versionIdParam =
     typeof req.query.version_id === "string" ? req.query.version_id : null;
-  const db = createServerSupabase();
 
-  const { data: doc } = await db
-    .from("documents")
-    .select("id, filename, file_type, user_id, project_id")
-    .eq("id", documentId)
-    .single();
+  const doc = await queryOne<{
+    id: string;
+    filename: string;
+    file_type: string | null;
+    user_id: string;
+    project_id: string | null;
+  }>(
+    `SELECT id, filename, file_type, user_id, project_id
+     FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
   if (!doc)
     return void res.status(404).json({ detail: "Document not found" });
-  const access = await ensureDocAccess(doc, userId, userEmail, db);
+  const access = await ensureDocAccess(doc, userId, userEmail);
   if (!access.ok)
     return void res.status(404).json({ detail: "Document not found" });
 
-  const active = await loadActiveVersion(documentId, db, versionIdParam);
+  const active = await loadActiveVersion(documentId, versionIdParam);
   if (!active)
     return void res.status(404).json({ detail: "No file available" });
 
-  const fileType = (doc.file_type as string) ?? "";
+  const fileType = doc.file_type ?? "";
   const isDocx = fileType === "docx" || fileType === "doc";
 
   // For DOCX, prefer the per-version PDF rendition if one exists.
@@ -135,7 +159,7 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      buildContentDisposition("inline", doc.filename as string),
+      buildContentDisposition("inline", doc.filename),
     );
     res.send(Buffer.from(raw));
   } else {
@@ -146,7 +170,7 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
     );
     res.setHeader(
       "Content-Disposition",
-      buildContentDisposition("inline", doc.filename as string),
+      buildContentDisposition("inline", doc.filename),
     );
     res.send(Buffer.from(raw));
   }
@@ -161,29 +185,38 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
   if (!Array.isArray(document_ids) || document_ids.length === 0)
     return void res.status(400).json({ detail: "document_ids is required" });
 
-  const db = createServerSupabase();
-  const { data: rawDocs, error } = await db
-    .from("documents")
-    .select("id, filename, file_type, current_version_id, user_id, project_id")
-    .in("id", document_ids);
+  const placeholders = document_ids.map((_, i) => `:id${i}`).join(", ");
+  const rawDocs = await query<{
+    id: string;
+    filename: string;
+    file_type: string | null;
+    current_version_id: string | null;
+    user_id: string;
+    project_id: string | null;
+  }>(
+    `SELECT id, filename, file_type, current_version_id, user_id, project_id
+     FROM documents WHERE id IN (${placeholders})`,
+    document_ids.map((id, i) => ({
+      name: `id${i}`,
+      value: { stringValue: id },
+    })),
+  );
 
-  if (error) return void res.status(500).json({ detail: error.message });
   // Filter to docs the user actually has access to (own + shared-project).
   const accessChecks = await Promise.all(
-    (rawDocs ?? []).map(async (d) => ({
+    rawDocs.map(async (d) => ({
       doc: d,
       access: await ensureDocAccess(
-        d as { user_id: string; project_id: string | null },
+        { user_id: d.user_id, project_id: d.project_id },
         userId,
         userEmail,
-        db,
       ),
     })),
   );
   const docs = accessChecks
     .filter((x) => x.access.ok)
-    .map((x) => x.doc as { id: string; filename: string });
-  if (!docs || docs.length === 0)
+    .map((x) => x.doc);
+  if (docs.length === 0)
     return void res.status(404).json({ detail: "No documents found" });
 
   const JSZip = (await import("jszip")).default;
@@ -191,7 +224,7 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
 
   await Promise.all(
     docs.map(async (doc) => {
-      const active = await loadActiveVersion(doc.id, db);
+      const active = await loadActiveVersion(doc.id);
       if (!active) return;
       const raw = await downloadFile(active.storage_path);
       if (!raw) return;
@@ -213,25 +246,28 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
   const versionIdParam = typeof req.query.version_id === "string" ? req.query.version_id : null;
-  const db = createServerSupabase();
 
-  const { data: doc, error } = await db
-    .from("documents")
-    .select("id, filename, user_id, project_id")
-    .eq("id", documentId)
-    .single();
-  if (error || !doc)
+  const doc = await queryOne<{
+    id: string;
+    filename: string;
+    user_id: string;
+    project_id: string | null;
+  }>(
+    `SELECT id, filename, user_id, project_id FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
+  if (!doc)
     return void res.status(404).json({ detail: "Document not found" });
-  const access = await ensureDocAccess(doc, userId, userEmail, db);
+  const access = await ensureDocAccess(doc, userId, userEmail);
   if (!access.ok)
     return void res.status(404).json({ detail: "Document not found" });
 
-  const active = await loadActiveVersion(documentId, db, versionIdParam);
+  const active = await loadActiveVersion(documentId, versionIdParam);
   if (!active)
     return void res.status(404).json({ detail: "No file available" });
 
   const downloadFilename = resolveDownloadFilename(
-    doc.filename as string,
+    doc.filename,
     active.display_name,
     active.version_number,
   );
@@ -256,7 +292,7 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
 
 // GET /single-documents/:documentId/docx
 // Streams the raw .docx bytes for the given document, optionally at a
-// specific tracked-changes version. Unlike /url, this bypasses R2 (avoids
+// specific tracked-changes version. Unlike /url, this bypasses S3 (avoids
 // the browser CORS problem on signed URLs) so the frontend docx-preview
 // viewer can load tracked-change documents directly.
 documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
@@ -264,20 +300,23 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
   const versionIdParam = typeof req.query.version_id === "string" ? req.query.version_id : null;
-  const db = createServerSupabase();
 
-  const { data: doc, error } = await db
-    .from("documents")
-    .select("id, filename, user_id, project_id")
-    .eq("id", documentId)
-    .single();
-  if (error || !doc)
+  const doc = await queryOne<{
+    id: string;
+    filename: string;
+    user_id: string;
+    project_id: string | null;
+  }>(
+    `SELECT id, filename, user_id, project_id FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
+  if (!doc)
     return void res.status(404).json({ detail: "Document not found" });
-  const access = await ensureDocAccess(doc, userId, userEmail, db);
+  const access = await ensureDocAccess(doc, userId, userEmail);
   if (!access.ok)
     return void res.status(404).json({ detail: "Document not found" });
 
-  const active = await loadActiveVersion(documentId, db, versionIdParam);
+  const active = await loadActiveVersion(documentId, versionIdParam);
   if (!active)
     return void res.status(404).json({ detail: "No file available" });
 
@@ -294,7 +333,7 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
     buildContentDisposition(
       "inline",
       resolveDownloadFilename(
-        doc.filename as string,
+        doc.filename,
         active.display_name,
         active.version_number,
       ),
@@ -347,28 +386,34 @@ documentsRouter.get("/:documentId/versions", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId } = req.params;
-  const db = createServerSupabase();
 
-  const { data: doc } = await db
-    .from("documents")
-    .select("id, current_version_id, user_id, project_id")
-    .eq("id", documentId)
-    .single();
+  const doc = await queryOne<{
+    id: string;
+    current_version_id: string | null;
+    user_id: string;
+    project_id: string | null;
+  }>(
+    `SELECT id, current_version_id, user_id, project_id
+     FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
   if (!doc)
     return void res.status(404).json({ detail: "Document not found" });
-  const access = await ensureDocAccess(doc, userId, userEmail, db);
+  const access = await ensureDocAccess(doc, userId, userEmail);
   if (!access.ok)
     return void res.status(404).json({ detail: "Document not found" });
 
-  const { data: rows } = await db
-    .from("document_versions")
-    .select("id, version_number, source, created_at, display_name")
-    .eq("document_id", documentId)
-    .order("created_at", { ascending: true });
+  const rows = await query(
+    `SELECT id, version_number, source, created_at, display_name
+     FROM document_versions
+     WHERE document_id = :documentId
+     ORDER BY created_at ASC`,
+    [{ name: "documentId", value: { stringValue: documentId } }],
+  );
 
   res.json({
     current_version_id: doc.current_version_id,
-    versions: rows ?? [],
+    versions: rows,
   });
 });
 
@@ -384,20 +429,25 @@ documentsRouter.post(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId } = req.params;
-    const db = createServerSupabase();
 
     const file = req.file;
     if (!file)
       return void res.status(400).json({ detail: "file is required" });
 
-    const { data: doc } = await db
-      .from("documents")
-      .select("id, filename, file_type, user_id, project_id")
-      .eq("id", documentId)
-      .single();
+    const doc = await queryOne<{
+      id: string;
+      filename: string;
+      file_type: string | null;
+      user_id: string;
+      project_id: string | null;
+    }>(
+      `SELECT id, filename, file_type, user_id, project_id
+       FROM documents WHERE id = :id`,
+      [{ name: "id", value: { stringValue: documentId } }],
+    );
     if (!doc)
       return void res.status(404).json({ detail: "Document not found" });
-    const access = await ensureDocAccess(doc, userId, userEmail, db);
+    const access = await ensureDocAccess(doc, userId, userEmail);
     if (!access.ok)
       return void res.status(404).json({ detail: "Document not found" });
 
@@ -471,16 +521,16 @@ documentsRouter.post(
 
     // Per-document sequential version_number — the upload is V1 and
     // user_upload + assistant_edit count forward from there.
-    const { data: maxRow } = await db
-      .from("document_versions")
-      .select("version_number")
-      .eq("document_id", documentId)
-      .in("source", ["upload", "user_upload", "assistant_edit"])
-      .order("version_number", { ascending: false, nullsFirst: false })
-      .limit(1)
-      .maybeSingle();
-    const nextVersionNumber =
-      ((maxRow?.version_number as number | null) ?? 1) + 1;
+    const maxRow = await queryOne<{ version_number: number | null }>(
+      `SELECT version_number FROM document_versions
+       WHERE document_id = :documentId
+         AND source IN ('upload', 'user_upload', 'assistant_edit')
+         AND version_number IS NOT NULL
+       ORDER BY version_number DESC
+       LIMIT 1`,
+      [{ name: "documentId", value: { stringValue: documentId } }],
+    );
+    const nextVersionNumber = (maxRow?.version_number ?? 1) + 1;
 
     const defaultDisplayName =
       typeof req.body?.display_name === "string" &&
@@ -488,20 +538,34 @@ documentsRouter.post(
         ? req.body.display_name.trim().slice(0, 200)
         : file.originalname;
 
-    const { data: versionRow, error: verErr } = await db
-      .from("document_versions")
-      .insert({
-        document_id: documentId,
-        storage_path: key,
-        pdf_storage_path: pdfStoragePath,
-        source: "user_upload",
-        version_number: nextVersionNumber,
-        display_name: defaultDisplayName,
-      })
-      .select("id, version_number, source, created_at, display_name")
-      .single();
-    if (verErr || !versionRow) {
-      console.error("[versions/upload] insert failed", verErr);
+    const versionRow = await queryOne<{
+      id: string;
+      version_number: number | null;
+      source: string;
+      created_at: string;
+      display_name: string | null;
+    }>(
+      `INSERT INTO document_versions
+         (document_id, storage_path, pdf_storage_path, source, version_number, display_name)
+       VALUES
+         (:documentId, :storagePath, :pdfStoragePath, :source, :versionNumber, :displayName)
+       RETURNING id, version_number, source, created_at, display_name`,
+      [
+        { name: "documentId", value: { stringValue: documentId } },
+        { name: "storagePath", value: { stringValue: key } },
+        {
+          name: "pdfStoragePath",
+          value: pdfStoragePath != null
+            ? { stringValue: pdfStoragePath }
+            : { isNull: true },
+        },
+        { name: "source", value: { stringValue: "user_upload" } },
+        { name: "versionNumber", value: { longValue: nextVersionNumber } },
+        { name: "displayName", value: { stringValue: defaultDisplayName } },
+      ],
+    );
+    if (!versionRow) {
+      console.error("[versions/upload] insert failed");
       return void res
         .status(500)
         .json({ detail: "Failed to record new version." });
@@ -511,9 +575,6 @@ documentsRouter.post(
     // filename so the document's display name stays in sync across the UI.
     // Preserve a sensible extension: if the display_name has none, append
     // the uploaded file's extension (fallback: the existing doc's extension).
-    const documentsUpdate: Record<string, unknown> = {
-      current_version_id: versionRow.id,
-    };
     const providedDisplayName =
       typeof req.body?.display_name === "string" &&
       req.body.display_name.trim()
@@ -521,17 +582,28 @@ documentsRouter.post(
         : null;
     if (providedDisplayName) {
       const hasExt = /\.[a-z0-9]{1,6}$/i.test(providedDisplayName);
-      const existingExt = (doc.filename as string | null)?.match(
-        /\.[a-z0-9]{1,6}$/i,
-      )?.[0];
+      const existingExt = doc.filename?.match(/\.[a-z0-9]{1,6}$/i)?.[0];
       const uploadedExt = suffix ? `.${suffix}` : "";
       const ext = hasExt ? "" : uploadedExt || existingExt || "";
-      documentsUpdate.filename = `${providedDisplayName}${ext}`;
+      const newFilename = `${providedDisplayName}${ext}`;
+      await execute(
+        `UPDATE documents SET current_version_id = :versionId, filename = :filename
+         WHERE id = :id`,
+        [
+          { name: "versionId", value: { stringValue: versionRow.id } },
+          { name: "filename", value: { stringValue: newFilename } },
+          { name: "id", value: { stringValue: documentId } },
+        ],
+      );
+    } else {
+      await execute(
+        `UPDATE documents SET current_version_id = :versionId WHERE id = :id`,
+        [
+          { name: "versionId", value: { stringValue: versionRow.id } },
+          { name: "id", value: { stringValue: documentId } },
+        ],
+      );
     }
-    await db
-      .from("documents")
-      .update(documentsUpdate)
-      .eq("id", documentId);
 
     res.status(201).json(versionRow);
   },
@@ -547,16 +619,18 @@ documentsRouter.patch(
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { documentId, versionId } = req.params;
-    const db = createServerSupabase();
 
-    const { data: doc } = await db
-      .from("documents")
-      .select("id, user_id, project_id")
-      .eq("id", documentId)
-      .single();
+    const doc = await queryOne<{
+      id: string;
+      user_id: string;
+      project_id: string | null;
+    }>(
+      `SELECT id, user_id, project_id FROM documents WHERE id = :id`,
+      [{ name: "id", value: { stringValue: documentId } }],
+    );
     if (!doc)
       return void res.status(404).json({ detail: "Document not found" });
-    const access = await ensureDocAccess(doc, userId, userEmail, db);
+    const access = await ensureDocAccess(doc, userId, userEmail);
     if (!access.ok)
       return void res.status(404).json({ detail: "Document not found" });
 
@@ -564,14 +638,20 @@ documentsRouter.patch(
     const displayName =
       typeof raw === "string" && raw.trim() ? raw.trim().slice(0, 200) : null;
 
-    const { data: updated, error } = await db
-      .from("document_versions")
-      .update({ display_name: displayName })
-      .eq("id", versionId)
-      .eq("document_id", documentId)
-      .select("id, version_number, source, created_at, display_name")
-      .single();
-    if (error || !updated) {
+    const updated = await queryOne(
+      `UPDATE document_versions SET display_name = :displayName
+       WHERE id = :versionId AND document_id = :documentId
+       RETURNING id, version_number, source, created_at, display_name`,
+      [
+        {
+          name: "displayName",
+          value: displayName != null ? { stringValue: displayName } : { isNull: true },
+        },
+        { name: "versionId", value: { stringValue: versionId } },
+        { name: "documentId", value: { stringValue: documentId } },
+      ],
+    );
+    if (!updated) {
       return void res.status(404).json({ detail: "Version not found" });
     }
     res.json(updated);
@@ -592,20 +672,22 @@ documentsRouter.get(
     const { documentId } = req.params;
     const versionIdParam =
       typeof req.query.version_id === "string" ? req.query.version_id : null;
-    const db = createServerSupabase();
 
-    const { data: doc } = await db
-      .from("documents")
-      .select("id, user_id, project_id")
-      .eq("id", documentId)
-      .single();
+    const doc = await queryOne<{
+      id: string;
+      user_id: string;
+      project_id: string | null;
+    }>(
+      `SELECT id, user_id, project_id FROM documents WHERE id = :id`,
+      [{ name: "id", value: { stringValue: documentId } }],
+    );
     if (!doc)
       return void res.status(404).json({ detail: "Document not found" });
-    const access = await ensureDocAccess(doc, userId, userEmail, db);
+    const access = await ensureDocAccess(doc, userId, userEmail);
     if (!access.ok)
       return void res.status(404).json({ detail: "Document not found" });
 
-    const active = await loadActiveVersion(documentId, db, versionIdParam);
+    const active = await loadActiveVersion(documentId, versionIdParam);
     if (!active)
       return void res.status(404).json({ detail: "No file available" });
 
@@ -630,7 +712,6 @@ async function handleEditResolution(
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { documentId, editId } = req.params;
-  const db = createServerSupabase();
 
   console.log(`[edit-resolution] incoming ${mode}`, {
     userId,
@@ -638,13 +719,23 @@ async function handleEditResolution(
     editId,
   });
 
-  const { data: edit, error: editErr } = await db
-    .from("document_edits")
-    .select("id, document_id, change_id, del_w_id, ins_w_id, status")
-    .eq("id", editId)
-    .eq("document_id", documentId)
-    .single();
-  console.log(`[edit-resolution] fetched edit row`, { edit, editErr });
+  const edit = await queryOne<{
+    id: string;
+    document_id: string;
+    change_id: string;
+    del_w_id: string | null;
+    ins_w_id: string | null;
+    status: string;
+  }>(
+    `SELECT id, document_id, change_id, del_w_id, ins_w_id, status
+     FROM document_edits
+     WHERE id = :editId AND document_id = :documentId`,
+    [
+      { name: "editId", value: { stringValue: editId } },
+      { name: "documentId", value: { stringValue: documentId } },
+    ],
+  );
+  console.log(`[edit-resolution] fetched edit row`, { edit });
   if (!edit) {
     console.log(`[edit-resolution] edit not found, returning 404`);
     return void res.status(404).json({ detail: "Edit not found" });
@@ -657,30 +748,35 @@ async function handleEditResolution(
       editId,
       status: edit.status,
     });
-    const { data: doc } = await db
-      .from("documents")
-      .select("current_version_id, filename, user_id, project_id")
-      .eq("id", documentId)
-      .single();
-    if (!doc) {
+    const docResolved = await queryOne<{
+      current_version_id: string | null;
+      filename: string;
+      user_id: string;
+      project_id: string | null;
+    }>(
+      `SELECT current_version_id, filename, user_id, project_id
+       FROM documents WHERE id = :id`,
+      [{ name: "id", value: { stringValue: documentId } }],
+    );
+    if (!docResolved) {
       console.log(`[edit-resolution] doc not found for resolved edit`);
       return void res.status(404).json({ detail: "Document not found" });
     }
-    const accessResolved = await ensureDocAccess(doc, userId, userEmail, db);
+    const accessResolved = await ensureDocAccess(docResolved, userId, userEmail);
     if (!accessResolved.ok) {
       console.log(`[edit-resolution] doc access denied for resolved edit`);
       return void res.status(404).json({ detail: "Document not found" });
     }
-    const activeForResolved = await loadActiveVersion(documentId, db);
+    const activeForResolved = await loadActiveVersion(documentId);
     const payload = {
       ok: true,
       already_resolved: true,
       status: edit.status,
-      version_id: doc.current_version_id ?? null,
+      version_id: docResolved.current_version_id ?? null,
       download_url: activeForResolved
         ? buildDownloadUrl(
             activeForResolved.storage_path,
-            (doc.filename as string) ?? "document.docx",
+            docResolved.filename ?? "document.docx",
           )
         : null,
       remaining_pending: 0,
@@ -689,19 +785,24 @@ async function handleEditResolution(
     return void res.status(200).json(payload);
   }
 
-  const { data: doc, error: docErr } = await db
-    .from("documents")
-    .select("id, current_version_id, user_id, project_id")
-    .eq("id", documentId)
-    .single();
-  console.log(`[edit-resolution] fetched doc`, { doc, docErr });
+  const doc = await queryOne<{
+    id: string;
+    current_version_id: string | null;
+    user_id: string;
+    project_id: string | null;
+  }>(
+    `SELECT id, current_version_id, user_id, project_id
+     FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
+  console.log(`[edit-resolution] fetched doc`, { doc });
   if (!doc)
     return void res.status(404).json({ detail: "Document not found" });
-  const access = await ensureDocAccess(doc, userId, userEmail, db);
+  const access = await ensureDocAccess(doc, userId, userEmail);
   if (!access.ok)
     return void res.status(404).json({ detail: "Document not found" });
 
-  const active = await loadActiveVersion(documentId, db);
+  const active = await loadActiveVersion(documentId);
   const latestPath = active?.storage_path ?? null;
   console.log(`[edit-resolution] resolved latestPath`, {
     latestPath,
@@ -738,22 +839,28 @@ async function handleEditResolution(
     );
     // Still update DB status so the UI reflects the decision — the change
     // may have been auto-consumed by a previous accept/reject pass.
-    const { error: updErr } = await db
-      .from("document_edits")
-      .update({ status: mode === "accept" ? "accepted" : "rejected", resolved_at: new Date().toISOString() })
-      .eq("id", editId);
-    console.log(`[edit-resolution] status-only update`, { updErr });
-    const { data: filenameRow } = await db
-      .from("documents")
-      .select("filename")
-      .eq("id", documentId)
-      .single();
+    await execute(
+      `UPDATE document_edits
+       SET status = :status, resolved_at = NOW()
+       WHERE id = :editId`,
+      [
+        {
+          name: "status",
+          value: { stringValue: mode === "accept" ? "accepted" : "rejected" },
+        },
+        { name: "editId", value: { stringValue: editId } },
+      ],
+    );
+    const filenameRow = await queryOne<{ filename: string }>(
+      `SELECT filename FROM documents WHERE id = :id`,
+      [{ name: "id", value: { stringValue: documentId } }],
+    );
     const payload = {
       ok: true,
       version_id: doc.current_version_id,
       download_url: buildDownloadUrl(
         latestPath,
-        (filenameRow?.filename as string) ?? "document.docx",
+        filenameRow?.filename ?? "document.docx",
       ),
       remaining_pending: 0,
     };
@@ -780,39 +887,43 @@ async function handleEditResolution(
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   );
 
-  const { error: statusErr } = await db
-    .from("document_edits")
-    .update({
-      status: mode === "accept" ? "accepted" : "rejected",
-      resolved_at: new Date().toISOString(),
-    })
-    .eq("id", editId);
+  await execute(
+    `UPDATE document_edits
+     SET status = :status, resolved_at = NOW()
+     WHERE id = :editId`,
+    [
+      {
+        name: "status",
+        value: { stringValue: mode === "accept" ? "accepted" : "rejected" },
+      },
+      { name: "editId", value: { stringValue: editId } },
+    ],
+  );
   console.log(`[edit-resolution] updated document_edits status`, {
     editId,
     newStatus: mode === "accept" ? "accepted" : "rejected",
-    statusErr,
   });
 
-  const { count: remainingPending } = await db
-    .from("document_edits")
-    .select("id", { count: "exact", head: true })
-    .eq("document_id", documentId)
-    .eq("status", "pending");
+  const remainingRow = await queryOne<{ count: number }>(
+    `SELECT COUNT(*)::int AS count FROM document_edits
+     WHERE document_id = :documentId AND status = 'pending'`,
+    [{ name: "documentId", value: { stringValue: documentId } }],
+  );
+  const remainingPending = remainingRow?.count ?? 0;
   console.log(`[edit-resolution] remaining pending count`, { remainingPending });
 
-  const { data: filenameRow } = await db
-    .from("documents")
-    .select("filename")
-    .eq("id", documentId)
-    .single();
+  const filenameRow = await queryOne<{ filename: string }>(
+    `SELECT filename FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
   const payload = {
     ok: true,
     version_id: doc.current_version_id,
     download_url: buildDownloadUrl(
       latestPath,
-      (filenameRow?.filename as string) ?? "document.docx",
+      filenameRow?.filename ?? "document.docx",
     ),
-    remaining_pending: remainingPending ?? 0,
+    remaining_pending: remainingPending,
   };
   console.log(`[edit-resolution] returning success payload`, payload);
   res.json(payload);
@@ -829,216 +940,3 @@ documentsRouter.post(
   requireAuth,
   (req, res) => void handleEditResolution(req, res, "reject"),
 );
-
-async function handleDocumentUpload(
-  req: import("express").Request,
-  res: import("express").Response,
-  userId: string,
-  projectId: string | null,
-  db: ReturnType<typeof createServerSupabase>,
-) {
-  const file = req.file;
-  if (!file) return void res.status(400).json({ detail: "file is required" });
-
-  const filename = file.originalname;
-  const suffix = filename.includes(".")
-    ? filename.split(".").pop()!.toLowerCase()
-    : "";
-  if (!ALLOWED_TYPES.has(suffix))
-    return void res
-      .status(400)
-      .json({
-        detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
-      });
-
-  const content = file.buffer;
-  const { data: doc, error: insertErr } = await db
-    .from("documents")
-    .insert({
-      project_id: projectId,
-      user_id: userId,
-      filename,
-      file_type: suffix,
-      size_bytes: content.byteLength,
-      status: "processing",
-    })
-    .select("*")
-    .single();
-  if (insertErr || !doc)
-    return void res
-      .status(500)
-      .json({ detail: "Failed to create document record" });
-
-  try {
-    const docId = doc.id as string;
-    const key = storageKey(userId, docId, filename);
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    await uploadFile(
-      key,
-      content.buffer.slice(
-        content.byteOffset,
-        content.byteOffset + content.byteLength,
-      ) as ArrayBuffer,
-      contentType,
-    );
-
-    const rawBuf = content.buffer.slice(
-      content.byteOffset,
-      content.byteOffset + content.byteLength,
-    ) as ArrayBuffer;
-    const tree = await extractStructureTree(rawBuf, suffix, filename);
-    const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
-
-    // Convert DOCX/DOC → PDF for display. PDFs are their own rendition.
-    let pdfStoragePath: string | null = null;
-    if (suffix === "docx" || suffix === "doc") {
-      try {
-        const pdfBuf = await docxToPdf(content);
-        const pdfKey = convertedPdfKey(userId, docId);
-        await uploadFile(
-          pdfKey,
-          pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-          ) as ArrayBuffer,
-          "application/pdf",
-        );
-        pdfStoragePath = pdfKey;
-      } catch (err) {
-        console.error(
-          `[upload] DOCX→PDF conversion failed for ${filename}:`,
-          err,
-        );
-      }
-    } else if (suffix === "pdf") {
-      pdfStoragePath = key;
-    }
-
-    // storage_path / pdf_storage_path live on document_versions now —
-    // create the V1 "upload" row and point documents.current_version_id
-    // at it.
-    const { data: versionRow, error: verErr } = await db
-      .from("document_versions")
-      .insert({
-        document_id: docId,
-        storage_path: key,
-        pdf_storage_path: pdfStoragePath,
-        source: "upload",
-        version_number: 1,
-        display_name: filename,
-      })
-      .select("id")
-      .single();
-    if (verErr || !versionRow) {
-      throw new Error(
-        `Failed to record upload version: ${verErr?.message ?? "unknown"}`,
-      );
-    }
-
-    await db
-      .from("documents")
-      .update({
-        current_version_id: versionRow.id,
-        size_bytes: content.byteLength,
-        page_count: pageCount,
-        structure_tree: tree ?? null,
-        status: "ready",
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", docId);
-
-    const { data: updated } = await db
-      .from("documents")
-      .select("*")
-      .eq("id", docId)
-      .single();
-    // Surface storage paths to the caller for backward compatibility.
-    const responseDoc = updated
-      ? { ...updated, storage_path: key, pdf_storage_path: pdfStoragePath }
-      : updated;
-    return void res.status(201).json(responseDoc);
-  } catch (e) {
-    await db.from("documents").update({ status: "error" }).eq("id", doc.id);
-    return void res
-      .status(500)
-      .json({ detail: `Document processing failed: ${String(e)}` });
-  }
-}
-
-async function countPdfPages(buf: ArrayBuffer): Promise<number | null> {
-  try {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
-    const pdf = await (
-      pdfjsLib as unknown as {
-        getDocument: (opts: unknown) => {
-          promise: Promise<{ numPages: number }>;
-        };
-      }
-    ).getDocument({ data: new Uint8Array(buf) }).promise;
-    return pdf.numPages;
-  } catch {
-    return null;
-  }
-}
-
-async function extractStructureTree(
-  content: ArrayBuffer,
-  fileType: string,
-  _filename: string,
-): Promise<unknown[] | null> {
-  try {
-    if (fileType === "pdf") {
-      const pdfjsLib = await import(
-        "pdfjs-dist/legacy/build/pdf.mjs" as string
-      );
-      const pdf = await (
-        pdfjsLib as unknown as {
-          getDocument: (opts: unknown) => {
-            promise: Promise<{
-              numPages: number;
-              getOutline: () => Promise<{ title?: string }[]>;
-            }>;
-          };
-        }
-      ).getDocument({ data: new Uint8Array(content) }).promise;
-      if (pdf.numPages <= 5) return null;
-      const outline = await pdf.getOutline();
-      if (outline?.length)
-        return outline.map((item, i) => ({
-          id: `h1-${i}`,
-          title: item.title ?? `Item ${i + 1}`,
-          level: 1,
-          page_number: null,
-          children: [],
-        }));
-      return Array.from({ length: pdf.numPages }, (_, i) => ({
-        id: `page-${i + 1}`,
-        title: `Page ${i + 1}`,
-        level: 1,
-        page_number: i + 1,
-        children: [],
-      }));
-    } else {
-      const mammoth = await import("mammoth");
-      const result = await mammoth.extractRawText({
-        buffer: Buffer.from(content),
-      });
-      const lines = result.value.split("\n").filter((l) => l.trim());
-      const nodes = lines
-        .slice(0, 30)
-        .map((line, i) => ({
-          id: `h1-${i}`,
-          title: line.slice(0, 100),
-          level: 1,
-          page_number: null,
-          children: [],
-        }));
-      return nodes.length ? nodes : null;
-    }
-  } catch {
-    return null;
-  }
-}
