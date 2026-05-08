@@ -66,6 +66,21 @@ userRouter.delete("/account", requireAuth, async (_req, res) => {
   const userId = res.locals.userId as string;
   const userPoolId = process.env.USER_POOL_ID;
   if (!userPoolId) return void res.status(500).json({ detail: "USER_POOL_ID not configured" });
+
+  // Delete all user data synchronously before removing the Cognito account.
+  // FK cascades handle child rows: subfolders, documents, versions, chats,
+  // tabular_cells, workflow_shares, etc.
+  await execute(`DELETE FROM projects WHERE user_id = :userId`,
+    [{ name: "userId", value: { stringValue: userId } }]);
+  await execute(`DELETE FROM workflows WHERE user_id = :userId`,
+    [{ name: "userId", value: { stringValue: userId } }]);
+  await execute(`DELETE FROM tabular_reviews WHERE user_id = :userId`,
+    [{ name: "userId", value: { stringValue: userId } }]);
+  await execute(`DELETE FROM chats WHERE user_id = :userId AND project_id IS NULL`,
+    [{ name: "userId", value: { stringValue: userId } }]);
+  await execute(`DELETE FROM user_profiles WHERE user_id = :userId`,
+    [{ name: "userId", value: { stringValue: userId } }]);
+
   const cognito = new CognitoIdentityProviderClient({});
   try {
     await cognito.send(new AdminDeleteUserCommand({ UserPoolId: userPoolId, Username: userId }));
