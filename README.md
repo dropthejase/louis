@@ -156,7 +156,7 @@ cd infra && npx cdk deploy ConversionStack
 | --- | --- |
 | `StorageStack` | S3 docs bucket (private, EventBridge enabled), S3 sessions + frontend buckets, CloudFront + OAC |
 | `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 (min 0 / max 1 ACU, RDS Data API, VPC isolated subnets, auto-pause) |
-| `AuthStack` | Cognito User Pool (TOTP MFA, email verification), App Client, Pre-Token Gen Lambda, Identity Pool, post-confirmation and post-deletion trigger Lambdas |
+| `AuthStack` | Cognito User Pool (TOTP MFA, email verification), App Client, Post-Confirmation Lambda (creates user_profiles row), Identity Pool, authenticated IAM role |
 | `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container), AgentCore execution IAM role, DynamoDB credits table |
 | `ConversionStack` | LibreOffice Lambda (x86_64 container), EventBridge rule triggering on `.docx`/`.doc` uploads to `documents/` prefix |
 

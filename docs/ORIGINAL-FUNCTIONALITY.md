@@ -13,7 +13,7 @@ Reference for ensuring feature parity in the AWS migration.
 | Password policy | Supabase default | min 8, upper+lower+digit+symbol | ✅ Done |
 | Create user profile on signup | Supabase trigger `on_auth_user_created` | Post Confirmation Lambda | ✅ Done |
 | Delete user account | `DELETE /user/account` → `supabase.auth.admin.deleteUser` | Cognito `AdminDeleteUser` | ✅ Done |
-| Cleanup on user delete | Supabase cascade from `auth.users` | Post Deletion Lambda (EventBridge + CloudTrail) | ✅ Done |
+| Cleanup on user delete | Supabase cascade from `auth.users` | `DELETE /user/account` synchronous cascade in route handler | ✅ Done (post-deletion Lambda removed — redundant) |
 | Create profile if missing | `POST /user/profile` (upsert) | Route still exists, Lambda is primary | ✅ Done |
 
 ---
