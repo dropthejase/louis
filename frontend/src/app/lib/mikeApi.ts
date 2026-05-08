@@ -7,6 +7,7 @@
 
 import { getIdToken } from "@/lib/aws/amplify-auth";
 import { API_URL, AGENTCORE_URL } from "@/lib/aws/config";
+import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import type {
     AssistantEvent,
     MikeChat,
@@ -419,15 +420,16 @@ export async function streamChat(payload: {
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...rest } = payload;
-    const token = await getIdToken();
+    const [token, userId] = await Promise.all([getIdToken(), getCurrentUserId()]);
     return fetch(AGENTCORE_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
             Authorization: `Bearer ${token}`,
+            "X-Amzn-Bedrock-AgentCore-Runtime-User-Id": userId,
         },
-        body: JSON.stringify(rest),
+        body: JSON.stringify({ ...rest, userId }),
         signal,
     });
 }

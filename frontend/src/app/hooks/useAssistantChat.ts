@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { streamChat, apiRequest } from "@/app/lib/mikeApi";
+import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useGenerateChatTitle } from "./useGenerateChatTitle";
 import type {
@@ -934,7 +935,8 @@ export function useAssistantChat({
         if (newChatId) {
             setChatId(newChatId);
             setCurrentChatId(newChatId);
-            runtimeSessionIdRef.current = crypto.randomUUID();
+            const userId = await getCurrentUserId().catch(() => "unknown");
+            runtimeSessionIdRef.current = `${userId}-${crypto.randomUUID()}`;
         }
 
         return newChatId;
