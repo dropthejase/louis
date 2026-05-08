@@ -28,9 +28,8 @@ type GeminiContent = {
     parts: GeminiPart[];
 };
 
-function client(override?: string | null): GoogleGenAI {
-    const apiKey = override?.trim() || process.env.GEMINI_API_KEY || "";
-    return new GoogleGenAI({ apiKey });
+function client(): GoogleGenAI {
+    return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 }
 
 function toNativeContents(messages: StreamChatParams["messages"]): GeminiContent[] {
@@ -45,7 +44,7 @@ export async function streamGemini(
 ): Promise<StreamChatResult> {
     const { model, systemPrompt, tools = [], callbacks = {}, runTools, enableThinking } = params;
     const maxIter = params.maxIterations ?? 10;
-    const ai = client((params.apiKeys as { gemini?: string | null } | undefined)?.gemini);
+    const ai = client();
     const functionDeclarations = toGeminiTools(tools);
 
     const contents: GeminiContent[] = toNativeContents(params.messages);
@@ -148,9 +147,8 @@ export async function completeGeminiText(params: {
     model: string;
     systemPrompt?: string;
     user: string;
-    apiKeys?: { gemini?: string | null };
 }): Promise<string> {
-    const ai = client(params.apiKeys?.gemini);
+    const ai = client();
     const resp = await ai.models.generateContent({
         model: params.model,
         contents: [{ role: "user", parts: [{ text: params.user }] }],

@@ -11,7 +11,6 @@ import {
     PROJECT_EXTRA_TOOLS,
     type ChatMessage,
 } from "../lib/chatTools";
-import { getUserApiKeys } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 
 const PROJECT_SYSTEM_PROMPT_EXTRA = `PROJECT CONTEXT:
@@ -152,8 +151,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
 
     const write = (line: string) => res.write(line);
 
-    const apiKeys = await getUserApiKeys(userId, db);
-
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
@@ -167,7 +164,6 @@ projectChatRouter.post("/", requireAuth, async (req, res) => {
             extraTools: PROJECT_EXTRA_TOOLS,
             workflowStore,
             model,
-            apiKeys,
             projectId,
         });
 

@@ -34,10 +34,6 @@ export type StreamCallbacks = {
   onToolCallStart?: (call: NormalizedToolCall) => void;
 };
 
-export type UserApiKeys = {
-  claude?: string | null;
-};
-
 export type StreamChatParams = {
   model: string;
   systemPrompt: string;
@@ -46,7 +42,6 @@ export type StreamChatParams = {
   maxIterations?: number;
   callbacks?: StreamCallbacks;
   runTools?: (calls: NormalizedToolCall[]) => Promise<NormalizedToolResult[]>;
-  apiKeys?: UserApiKeys;
   enableThinking?: boolean;
 };
 

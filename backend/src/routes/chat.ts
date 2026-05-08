@@ -11,7 +11,7 @@ import {
     type ChatMessage,
 } from "../lib/chatTools";
 import { completeText } from "../lib/llm";
-import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
+import { getUserModelSettings } from "../lib/userSettings";
 import { checkProjectAccess } from "../lib/access";
 import {
     S3Client,
@@ -630,10 +630,7 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         return void res.status(404).json({ detail: "Chat not found" });
 
     try {
-        const { title_model, api_keys } = await getUserModelSettings(
-            userId,
-            db,
-        );
+        const { title_model } = await getUserModelSettings();
         const titleText = await completeText({
             model: title_model,
             user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
@@ -775,8 +772,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
 
     const write = (line: string) => res.write(line);
 
-    const apiKeys = await getUserApiKeys(userId, db);
-
     try {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
 
@@ -789,7 +784,6 @@ chatRouter.post("/", requireAuth, async (req, res) => {
             write,
             workflowStore,
             model,
-            apiKeys,
             projectId: project_id ?? null,
         });
 

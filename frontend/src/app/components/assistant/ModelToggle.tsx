@@ -45,8 +45,6 @@ export const ALLOWED_MODEL_IDS = new Set(MODELS.map((m) => m.id));
 interface Props {
     value: string;
     onChange: (id: string) => void;
-    /** Unused — kept for call-site compatibility. All models available via Bedrock IAM. */
-    apiKeys?: unknown;
 }
 
 export function ModelToggle({ value, onChange }: Props) {

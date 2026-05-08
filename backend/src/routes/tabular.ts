@@ -11,7 +11,7 @@ import {
     type TabularCellStore,
 } from "../lib/chatTools";
 import { completeText, streamChatWithTools } from "../lib/llm";
-import { getUserApiKeys, getUserModelSettings } from "../lib/userSettings";
+import { getUserModelSettings } from "../lib/userSettings";
 import {
     checkProjectAccess,
     ensureReviewAccess,
@@ -267,7 +267,7 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
         `format handling is applied separately and must not be duplicated inside the prompt text.`;
 
     try {
-        const { title_model, api_keys } = await getUserModelSettings(userId);
+        const { title_model } = await getUserModelSettings();
         const raw = await completeText({
             model: title_model,
             systemPrompt:
@@ -690,10 +690,7 @@ tabularRouter.post(
             }
         }
 
-        const { tabular_model, api_keys } = await getUserModelSettings(
-            userId,
-            db,
-        );
+        const { tabular_model } = await getUserModelSettings();
         const result = await queryGemini(
             tabular_model,
             doc.filename as string,
@@ -701,7 +698,6 @@ tabularRouter.post(
             column.prompt,
             column.format,
             column.tags,
-            api_keys,
         );
 
         if (!result) {
@@ -778,7 +774,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         docs = data ?? [];
     }
 
-    const { tabular_model, api_keys } = await getUserModelSettings(userId, db);
+    const { tabular_model } = await getUserModelSettings();
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -864,7 +860,6 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                                 `data: ${JSON.stringify({ type: "cell_update", document_id: docId, column_index: columnIndex, content: result, status: "done" })}\n\n`,
                             );
                         },
-                        api_keys,
                     );
                 } catch (err) {
                     console.error(
@@ -1227,8 +1222,6 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
         write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
     }
 
-    const apiKeys = await getUserApiKeys(userId, db);
-
     try {
         const { fullText, events } = await runLLMStream({
             apiMessages,
@@ -1241,7 +1234,6 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
             tabularStore,
             buildCitations: (text) =>
                 extractTabularAnnotations(text, tabularStore),
-            apiKeys,
         });
 
         const annotations = extractTabularAnnotations(fullText, tabularStore);
@@ -1261,7 +1253,7 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
 
         // Generate title on first exchange
         if (chatId && isFirstExchange && !chatTitle && lastUser.content) {
-            const { title_model } = await getUserModelSettings(userId, db);
+            const { title_model } = await getUserModelSettings();
             const title = await generateChatTitle(
                 title_model,
                 lastUser.content,
@@ -1269,7 +1261,6 @@ tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
                     reviewTitle: clientReviewTitle ?? review.title ?? null,
                     projectName: clientProjectName ?? null,
                 },
-                apiKeys,
             );
             if (title) {
                 await db
@@ -1347,7 +1338,6 @@ async function queryGemini(
     columnPrompt: string,
     format?: string,
     tags?: string[],
-    apiKeys?: import("../lib/llm").UserApiKeys,
 ) {
     const suffix = formatPromptSuffix(format as never, tags);
     const fullPrompt = `${columnPrompt}${suffix} If not found, state "Not Found". Leave all reasoning and explanation in the "reasoning" field only.`;
@@ -1409,7 +1399,6 @@ async function generateChatTitle(
     model: string,
     firstUserMessage: string,
     context?: { reviewTitle?: string | null; projectName?: string | null },
-    apiKeys?: import("../lib/llm").UserApiKeys,
 ): Promise<string | null> {
     try {
         const contextLines: string[] = [];
@@ -1499,7 +1488,6 @@ async function queryGeminiAllColumns(
     documentText: string,
     columns: Column[],
     onResult: (columnIndex: number, result: CellResult) => Promise<void>,
-    apiKeys?: import("../lib/llm").UserApiKeys,
 ): Promise<void> {
     const columnsDesc = columns
         .map((col) => {
@@ -1561,7 +1549,6 @@ Rules:
             systemPrompt: SYSTEM,
             messages: [{ role: "user", content: USER }],
             tools: [],
-            apiKeys,
             callbacks: {
                 onContentDelta: (delta) => {
                     contentBuffer += delta;

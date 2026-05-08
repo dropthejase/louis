@@ -2305,7 +2305,6 @@ export async function runLLMStream(params: {
     tabularStore?: TabularCellStore;
     buildCitations?: (fullText: string) => unknown[];
     model?: string;
-    apiKeys?: import("./llm").UserApiKeys;
     /**
      * If set, generate_docx will attach created docs to this project so
      * they appear in the project sidebar. Leave null for general chats —
@@ -2313,7 +2312,7 @@ export async function runLLMStream(params: {
      */
     projectId?: string | null;
 }): Promise<{ fullText: string; events: AssistantEvent[] }> {
-    const { apiMessages, docStore, docIndex, userId, db, write, extraTools, workflowStore, tabularStore, buildCitations, model, apiKeys, projectId } = params;
+    const { apiMessages, docStore, docIndex, userId, db, write, extraTools, workflowStore, tabularStore, buildCitations, model, projectId } = params;
     const activeTools = extraTools?.length
         ? [...TOOLS, ...WORKFLOW_TOOLS, ...extraTools]
         : [...TOOLS, ...WORKFLOW_TOOLS];
@@ -2415,7 +2414,6 @@ export async function runLLMStream(params: {
         messages: chatMessages,
         tools: activeTools as OpenAIToolSchema[],
         maxIterations: 10,
-        apiKeys,
         enableThinking: true,
         callbacks: {
             onContentDelta: (delta) => {

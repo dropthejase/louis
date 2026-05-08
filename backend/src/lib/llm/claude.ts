@@ -27,9 +27,8 @@ type NativeMessage = {
 
 const MAX_TOKENS = 16384;
 
-function client(override?: string | null): Anthropic {
-    const apiKey = override?.trim() || process.env.ANTHROPIC_API_KEY || "";
-    return new Anthropic({ apiKey });
+function client(): Anthropic {
+    return new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || "" });
 }
 
 function toNativeMessages(
@@ -47,11 +46,10 @@ export async function streamClaude(
         tools = [],
         callbacks = {},
         runTools,
-        apiKeys,
         enableThinking,
     } = params;
     const maxIter = params.maxIterations ?? 10;
-    const anthropic = client(apiKeys?.claude);
+    const anthropic = client();
     const claudeTools = toClaudeTools(tools);
 
     const messages: NativeMessage[] = toNativeMessages(params.messages);
@@ -152,9 +150,8 @@ export async function completeClaudeText(params: {
     systemPrompt?: string;
     user: string;
     maxTokens?: number;
-    apiKeys?: { claude?: string | null };
 }): Promise<string> {
-    const anthropic = client(params.apiKeys?.claude);
+    const anthropic = client();
     const resp = await anthropic.messages.create({
         model: params.model,
         max_tokens: params.maxTokens ?? 512,
