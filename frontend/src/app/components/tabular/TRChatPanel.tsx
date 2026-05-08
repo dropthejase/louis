@@ -30,6 +30,7 @@ import type {
 } from "../shared/types";
 import { ModelToggle } from "../assistant/ModelToggle";
 import { PreResponseWrapper } from "../shared/PreResponseWrapper";
+import { useUserProfile } from "@/contexts/UserProfileContext";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -596,7 +597,8 @@ export function TRChatPanel({
     initialChatId,
     onChatIdChange,
 }: Props) {
-    const [currentModel, setCurrentModel] = useState("claude-sonnet-4-6");
+    const { profile, updateTabularModel } = useUserProfile();
+    const currentModel = profile?.tabularModel ?? "claude-sonnet-4-6";
     const [chats, setChats] = useState<TRChat[]>([]);
     const [currentChatId, setCurrentChatId] = useState<string | null>(
         initialChatId ?? null,
@@ -1433,7 +1435,7 @@ export function TRChatPanel({
                 onSubmit={handleSubmit}
                 onCancel={handleCancel}
                 model={currentModel}
-                onModelChange={setCurrentModel}
+                onModelChange={updateTabularModel}
             />
         </div>
     );

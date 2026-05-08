@@ -690,7 +690,7 @@ tabularRouter.post(
             }
         }
 
-        const { tabular_model } = await getUserModelSettings();
+        const { tabular_model } = await getUserModelSettings(userId, db);
         const result = await queryGemini(
             tabular_model,
             doc.filename as string,
@@ -774,7 +774,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
         docs = data ?? [];
     }
 
-    const { tabular_model } = await getUserModelSettings();
+    const { tabular_model } = await getUserModelSettings(userId, db);
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
