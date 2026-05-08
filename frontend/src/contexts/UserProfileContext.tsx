@@ -8,8 +8,8 @@ import React, {
     ReactNode,
     useCallback,
 } from "react";
-import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
+import { apiRequest } from "@/app/lib/mikeApi";
 
 interface UserProfile {
     displayName: string | null;
@@ -33,18 +33,17 @@ const UserProfileContext = createContext<UserProfileContextType | undefined>(
 const DEFAULT_TABULAR_MODEL = "claude-sonnet-4-6";
 
 export function UserProfileProvider({ children }: { children: ReactNode }) {
-    const { user, isAuthenticated } = useAuth();
+    const { isAuthenticated } = useAuth();
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [loading, setLoading] = useState(true);
 
-    const loadProfile = useCallback(async (userId: string) => {
+    const loadProfile = useCallback(async () => {
         try {
-            const { data } = await supabase
-                .from("user_profiles")
-                .select("display_name, organisation, tabular_model")
-                .eq("user_id", userId)
-                .single();
-
+            const data = await apiRequest<{
+                display_name: string | null;
+                organisation: string | null;
+                tabular_model: string | null;
+            }>("/user/profile");
             setProfile({
                 displayName: data?.display_name ?? null,
                 organisation: data?.organisation ?? null,
@@ -62,48 +61,38 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
     }, []);
 
     useEffect(() => {
-        if (isAuthenticated && user) {
+        if (isAuthenticated) {
             setLoading(true);
-            loadProfile(user.id);
+            loadProfile();
         } else {
             setProfile(null);
             setLoading(false);
         }
-    }, [isAuthenticated, user, loadProfile]);
+    }, [isAuthenticated, loadProfile]);
 
     const updateDisplayName = useCallback(
         async (displayName: string): Promise<boolean> => {
-            if (!user) return false;
             try {
-                const { error } = await supabase
-                    .from("user_profiles")
-                    .update({
-                        display_name: displayName,
-                        updated_at: new Date().toISOString(),
-                    })
-                    .eq("user_id", user.id);
-                if (error) throw error;
+                await apiRequest("/user/profile", {
+                    method: "PUT",
+                    body: JSON.stringify({ display_name: displayName }),
+                });
                 setProfile((prev) => (prev ? { ...prev, displayName } : null));
                 return true;
             } catch {
                 return false;
             }
         },
-        [user],
+        [],
     );
 
     const updateOrganisation = useCallback(
         async (organisation: string): Promise<boolean> => {
-            if (!user) return false;
             try {
-                const { error } = await supabase
-                    .from("user_profiles")
-                    .update({
-                        organisation,
-                        updated_at: new Date().toISOString(),
-                    })
-                    .eq("user_id", user.id);
-                if (error) throw error;
+                await apiRequest("/user/profile", {
+                    method: "PUT",
+                    body: JSON.stringify({ organisation }),
+                });
                 setProfile((prev) =>
                     prev ? { ...prev, organisation } : null,
                 );
@@ -112,21 +101,16 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user],
+        [],
     );
 
     const updateTabularModel = useCallback(
         async (tabularModel: string): Promise<boolean> => {
-            if (!user) return false;
             try {
-                const { error } = await supabase
-                    .from("user_profiles")
-                    .update({
-                        tabular_model: tabularModel,
-                        updated_at: new Date().toISOString(),
-                    })
-                    .eq("user_id", user.id);
-                if (error) throw error;
+                await apiRequest("/user/profile", {
+                    method: "PUT",
+                    body: JSON.stringify({ tabular_model: tabularModel }),
+                });
                 setProfile((prev) =>
                     prev ? { ...prev, tabularModel } : null,
                 );
@@ -135,12 +119,12 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 return false;
             }
         },
-        [user],
+        [],
     );
 
     const reloadProfile = useCallback(async () => {
-        if (user) await loadProfile(user.id);
-    }, [user, loadProfile]);
+        await loadProfile();
+    }, [loadProfile]);
 
     return (
         <UserProfileContext.Provider
