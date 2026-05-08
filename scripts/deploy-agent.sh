@@ -1,106 +1,120 @@
 #!/bin/bash
-# Deploy Louis agent to AgentCore Runtime.
+# Deploy Mike agent to AgentCore Runtime.
 # Prerequisites: AWS CLI configured, @aws/agentcore installed (npm i -g @aws/agentcore)
-# Note: No container build needed — AgentCore CLI zips built output directly.
+# The AgentCore execution role is managed by CDK (ApiStack). Deploy the CDK stacks first.
 # Finch is only required for the LibreOffice conversion Lambda (ConversionStack).
-# Usage: AWS_ACCOUNT_ID=123456789 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
+# Usage: AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
 
-set -e
+set -euo pipefail
 
-ACCOUNT_ID=${AWS_ACCOUNT_ID:?AWS_ACCOUNT_ID required}
 REGION=${AWS_REGION:-eu-west-1}
-ROLE_NAME="LouisAgentCoreExecutionRole"
+API_STACK=${API_STACK:-ApiStack}
+AUTH_STACK=${AUTH_STACK:-AuthStack}
+AGENTCORE_JSON="agent/agentcore/agentcore.json"
 
-# Create or retrieve the AgentCore execution role (idempotent)
-echo "==> Creating AgentCore execution role (if not exists)..."
-EXISTING_ROLE_ARN=$(aws iam get-role --role-name "${ROLE_NAME}" --query 'Role.Arn' --output text 2>/dev/null || true)
-
-if [[ -z "${EXISTING_ROLE_ARN}" || "${EXISTING_ROLE_ARN}" == "None" ]]; then
-  TRUST_POLICY=$(cat <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [{
-    "Sid": "AssumeRolePolicy",
-    "Effect": "Allow",
-    "Principal": { "Service": "bedrock-agentcore.amazonaws.com" },
-    "Action": "sts:AssumeRole",
-    "Condition": {
-      "StringEquals": { "aws:SourceAccount": "${ACCOUNT_ID}" },
-      "ArnLike": { "aws:SourceArn": "arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:*" }
-    }
-  }]
-}
-EOF
-)
-  aws iam create-role \
-    --role-name "${ROLE_NAME}" \
-    --assume-role-policy-document "${TRUST_POLICY}" \
-    --description "AgentCore Runtime execution role for Louis agent"
-
-  PERMISSIONS_POLICY=$(cat <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "CloudWatchLogs",
-      "Effect": "Allow",
-      "Action": ["logs:CreateLogGroup", "logs:DescribeLogGroups", "logs:DescribeLogStreams", "logs:CreateLogStream", "logs:PutLogEvents"],
-      "Resource": ["arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:/aws/bedrock-agentcore/runtimes/*", "arn:aws:logs:${REGION}:${ACCOUNT_ID}:log-group:*"]
-    },
-    {
-      "Sid": "XRayTracing",
-      "Effect": "Allow",
-      "Action": ["xray:PutTraceSegments", "xray:PutTelemetryRecords", "xray:GetSamplingRules", "xray:GetSamplingTargets"],
-      "Resource": "*"
-    },
-    {
-      "Sid": "CloudWatchMetrics",
-      "Effect": "Allow",
-      "Action": "cloudwatch:PutMetricData",
-      "Resource": "*",
-      "Condition": { "StringEquals": { "cloudwatch:namespace": "bedrock-agentcore" } }
-    },
-    {
-      "Sid": "BedrockModelAccess",
-      "Effect": "Allow",
-      "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
-      "Resource": [
-        "arn:aws:bedrock:${REGION}::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0",
-        "arn:aws:bedrock:${REGION}::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0",
-        "arn:aws:bedrock:${REGION}::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0"
-      ]
-    }
-  ]
-}
-EOF
-)
-  aws iam put-role-policy \
-    --role-name "${ROLE_NAME}" \
-    --policy-name "LouisAgentCorePolicy" \
-    --policy-document "${PERMISSIONS_POLICY}"
-
-  EXISTING_ROLE_ARN=$(aws iam get-role --role-name "${ROLE_NAME}" --query 'Role.Arn' --output text)
-  echo "Created role: ${EXISTING_ROLE_ARN}"
-else
-  echo "Role exists: ${EXISTING_ROLE_ARN}"
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+if ! command -v aws &>/dev/null; then
+  echo "ERROR: aws CLI not found" && exit 1
+fi
+if ! aws sts get-caller-identity &>/dev/null; then
+  echo "ERROR: No valid AWS credentials." && exit 1
+fi
+if ! command -v agentcore &>/dev/null; then
+  echo "ERROR: agentcore CLI not found. Run: npm i -g @aws/agentcore" && exit 1
 fi
 
-ROLE_ARN="${EXISTING_ROLE_ARN}"
+# ---------------------------------------------------------------------------
+# Read AgentCore execution role ARN from ApiStack
+# ---------------------------------------------------------------------------
+echo "==> Reading AgentCore execution role ARN from ${API_STACK}..."
+ROLE_ARN=$(aws cloudformation describe-stacks \
+  --stack-name "${API_STACK}" \
+  --region "${REGION}" \
+  --query "Stacks[0].Outputs[?OutputKey=='AgentCoreExecutionRoleArn'].OutputValue" \
+  --output text)
 
-echo "==> Wiring execution role into agentcore.json..."
-node -e "
-  const fs = require('fs');
-  const p = 'agent/agentcore/agentcore.json';
-  const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
-  cfg.agents[0].executionRoleArn = '${ROLE_ARN}';
-  fs.writeFileSync(p, JSON.stringify(cfg, null, 2) + '\n');
-"
+if [[ -z "${ROLE_ARN}" || "${ROLE_ARN}" == "None" ]]; then
+  echo "ERROR: AgentCoreExecutionRoleArn not found in ${API_STACK} outputs."
+  echo "       Deploy CDK stacks first: cd infra && npx cdk deploy ApiStack"
+  exit 1
+fi
 
+# ---------------------------------------------------------------------------
+# Read Cognito config from AuthStack
+# ---------------------------------------------------------------------------
+echo "==> Reading Cognito config from ${AUTH_STACK}..."
+USER_POOL_ID=$(aws cloudformation describe-stacks \
+  --stack-name "${AUTH_STACK}" \
+  --region "${REGION}" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" \
+  --output text)
+
+USER_POOL_CLIENT_ID=$(aws cloudformation describe-stacks \
+  --stack-name "${AUTH_STACK}" \
+  --region "${REGION}" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolClientId'].OutputValue" \
+  --output text)
+
+if [[ -z "${USER_POOL_ID}" || "${USER_POOL_ID}" == "None" ]]; then
+  echo "ERROR: UserPoolId not found in ${AUTH_STACK} outputs."
+  echo "       Deploy CDK stacks first: cd infra && npx cdk deploy AuthStack"
+  exit 1
+fi
+
+if [[ -z "${USER_POOL_CLIENT_ID}" || "${USER_POOL_CLIENT_ID}" == "None" ]]; then
+  echo "ERROR: UserPoolClientId not found in ${AUTH_STACK} outputs."
+  exit 1
+fi
+
+DISCOVERY_URL="https://cognito-idp.${REGION}.amazonaws.com/${USER_POOL_ID}/.well-known/openid-configuration"
+
+echo "Role ARN:       ${ROLE_ARN}"
+echo "User Pool ID:   ${USER_POOL_ID}"
+echo "Client ID:      ${USER_POOL_CLIENT_ID}"
+echo "Discovery URL:  ${DISCOVERY_URL}"
+
+# ---------------------------------------------------------------------------
+# Inject values into agentcore.json (skip fields already set to same value)
+# ---------------------------------------------------------------------------
+CURRENT_ROLE=$(node -e "
+  const cfg = JSON.parse(require('fs').readFileSync('${AGENTCORE_JSON}', 'utf8'));
+  process.stdout.write(cfg.agents[0].executionRoleArn ?? '');
+")
+CURRENT_DISCOVERY=$(node -e "
+  const cfg = JSON.parse(require('fs').readFileSync('${AGENTCORE_JSON}', 'utf8'));
+  process.stdout.write(cfg.agents[0].authorizerConfiguration?.customJwtAuthorizer?.discoveryUrl ?? '');
+")
+
+if [[ "${CURRENT_ROLE}" != "${ROLE_ARN}" ]] || [[ "${CURRENT_DISCOVERY}" != "${DISCOVERY_URL}" ]]; then
+  echo "==> Wiring execution role and Cognito config into agentcore.json..."
+  node -e "
+    const fs = require('fs');
+    const cfg = JSON.parse(fs.readFileSync('${AGENTCORE_JSON}', 'utf8'));
+    cfg.agents[0].executionRoleArn = '${ROLE_ARN}';
+    cfg.agents[0].authorizerConfiguration = {
+      customJwtAuthorizer: {
+        discoveryUrl: '${DISCOVERY_URL}',
+        allowedAudience: ['${USER_POOL_CLIENT_ID}'],
+        allowedClients: ['${USER_POOL_CLIENT_ID}'],
+      }
+    };
+    fs.writeFileSync('${AGENTCORE_JSON}', JSON.stringify(cfg, null, 2) + '\n');
+  "
+else
+  echo "==> agentcore.json already up to date, skipping."
+fi
+
+# ---------------------------------------------------------------------------
+# Build and deploy
+# ---------------------------------------------------------------------------
 echo "==> Building agent..."
 cd agent && npm run build
 cd ..
 
-echo "==> Deploying to AgentCore..."
+echo "==> Deploying to AgentCore (zip)..."
 cd agent && agentcore deploy
 
+echo ""
 echo "Done. Check status with: cd agent && agentcore status"
