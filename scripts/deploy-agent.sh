@@ -12,15 +12,12 @@ ECR_REPO="louis-agent"
 IMAGE_TAG="latest"
 ECR_URI="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
 
-# Prefer Finch — Docker Desktop not required
-CONTAINER_CLI="finch"
+# Finch is required — Docker Desktop not supported
 if ! command -v finch &>/dev/null; then
-  if command -v docker &>/dev/null; then
-    CONTAINER_CLI="docker"
-  else
-    echo "ERROR: Neither finch nor docker found. Install Finch: brew install --cask finch" && exit 1
-  fi
+  echo "ERROR: finch not found. Install: brew install --cask finch && finch vm init && finch vm start"
+  exit 1
 fi
+CONTAINER_CLI="finch"
 
 echo "==> Using container CLI: ${CONTAINER_CLI}"
 
