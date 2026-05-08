@@ -50,10 +50,21 @@ scripts/        Deploy and utility scripts
 Finch is an open-source container runtime from AWS (replaces Docker Desktop for container builds).
 
 ```bash
-# macOS (Homebrew)
+# macOS (Homebrew) — one-time install
 brew install --cask finch
-finch vm init
+finch vm init    # creates the Linux VM (one-time, takes a few minutes)
+```
+
+Before each container build session:
+
+```bash
 finch vm start
+```
+
+After you're done building:
+
+```bash
+finch vm stop    # frees the VM resources
 ```
 
 CDK uses the `CDK_DOCKER` environment variable to select the container build tool:
