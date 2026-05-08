@@ -1,3 +1,13 @@
+/**
+ * CDK stack: Cognito User Pool, Identity Pool, and post-confirmation trigger.
+ *
+ * The User Pool uses email sign-in with TOTP MFA (optional). The app client uses SRP auth
+ * with no client secret so it can be used safely from the browser. A post-confirmation
+ * Lambda trigger inserts a `user_profiles` row via the RDS Data API immediately after
+ * a user verifies their email — this is the only place user_profiles rows are created.
+ * The Identity Pool issues short-lived IAM credentials scoped to the user's own S3 prefix
+ * (`documents/{sub}/` and `generated/{sub}/`) for direct-upload from the frontend.
+ */
 import { Stack, StackProps, Duration, RemovalPolicy, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';

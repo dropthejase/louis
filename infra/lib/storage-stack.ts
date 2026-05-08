@@ -1,3 +1,16 @@
+/**
+ * CDK stack: S3 buckets (docs, sessions, frontend) + CloudFront distribution.
+ *
+ * Three buckets are created here:
+ *   - docsBucket: stores user documents and generated files; per-user prefix access
+ *     is enforced via IAM (AuthStack). `eventBridgeEnabled: true` lets ConversionStack
+ *     subscribe via EventBridge rules rather than direct S3 notifications.
+ *   - sessionsBucket: stores Strands agent conversation snapshots (S3-backed sessions).
+ *   - frontendBucket: private; served exclusively via CloudFront OAC.
+ *
+ * CORS on docsBucket is applied via the CFN escape hatch after the CloudFront distribution
+ * is created so `allowedOrigins` can reference the CF domain token (resolved at deploy time).
+ */
 import { Stack, StackProps, RemovalPolicy, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as s3 from 'aws-cdk-lib/aws-s3';

@@ -1,3 +1,11 @@
+/**
+ * `fetch_documents` tool — batch-read text content from multiple documents.
+ *
+ * Equivalent to calling read_document on each ID in sequence, but in a single
+ * tool call to reduce round-trips. PDFs are extracted via pdfjs-dist;
+ * DOCX/DOC files via mammoth. Returns a concatenated string with one labelled
+ * section per document.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile } from '../lib/storage';

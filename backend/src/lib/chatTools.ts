@@ -1,3 +1,11 @@
+/**
+ * LLM tool implementations and streaming runner for the tabular-review chat endpoint.
+ *
+ * This module is kept specifically because `POST /tabular-review/:reviewId/chat`
+ * still uses `runLLMStream` + `TABULAR_TOOLS`. All other streaming chat has moved
+ * to the AgentCore agent (agent/src). New streaming features should go there,
+ * not here.
+ */
 import path from "path";
 import {
     downloadFile,

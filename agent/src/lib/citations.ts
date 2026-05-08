@@ -1,3 +1,10 @@
+/**
+ * Citation extraction utilities for the agent response pipeline.
+ *
+ * The agent appends a `<CITATIONS>[...]</CITATIONS>` JSON block at the end of
+ * responses that cite source documents. This module parses that block so the
+ * citations can be included in the `citations` SSE event sent to the frontend.
+ */
 export type ParsedAnnotation = {
   ref: number;
   doc_id: string;
@@ -5,6 +12,10 @@ export type ParsedAnnotation = {
   quote: string;
 };
 
+/**
+ * Parse the `<CITATIONS>` block from an agent response string.
+ * Returns an empty array if the block is absent or malformed.
+ */
 export function extractAnnotations(text: string): ParsedAnnotation[] {
   const match = text.match(/<CITATIONS>([\s\S]*?)<\/CITATIONS>/);
   if (!match) return [];

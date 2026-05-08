@@ -1,3 +1,12 @@
+/**
+ * `edit_document` tool — propose tracked-change edits to a .docx file.
+ *
+ * Applies a list of find/replace substitutions as `w:ins`/`w:del` tracked
+ * changes, uploads the result as a new document_versions row, and returns a
+ * presigned download URL plus per-edit annotation metadata for the frontend
+ * EditCard UI. Ownership is verified via the userId arg injected at factory time.
+ * Only .docx and .doc files are supported; PDF edits are not possible.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile, uploadFile, getPresignedUrl } from '../lib/storage';

@@ -1,3 +1,12 @@
+/**
+ * Tabular review routes — AI-powered column-based document analysis.
+ *
+ * A tabular review applies a configurable set of column prompts to one or more
+ * documents, storing each cell result in the `tabular_cells` table. This router
+ * still uses `runLLMStream` + `TABULAR_TOOLS` from chatTools.ts for the
+ * `POST /tabular-review/:reviewId/chat` endpoint — all other streaming has
+ * moved to the AgentCore agent.
+ */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { query, queryOne, execute } from "../lib/db";

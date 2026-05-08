@@ -1,3 +1,13 @@
+/**
+ * Project routes — CRUD for projects, project documents, folders, and
+ * the shared-document pipeline.
+ *
+ * Projects are the primary grouping mechanism; documents and chats can
+ * belong to a project. Access is either by ownership (user_id) or by email
+ * in shared_with. `handleDocumentUpload` is exported so the standalone
+ * documents router can reuse the same upload + conversion + version-row
+ * creation logic.
+ */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { query, queryOne, execute } from "../lib/db";
@@ -732,6 +742,16 @@ projectsRouter.patch(
   },
 );
 
+/**
+ * Shared upload handler used by both the project and standalone document routes.
+ *
+ * Validates file type (pdf/docx/doc), writes bytes to S3, triggers DOCX→PDF
+ * conversion, extracts a structure tree, creates the `documents` row and its
+ * initial `document_versions` V1 row, and returns the created document as JSON.
+ *
+ * @param projectId Pass null for standalone documents.
+ * Returns 400 on unsupported file types, 500 on storage or DB failures.
+ */
 export async function handleDocumentUpload(
   req: import("express").Request,
   res: import("express").Response,

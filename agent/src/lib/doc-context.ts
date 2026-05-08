@@ -1,8 +1,25 @@
+/**
+ * Document context builders — populate the in-memory DocStore and DocIndex
+ * for a single agent invocation.
+ *
+ * DocStore maps chat-local labels (doc-0, doc-1, …) to S3 storage metadata;
+ * DocIndex maps the same labels to DB identifiers needed for write operations.
+ * Labels are assigned in ascending created_at order and are stable within one
+ * invocation but may differ across turns if documents are added between calls.
+ *
+ * The N+1 query pattern (one version lookup per document) is intentional:
+ * Aurora Data API does not support JOINs that return nested objects, so a
+ * batch IN clause would require post-processing that is equivalent complexity.
+ */
 import { query, queryOne } from './db';
 
 export type DocStore = Map<string, { storage_path: string; file_type: string; filename: string }>;
 export type DocIndex = Record<string, { document_id: string; filename: string; version_id?: string; version_number?: number }>;
 
+/**
+ * Build document context for a standalone (non-project) agent invocation.
+ * Loads all documents owned by userId that have no project_id.
+ */
 export async function buildDocContext(
   userId: string,
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
@@ -45,6 +62,10 @@ export async function buildDocContext(
   return { docIndex, docStore };
 }
 
+/**
+ * Build document context for a project-scoped agent invocation.
+ * Loads all documents belonging to the given project, regardless of owner.
+ */
 export async function buildProjectDocContext(
   projectId: string,
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {

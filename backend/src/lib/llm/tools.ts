@@ -1,3 +1,11 @@
+/**
+ * Tool schema conversion utilities for the LLM abstraction layer.
+ *
+ * Callers define tools in OpenAI format (the common internal representation).
+ * This module provides adapters that convert those schemas to the wire format
+ * expected by Claude (Anthropic API) and Gemini. Bedrock's own converter lives
+ * in bedrock.ts using `toBedrockTools`.
+ */
 import type { OpenAIToolSchema } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -12,6 +20,7 @@ export type ClaudeTool = {
     input_schema: Record<string, unknown>;
 };
 
+/** Convert OpenAI-format tool definitions to Anthropic Claude API format. */
 export function toClaudeTools(tools: OpenAIToolSchema[]): ClaudeTool[] {
     return tools.map((t) => ({
         name: t.function.name,
@@ -26,6 +35,11 @@ export type GeminiFunctionDeclaration = {
     parameters?: Record<string, unknown>;
 };
 
+/**
+ * Convert OpenAI-format tool definitions to Gemini FunctionDeclaration format.
+ * Omits the `parameters` key entirely when the schema has no properties, as
+ * Gemini rejects empty parameter objects.
+ */
 export function toGeminiTools(tools: OpenAIToolSchema[]): GeminiFunctionDeclaration[] {
     return tools.map((t) => {
         const params = normalizeSchema(t.function.parameters);

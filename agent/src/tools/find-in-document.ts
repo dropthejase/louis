@@ -1,3 +1,10 @@
+/**
+ * `find_in_document` tool — case-insensitive, whitespace-tolerant substring search.
+ *
+ * Extracts the document text (via pdfjs or mammoth), normalises whitespace,
+ * and returns up to `max_results` matches with surrounding context characters.
+ * Useful when the agent needs to pinpoint a specific clause before editing.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile } from '../lib/storage';

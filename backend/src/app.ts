@@ -1,3 +1,10 @@
+/**
+ * Express application factory for the backend API.
+ *
+ * Mounts all route routers under their public path prefixes and configures
+ * CORS (origin locked to FRONTEND_URL). Used by both the local dev server
+ * (index.ts) and the Lambda handler (lambda.ts) via serverless-http.
+ */
 import express from "express";
 import cors from "cors";
 import { chatRouter } from "./routes/chat";

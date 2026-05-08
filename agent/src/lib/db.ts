@@ -1,3 +1,11 @@
+/**
+ * Aurora RDS Data API wrapper for the agent Lambda.
+ *
+ * Identical in structure to backend/src/lib/db.ts — both packages need their
+ * own copy because they are bundled independently. Uses `formatRecordsAs: "JSON"`
+ * so results are returned as a JSON string in `formattedRecords` and parsed
+ * back to typed arrays here. Throws at call time if DB env vars are missing.
+ */
 import {
   RDSDataClient,
   ExecuteStatementCommand,
@@ -16,6 +24,10 @@ function getConfig() {
   return { resourceArn, secretArn, database };
 }
 
+/**
+ * Run a SELECT (or any statement that returns rows) and return all rows.
+ * Returns an empty array when the result set is empty.
+ */
 export async function query<T = Record<string, unknown>>(
   sql: string,
   parameters: SqlParameter[] = [],
@@ -33,6 +45,10 @@ export async function query<T = Record<string, unknown>>(
   return JSON.parse(result.formattedRecords) as T[];
 }
 
+/**
+ * Run a statement expected to return at most one row.
+ * Returns the first row, or null if the result set is empty.
+ */
 export async function queryOne<T = Record<string, unknown>>(
   sql: string,
   parameters: SqlParameter[] = [],
@@ -41,6 +57,9 @@ export async function queryOne<T = Record<string, unknown>>(
   return rows[0] ?? null;
 }
 
+/**
+ * Run an INSERT / UPDATE / DELETE that returns no rows.
+ */
 export async function execute(
   sql: string,
   parameters: SqlParameter[] = [],

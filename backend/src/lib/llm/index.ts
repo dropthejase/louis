@@ -11,6 +11,12 @@ import type { StreamChatParams, StreamChatResult } from "./types";
 export * from "./types";
 export * from "./models";
 
+/**
+ * Run a streaming multi-turn conversation, optionally executing tool calls
+ * in a loop until the model stops requesting tools or maxIterations is reached.
+ * Resolves the logical model tier name to a Bedrock cross-region inference
+ * profile ID before dispatching.
+ */
 export async function streamChatWithTools(
   params: StreamChatParams,
 ): Promise<StreamChatResult> {
@@ -18,6 +24,10 @@ export async function streamChatWithTools(
   return streamBedrock({ ...params, model: bedrockModelId });
 }
 
+/**
+ * Non-streaming single-turn text completion (e.g. title generation).
+ * Resolves the logical model tier name to a Bedrock profile ID before dispatch.
+ */
 export async function completeText(params: {
   model: string;
   systemPrompt?: string;

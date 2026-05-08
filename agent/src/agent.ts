@@ -1,3 +1,15 @@
+/**
+ * AgentCore agent factory — constructs the Strands SDK Agent with all tools,
+ * Bedrock model, and optional S3-backed session persistence.
+ *
+ * userId is always sourced from the JWT `sub` claim (validated in index.ts)
+ * and is never derived from LLM input. The AfterModelCallEvent hook increments
+ * DynamoDB credits after each model call; this is distinct from the backend's
+ * pre-flight credit check (which runs before the request reaches the agent).
+ *
+ * replicate_document is only included when projectId is provided — the tool
+ * makes no sense in a standalone-document context.
+ */
 import { Agent, BedrockModel, SessionManager, AfterModelCallEvent } from '@strands-agents/sdk';
 import { S3Storage } from '@strands-agents/sdk/dist/src/session/s3-storage.js';
 import { S3Client } from '@aws-sdk/client-s3';
@@ -39,6 +51,16 @@ async function incrementCredits(userId: string): Promise<void> {
   }));
 }
 
+/**
+ * Build and return a configured Strands Agent for a single invocation.
+ *
+ * @param userId Cognito sub — used for ownership checks inside tools.
+ * @param docStore In-memory map of doc labels to storage metadata.
+ * @param docIndex In-memory map of doc labels to DB metadata.
+ * @param projectId When set, scopes the context to a project and enables replicate_document.
+ * @param modelId Logical model tier name (e.g. "claude-sonnet-4-6"); defaults to mid tier.
+ * @param sessionId When set, enables S3-backed conversation snapshot persistence.
+ */
 export function createAgent(
   userId: string,
   docStore: DocStore,

@@ -1,3 +1,10 @@
+/**
+ * `read_table_cells` tool — read extracted cell data from a tabular review.
+ *
+ * Enforces that the review belongs to the userId injected at factory time.
+ * Returns cells as a JSON string so the agent can read and compare column
+ * summaries without accessing raw document bytes.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { query } from '../lib/db';

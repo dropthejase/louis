@@ -1,3 +1,12 @@
+/**
+ * `generate_docx` tool — create a new Word document from structured content.
+ *
+ * Uses the docx npm package to build the file from a sections schema (headings,
+ * paragraphs, tables), uploads the result to S3, creates a documents row and
+ * a document_versions row (source='assistant_generated'), and registers the
+ * new document in docStore/docIndex so subsequent tools in the same turn can
+ * reference it immediately. Returns a presigned download URL.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import {

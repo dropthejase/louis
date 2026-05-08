@@ -1,3 +1,12 @@
+/**
+ * CDK stack: Aurora Serverless v2 Postgres cluster with Data API enabled.
+ *
+ * All application code accesses the database exclusively through the RDS Data API
+ * (never direct TCP). `enableDataApi: true` is required for this. The cluster runs
+ * in isolated subnets (no NAT gateway) — Data API traffic routes through the VPC
+ * endpoint created automatically by Aurora when Data API is enabled.
+ * Capacity is set to 0–1 ACUs so the cluster scales to zero when idle.
+ */
 import { Stack, StackProps, CfnOutput, RemovalPolicy } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';

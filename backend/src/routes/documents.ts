@@ -1,3 +1,13 @@
+/**
+ * Standalone-document routes — upload, display, version management, and
+ * tracked-change accept/reject for documents not attached to a project.
+ *
+ * Documents without a project_id are "standalone" documents owned directly
+ * by a user. Storage paths live on document_versions rows; this router always
+ * goes through loadActiveVersion to resolve the right bytes. Accept/reject
+ * mutates the existing version's bytes in place rather than creating a new
+ * version row, keeping the versions table lean.
+ */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { query, queryOne, execute } from "../lib/db";

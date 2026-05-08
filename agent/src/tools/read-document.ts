@@ -1,3 +1,10 @@
+/**
+ * `read_document` tool — extract full text content from a document.
+ *
+ * PDFs are extracted via pdfjs-dist with per-page `[Page N]` markers so the
+ * agent can correctly attribute citations. DOCX/DOC files are extracted via
+ * mammoth. The agent must call this before summarising or citing document content.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile } from '../lib/storage';

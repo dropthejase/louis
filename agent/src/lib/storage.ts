@@ -1,3 +1,11 @@
+/**
+ * S3 document storage helpers for the agent container.
+ *
+ * Simpler than the backend equivalent — no null-safe fallbacks, errors are
+ * thrown directly to the tool callback so the agent can surface them to the model.
+ * Unlike the backend's getSignedUrl, getPresignedUrl here uses a 15-minute
+ * (900 s) expiry and encodes the download filename in the Content-Disposition.
+ */
 import {
   S3Client,
   GetObjectCommand,

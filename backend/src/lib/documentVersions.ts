@@ -1,3 +1,10 @@
+/**
+ * Helpers for resolving document storage paths via the document_versions table.
+ *
+ * Storage paths (DOCX bytes and PDF renditions) live on document_versions rows,
+ * not on documents. Every read-from-storage path must go through these helpers
+ * so the current version is always respected.
+ */
 import { query, queryOne } from "./db";
 
 export interface ActiveVersion {

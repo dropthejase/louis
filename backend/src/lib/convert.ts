@@ -1,3 +1,10 @@
+/**
+ * LibreOffice-based DOCX→PDF conversion utilities used by the backend Lambda.
+ *
+ * Requires LibreOffice to be installed in the Lambda container image.
+ * The convert function is lazily initialised so cold-start cost is paid only
+ * when conversion is first needed.
+ */
 import { promisify } from "util";
 import JSZip from "jszip";
 
@@ -54,6 +61,10 @@ export async function docxToPdf(buffer: Buffer): Promise<Buffer> {
   return convert(normalized, ".pdf", undefined);
 }
 
+/**
+ * Derive the S3 key where the converted PDF is stored for a given (userId, docId) pair.
+ * Pattern: `converted-pdfs/{userId}/{docId}.pdf`
+ */
 export function convertedPdfKey(userId: string, docId: string): string {
   return `converted-pdfs/${userId}/${docId}.pdf`;
 }

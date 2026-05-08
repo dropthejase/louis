@@ -1,3 +1,10 @@
+/**
+ * User profile routes — read/write profile data and account deletion.
+ *
+ * Handles display name, organisation, and per-user model preference. Account
+ * deletion cascades through all owned data (FK constraints) then removes
+ * the user from the Cognito User Pool via AdminDeleteUser.
+ */
 import { Router } from "express";
 import {
   CognitoIdentityProviderClient,

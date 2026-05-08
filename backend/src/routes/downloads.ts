@@ -1,3 +1,11 @@
+/**
+ * Download routes — serve stored files directly or via presigned S3 URLs.
+ *
+ * Both endpoints verify document ownership by looking up the storage_path in
+ * document_versions and then checking access on the parent document row.
+ * This prevents arbitrary S3 key enumeration — callers must present a path
+ * that resolves to a document the user can access.
+ */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { queryOne } from "../lib/db";

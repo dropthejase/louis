@@ -1,3 +1,15 @@
+/**
+ * AgentCore Runtime HTTP server — entry point for the agent container.
+ *
+ * Exposes two endpoints: GET /ping (health check for AgentCore) and
+ * POST /invocations (streaming agent turns over SSE). The /invocations handler
+ * extracts userId from the JWT `sub` claim in the Authorization header — it
+ * never trusts userId from the request body. Session continuity is maintained
+ * by storing the AgentCore session ID in the chats table after the first turn.
+ *
+ * JWT auth is enforced by the AgentCore inbound authorizer (requestHeaderAllowlist)
+ * before the request reaches this container.
+ */
 import express from 'express';
 import { buildDocContext, buildProjectDocContext, DocIndex } from './lib/doc-context';
 import { extractAnnotations } from './lib/citations';

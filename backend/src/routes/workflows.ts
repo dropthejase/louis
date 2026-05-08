@@ -1,3 +1,12 @@
+/**
+ * Workflow routes — user-defined assistant and tabular workflow templates.
+ *
+ * Workflows come in two types: `assistant` (a system-prompt extension applied
+ * to a chat turn) and `tabular` (a columns_config preset for tabular reviews).
+ * Sharing is per-workflow via the `workflow_shares` table. System workflows
+ * (is_system = true) are read-only and visible to all users; they cannot be
+ * modified or deleted via this API.
+ */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { query, queryOne, execute } from "../lib/db";

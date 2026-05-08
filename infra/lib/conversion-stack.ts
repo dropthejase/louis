@@ -1,3 +1,14 @@
+/**
+ * CDK stack: DOCX→PDF conversion Lambda + EventBridge rules.
+ *
+ * The conversion Lambda runs as an x86_64 Docker image (LibreOffice is not available for
+ * ARM64 in Lambda container images). It is triggered by EventBridge Object Created events
+ * on `.docx` and `.doc` files under the `documents/` prefix; EventBridge is used rather
+ * than direct S3 notifications to avoid the CDK cross-stack imported-bucket limitation.
+ * Two separate EventBridge rules handle `.docx` and `.doc` suffixes respectively because
+ * EventBridge content filtering does not support OR within a single suffix filter.
+ * Timeout is 5 minutes to accommodate large or complex documents.
+ */
 import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';

@@ -1,3 +1,9 @@
+/**
+ * `list_documents` tool — enumerate all documents available in the current context.
+ *
+ * Reads from the in-memory DocIndex populated at the start of the invocation.
+ * Returns a plain text list of label → filename (version) entries.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { DocIndex } from '../lib/doc-context';

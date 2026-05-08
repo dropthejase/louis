@@ -1,3 +1,9 @@
+/**
+ * Shared type definitions for the LLM abstraction layer.
+ *
+ * All callers use these types when calling streamChatWithTools or completeText;
+ * the Bedrock-specific wire format is handled internally in bedrock.ts.
+ */
 // backend/src/lib/llm/types.ts
 
 export type Provider = "claude"; // Gemini removed — all calls go through Bedrock

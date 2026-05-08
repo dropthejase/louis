@@ -1,3 +1,17 @@
+/**
+ * Conversion Lambda handler — DOCX→PDF conversion triggered by S3 EventBridge.
+ *
+ * Listens for `Object Created` events on .docx and .doc files under the
+ * `documents/` prefix of the docs bucket (configured in ConversionStack).
+ * For each event: downloads the source file, converts it to PDF via LibreOffice,
+ * uploads the PDF to the `converted-pdfs/` prefix, and updates
+ * `document_versions.pdf_storage_path` so the backend can serve the PDF rendition.
+ *
+ * Runs on x86_64 (LibreOffice is not available for ARM64 in the Lambda
+ * container image). Per-record errors are logged but do not fail the batch —
+ * a failed conversion leaves pdf_storage_path null and the UI falls back to
+ * the DOCX viewer.
+ */
 import { S3Event } from 'aws-lambda';
 import {
   S3Client,

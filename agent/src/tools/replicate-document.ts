@@ -1,3 +1,11 @@
+/**
+ * `replicate_document` tool — copy an existing project document as a new document.
+ *
+ * Verifies that the source document is owned by userId before copying bytes.
+ * The copy gets its own document row, version row (source='replicated'), and
+ * docStore/docIndex entry so it can be edited immediately in the same turn.
+ * Only available when a projectId is present (see createAgent in agent.ts).
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile, uploadFile } from '../lib/storage';

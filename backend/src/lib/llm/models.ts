@@ -63,6 +63,10 @@ export function resolveBedrockModelId(logicalModel: string): string {
   }
 }
 
+/**
+ * Return `id` if it is a known logical model name, otherwise return `fallback`.
+ * Used to sanitise user-supplied model preferences from the database.
+ */
 export function resolveModel(
   id: string | null | undefined,
   fallback: string,

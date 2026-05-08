@@ -1,3 +1,10 @@
+/**
+ * `read_workflow` tool — load the full prompt instructions for a workflow.
+ *
+ * Returns the workflow title and prompt_md so the agent can follow the
+ * workflow's instructions for the current turn. Access is limited to the
+ * user's own workflows and system workflows (is_system = true).
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { queryOne } from '../lib/db';

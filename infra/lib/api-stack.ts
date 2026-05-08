@@ -1,3 +1,12 @@
+/**
+ * CDK stack: API Gateway + backend Lambda + AgentCore execution role + DynamoDB credits table.
+ *
+ * API Gateway uses a native Cognito User Pool authorizer (300s cache) — the backend Lambda
+ * receives the JWT and trusts the `sub` claim as userId without re-validating the signature.
+ * The AgentCore execution role is created here (not in a separate stack) because it needs
+ * access to the same DynamoDB credits table; its ARN is exported for use by deploy-agent.sh.
+ * Backend Lambda is ARM64; the conversion Lambda is x86_64 (LibreOffice constraint).
+ */
 import * as cdk from 'aws-cdk-lib';
 import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';

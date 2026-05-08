@@ -1,3 +1,13 @@
+/**
+ * Chat session routes — CRUD for chat records and AgentCore session management.
+ *
+ * Chats are the top-level container for a user's conversation with the agent.
+ * This router handles listing, creating, deleting, and renaming chats, as well
+ * as reading AgentCore session history from S3 snapshots and persisting the
+ * AgentCore session ID for multi-turn continuity. The `/messages` endpoint
+ * reads raw Strands snapshot JSON from S3 and converts it to the client-facing
+ * `MikeMessage[]` shape.
+ */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { query, queryOne, execute } from "../lib/db";

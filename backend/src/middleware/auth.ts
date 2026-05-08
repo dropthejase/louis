@@ -25,6 +25,15 @@ declare module "express-serve-static-core" {
   }
 }
 
+/**
+ * Express middleware that enforces Cognito authentication.
+ *
+ * Reads the JWT claims injected by API Gateway's native Cognito authorizer
+ * from `req.apiGateway.event.requestContext.authorizer.claims`. Sets
+ * `res.locals.userId` (from `sub`), `res.locals.userEmail`, and
+ * `res.locals.token` (the raw Bearer token, forwarded to the agent).
+ * Returns 401 if the `sub` claim is absent.
+ */
 export async function requireAuth(
   req: Request,
   res: Response,

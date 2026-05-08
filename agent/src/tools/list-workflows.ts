@@ -1,3 +1,10 @@
+/**
+ * `list_workflows` tool — enumerate workflow templates visible to the current user.
+ *
+ * Returns the user's own workflows plus all system workflows (is_system = true).
+ * Optionally filtered by type ('assistant' or 'tabular'). Used by the agent
+ * when the system prompt instructs it to load a workflow via read_workflow.
+ */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { query } from '../lib/db';
