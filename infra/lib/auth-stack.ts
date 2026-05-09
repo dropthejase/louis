@@ -1,7 +1,7 @@
 /**
  * CDK stack: Cognito User Pool, Identity Pool, and post-confirmation trigger.
  *
- * The User Pool uses email sign-in with TOTP MFA (optional). The app client uses SRP auth
+ * The User Pool uses email sign-in (no MFA). The app client uses SRP auth
  * with no client secret so it can be used safely from the browser. A post-confirmation
  * Lambda trigger inserts a `user_profiles` row via the RDS Data API immediately after
  * a user verifies their email — this is the only place user_profiles rows are created.
@@ -53,11 +53,7 @@ export class AuthStack extends Stack {
         requireDigits: true,
         requireSymbols: true,
       },
-      mfa: cognito.Mfa.OPTIONAL,
-      mfaSecondFactor: {
-        sms: false,
-        otp: true, // TOTP only
-      },
+      mfa: cognito.Mfa.OFF,
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: RemovalPolicy.DESTROY,
     });
