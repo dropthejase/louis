@@ -25,7 +25,7 @@ interface ApiStackProps extends StackProps {
   docsBucket: s3.Bucket;
   sessionsBucket: s3.Bucket;
   agentDeployBucket: s3.Bucket;
-  frontendUrl?: string;
+  frontendUrl: string;
   dbClusterArn: string;
   dbSecretArn: string;
   dbName: string;
@@ -114,7 +114,7 @@ export class ApiStack extends Stack {
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
         USER_POOL_ID: props.userPool.userPoolId,
-        FRONTEND_URL: props.frontendUrl ?? '*',
+        FRONTEND_URL: props.frontendUrl,
         CREDITS_TABLE_NAME: creditsTable.tableName,
         NODE_ENV: 'production',
         POWERTOOLS_SERVICE_NAME: 'louis-api',
@@ -133,7 +133,7 @@ export class ApiStack extends Stack {
         metricsEnabled: true,
       },
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS,
+        allowOrigins: [props.frontendUrl!],
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders: ['Content-Type', 'Authorization'],
       },
