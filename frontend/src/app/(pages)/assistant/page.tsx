@@ -8,7 +8,7 @@ import type { MikeMessage } from "@/app/components/shared/types";
 
 export default function AssistantPage() {
     const router = useRouter();
-    const { messages, isResponseLoading, handleChat, handleNewChat, cancel, creditsExhausted, creditsResetDate, dismissCreditsModal } =
+    const { messages, isResponseLoading, handleChat, handleNewChat, cancel } =
         useAssistantChat();
 
     async function handleInitialSubmit(message: MikeMessage) {
@@ -30,9 +30,6 @@ export default function AssistantPage() {
             isResponseLoading={isResponseLoading}
             handleChat={handleChat}
             cancel={cancel}
-            creditsExhausted={creditsExhausted}
-            creditsResetDate={creditsResetDate}
-            onCreditsModalClose={dismissCreditsModal}
         />
     );
 }

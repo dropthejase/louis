@@ -10,7 +10,6 @@ import {
     type AssistantSidePanelTab,
 } from "./AssistantSidePanel";
 import { AssistantWorkflowModal } from "./AssistantWorkflowModal";
-import { CreditsExhaustedModal } from "../modals/credits-exhausted-modal";
 import type {
     MikeCitationAnnotation,
     MikeEditAnnotation,
@@ -24,9 +23,6 @@ interface Props {
     isResponseLoading: boolean;
     handleChat: (message: MikeMessage) => Promise<string | null>;
     cancel: () => void;
-    creditsExhausted?: boolean;
-    creditsResetDate?: string;
-    onCreditsModalClose?: () => void;
 }
 
 export function ChatView({
@@ -34,9 +30,6 @@ export function ChatView({
     isResponseLoading,
     handleChat,
     cancel,
-    creditsExhausted = false,
-    creditsResetDate = "",
-    onCreditsModalClose,
 }: Props) {
     const [tabs, setTabs] = useState<AssistantSidePanelTab[]>([]);
     const [activeTabId, setActiveTabId] = useState<string | null>(null);
@@ -603,12 +596,6 @@ export function ChatView({
                 onClose={() => setWorkflowModalOpen(false)}
                 onSelect={() => setWorkflowModalOpen(false)}
                 initialWorkflowId={workflowModalInitialId}
-            />
-
-            <CreditsExhaustedModal
-                isOpen={creditsExhausted}
-                onClose={onCreditsModalClose ?? (() => {})}
-                resetDate={creditsResetDate}
             />
 
             {panelMounted && (

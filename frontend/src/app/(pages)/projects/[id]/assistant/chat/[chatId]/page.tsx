@@ -41,7 +41,6 @@ import type { ChatInputHandle } from "@/app/components/assistant/ChatInput";
 import { ProjectExplorer } from "@/app/components/projects/ProjectExplorer";
 import { DocView } from "@/app/components/shared/DocView";
 import { OwnerOnlyModal } from "@/app/components/shared/OwnerOnlyModal";
-import { CreditsExhaustedModal } from "@/app/components/modals/credits-exhausted-modal";
 import { DocxView } from "@/app/components/shared/DocxView";
 import { MikeIcon } from "@/components/chat/mike-icon";
 import { useAuth } from "@/contexts/AuthContext";
@@ -255,7 +254,7 @@ export default function ProjectAssistantChatPage({ params }: Props) {
         saveChat,
     } = useChatHistoryContext();
     const [initialMessages] = useState<MikeMessage[]>(newChatMessages ?? []);
-    const { messages, isResponseLoading, handleChat, setMessages, cancel, creditsExhausted, creditsResetDate, dismissCreditsModal } =
+    const { messages, isResponseLoading, handleChat, setMessages, cancel } =
         useAssistantChat({ initialMessages, chatId, projectId });
 
     const hasLoaded = useRef(false);
@@ -1233,11 +1232,6 @@ export default function ProjectAssistantChatPage({ params }: Props) {
                 open={!!ownerOnlyAction}
                 action={ownerOnlyAction ?? undefined}
                 onClose={() => setOwnerOnlyAction(null)}
-            />
-            <CreditsExhaustedModal
-                isOpen={creditsExhausted}
-                onClose={dismissCreditsModal}
-                resetDate={creditsResetDate}
             />
         </div>
     );
