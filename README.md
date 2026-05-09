@@ -1,6 +1,6 @@
-# Mike — AWS
+# Louis — AWS
 
-Mike is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
+Louis is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
 
 Licensed AGPL-3.0.
 
@@ -82,14 +82,21 @@ Add to your shell profile (`~/.zshrc` or `~/.bashrc`) so it persists. CDK calls 
 ### 1. Deploy CDK stacks
 
 ```bash
-export CDK_DOCKER=finch
 cd infra && npm install
 
 npx cdk deploy StorageStack
 npx cdk deploy DatabaseStack
 npx cdk deploy AuthStack
 npx cdk deploy ApiStack
-npx cdk deploy ConversionStack   # requires Finch
+```
+
+For ConversionStack, Finch must be running first:
+
+```bash
+finch vm start
+export CDK_DOCKER=finch
+npx cdk deploy ConversionStack
+finch vm stop
 ```
 
 Deploy order matters: DatabaseStack before AuthStack and ApiStack. ConversionStack last.
@@ -185,7 +192,7 @@ Per-user monthly credit tracking via DynamoDB:
 
 - **Table:** `PK=userId`, `SK=YYYY-MM`, `credits_used` (atomic `UpdateItem ADD`)
 - **Increment:** Strands `after_model_call` hook runs after each successful AgentCore model invocation
-- **Enforcement:** backend returns 429 before allowing chat when limit exceeded; frontend wires to `CreditsExhaustedModal`
+- **Enforcement:** agent returns `error` SSE event when limit exceeded; frontend wires to `CreditsExhaustedModal`
 - **IAM:** AgentCore execution role has `dynamodb:GetItem` + `dynamodb:UpdateItem` on credits table only
 
 ## Environment Variables
@@ -233,8 +240,9 @@ cd backend && npx tsc --noEmit
 # Infra
 cd infra && npx tsc --noEmit
 
-# Agent
-cd agent && npm run build
+# Agents
+cd agents/app/main && npm run build
+cd agents/app/tabular && npm run build
 
 # Frontend
 cd frontend && npm run build
