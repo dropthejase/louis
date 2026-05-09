@@ -80,6 +80,8 @@ All stacks live in `infra/`, deployed with `npx cdk deploy <StackName>`. Cross-s
 
 Agents are deployed via `scripts/deploy-agent.sh <agentName>` (no Docker, no agentcore CLI). The script builds a ZIP (`dist/` + `node_modules/`), uploads to the agent deploy bucket, then calls `create-agent-runtime` or `update-agent-runtime`. Runtime IDs and ARNs are stored in SSM at `/louis/agents/<agentName>/runtimeId` and `/louis/agents/<agentName>/runtimeArn`.
 
+Two agents are deployed: `louisMain` (chat with documents) and `louisTabular` (tabular review chat).
+
 ---
 
 ## Database
@@ -100,7 +102,7 @@ Each agent is a Node 22 ZIP package (`dist/` + `node_modules/`) running a raw Ex
 
 AgentCore Runtime validates the Cognito JWT before the `/invocations` handler runs. `requestHeaderAllowlist: ["Authorization"]` passes the validated header to agent code. The agent decodes the JWT payload (no signature check — Runtime already verified it) and extracts `sub` as `userId`. The `userId` is never taken from request body or LLM output. All agent DB queries include `WHERE user_id = :userId` (or equivalent ownership JOIN) so cross-user data access is impossible even if the LLM is prompted to try.
 
-### Strands Agent
+### Main Agent (`louisMain`)
 
 `agents/app/main/src/agent.ts` instantiates a `@strands-agents/sdk` `Agent` with a `BedrockModel` and 10 tools:
 
@@ -117,9 +119,21 @@ AgentCore Runtime validates the Cognito JWT before the `/invocations` handler ru
 | `list_workflows` | List available workflows (`user_id = :userId OR is_system = true`) |
 | `read_workflow` | Fetch a specific workflow definition |
 
+### Tabular Agent (`louisTabular`)
+
+`agents/app/tabular/src/agent.ts` — same structure as louisMain but purpose-built for tabular review chat:
+
+| Tool | Purpose |
+|---|---|
+| `read_table_cells` | Read extracted cell data for a review (same ownership guard as main agent) |
+
+The tabular system prompt is built per-request in `buildTabularSystemPrompt` and includes the review title, column manifest, and document list. No S3 session persistence — tabular chat turns are short-lived and stateless in the agent.
+
+**Chat persistence:** Frontend pre-creates a `tabular_review_chats` row via `POST /tabular-review/:reviewId/chats` before streaming. After `[DONE]`, the frontend calls `POST /tabular-review/:reviewId/chats/:chatId/messages` to persist both the user message and the assistant turn (events + annotations) and receive the generated title.
+
 ### Credits metering
 
-A Strands `AfterModelCallEvent` hook in `agents/app/main/src/agent.ts` increments `credits_used` in DynamoDB (`PK=userId`, `SK=YYYY-MM`, atomic ADD) after each successful model call. The API backend checks DynamoDB before allowing a new chat invocation and returns 429 when the monthly limit is exceeded; the frontend shows a `CreditsExhaustedModal`.
+A Strands `AfterModelCallEvent` hook in both agents increments `credits_used` in DynamoDB (`PK=userId`, `SK=YYYY-MM`, atomic ADD) after each successful model call. The API backend checks DynamoDB before allowing a new chat invocation and returns 429 when the monthly limit is exceeded; the frontend shows a `CreditsExhaustedModal`.
 
 ### SSE Event Protocol
 

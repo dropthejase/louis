@@ -16,6 +16,9 @@ export const API_URL =
 export const AGENTCORE_URL =
   process.env.NEXT_PUBLIC_AGENTCORE_URL ?? "";
 
+export const AGENTCORE_TABULAR_URL =
+  process.env.NEXT_PUBLIC_AGENTCORE_TABULAR_URL ?? "";
+
 export const USER_POOL_ID =
   process.env.NEXT_PUBLIC_USER_POOL_ID ?? "";
 

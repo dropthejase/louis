@@ -6,7 +6,7 @@
  */
 
 import { getIdToken } from "@/lib/aws/amplify-auth";
-import { API_URL, AGENTCORE_URL } from "@/lib/aws/config";
+import { API_URL, AGENTCORE_URL, AGENTCORE_TABULAR_URL } from "@/lib/aws/config";
 import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import type {
     AssistantEvent,
@@ -544,25 +544,53 @@ export async function streamTabularGeneration(
     });
 }
 
+export async function createTabularChat(reviewId: string): Promise<{ chatId: string }> {
+    return apiRequest<{ chatId: string }>(`/tabular-review/${reviewId}/chats`, {
+        method: "POST",
+    });
+}
+
 export async function streamTabularChat(
     reviewId: string,
-    messages: { role: string; content: string }[],
-    chat_id?: string | null,
+    chatId: string,
+    prompt: string,
+    model?: string,
     signal?: AbortSignal,
-    context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
-    const authHeader = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
+    const [token, userId] = await Promise.all([getIdToken(), getCurrentUserId()]);
+    return fetch(AGENTCORE_TABULAR_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: authHeader },
-        body: JSON.stringify({
-            messages,
-            chat_id: chat_id ?? undefined,
-            review_title: context?.reviewTitle ?? undefined,
-            project_name: context?.projectName ?? undefined,
-        }),
+        headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${token}`,
+            "X-Amzn-Bedrock-AgentCore-Runtime-User-Id": userId,
+        },
+        body: JSON.stringify({ reviewId, chatId, prompt, model }),
         signal: signal ?? undefined,
     });
+}
+
+export async function persistTabularChatMessages(
+    reviewId: string,
+    chatId: string,
+    payload: {
+        user_message: string;
+        assistant_events: unknown[];
+        annotations?: unknown[];
+        is_first_exchange?: boolean;
+        review_title?: string | null;
+        project_name?: string | null;
+    },
+): Promise<{ title: string | null }> {
+    return apiRequest<{ title: string | null }>(
+        `/tabular-review/${reviewId}/chats/${chatId}/messages`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        },
+    );
 }
 
 export interface TRCitationAnnotation {

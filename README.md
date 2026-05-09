@@ -108,6 +108,7 @@ Reads `ClusterArn`, `SecretArn`, `DatabaseName` from the `DatabaseStack` CloudFo
 ```bash
 # From repo root — reads all config from CFN outputs, no CLI tooling required
 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain
+AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
 ```
 
 Builds the agent (`tsc` + `npm ci --omit=dev`), zips `dist/` + `node_modules/`, uploads to the `AgentDeployBucket` S3 bucket, then calls `create-agent-runtime` (first run) or `update-agent-runtime` (subsequent runs). Runtime ID and ARN are stored in SSM at `/louis/agents/louisMain/runtimeId` and `/louis/agents/louisMain/runtimeArn`. No Docker or agentcore CLI required.
@@ -143,7 +144,7 @@ cd infra && npx cdk deploy ApiStack
 
 ```bash
 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain
-# or: AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
+AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
 ```
 
 **Frontend changes:**
@@ -210,7 +211,8 @@ Per-user monthly credit tracking via DynamoDB:
 | `NEXT_PUBLIC_IDENTITY_POOL_ID` | Cognito Identity Pool ID (AuthStack output) |
 | `NEXT_PUBLIC_DOCS_BUCKET_NAME` | S3 docs bucket name (StorageStack output) |
 | `NEXT_PUBLIC_API_URL` | API Gateway invoke URL (ApiStack output) |
-| `NEXT_PUBLIC_AGENTCORE_URL` | AgentCore invocation endpoint (agentcore deploy output) |
+| `NEXT_PUBLIC_AGENTCORE_URL` | AgentCore invocation endpoint for main chat (agentcore deploy output) |
+| `NEXT_PUBLIC_AGENTCORE_TABULAR_URL` | AgentCore invocation endpoint for tabular review chat (agentcore deploy output) |
 
 ## Models
 

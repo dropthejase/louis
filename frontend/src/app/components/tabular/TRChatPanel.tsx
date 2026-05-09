@@ -16,6 +16,8 @@ import {
 import { MikeIcon } from "@/components/chat/mike-icon";
 import {
     streamTabularChat,
+    createTabularChat,
+    persistTabularChatMessages,
     getTabularChats,
     getTabularChatMessages,
     deleteTabularChat,
@@ -943,14 +945,7 @@ export function TRChatPanel({
     async function handleSubmit(trimmed: string) {
         if (!trimmed || isLoading) return;
 
-        // Build messages array for backend (plain text history)
-        const history: { role: string; content: string }[] = messages.map(
-            (m) => ({
-                role: m.role,
-                content: m.content,
-            }),
-        );
-        const allMessages = [...history, { role: "user", content: trimmed }];
+        const isFirstExchange = messages.filter((m) => m.role === "user").length === 0;
 
         const userMsg: TRMessage = { role: "user", content: trimmed };
         const assistantMsg: TRMessage = {
@@ -983,18 +978,40 @@ export function TRChatPanel({
         abortRef.current = controller;
 
         try {
+            // Pre-create chat record before streaming
+            let activeChatId = currentChatId;
+            if (!activeChatId) {
+                const created = await createTabularChat(reviewId);
+                activeChatId = created.chatId;
+                setCurrentChatId(activeChatId);
+                setChats((prev) =>
+                    prev.some((c) => c.id === activeChatId!)
+                        ? prev
+                        : [
+                              {
+                                  id: activeChatId!,
+                                  title: null,
+                                  created_at: new Date().toISOString(),
+                                  updated_at: new Date().toISOString(),
+                              },
+                              ...prev,
+                          ],
+                );
+            }
+
             const response = await streamTabularChat(
                 reviewId,
-                allMessages,
-                currentChatId,
+                activeChatId,
+                trimmed,
+                currentModel,
                 controller.signal,
-                { reviewTitle, projectName },
             );
             if (!response.body) throw new Error("No response body");
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
+            let streamAnnotations: TRCitationAnnotation[] = [];
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -1010,41 +1027,6 @@ export function TRChatPanel({
 
                     try {
                         const data = JSON.parse(dataStr);
-
-                        if (data.type === "chat_id") {
-                            const newId = data.chatId as string;
-                            setCurrentChatId(newId);
-                            setChats((prev) =>
-                                prev.some((c) => c.id === newId)
-                                    ? prev
-                                    : [
-                                          {
-                                              id: newId,
-                                              title: null,
-                                              created_at:
-                                                  new Date().toISOString(),
-                                              updated_at:
-                                                  new Date().toISOString(),
-                                          },
-                                          ...prev,
-                                      ],
-                            );
-                            continue;
-                        }
-
-                        if (data.type === "chat_title") {
-                            const { chatId, title } = data as {
-                                chatId: string;
-                                title: string;
-                            };
-                            setChats((prev) =>
-                                prev.map((c) =>
-                                    c.id === chatId ? { ...c, title } : c,
-                                ),
-                            );
-                            setCurrentChatTitle(title);
-                            continue;
-                        }
 
                         if (data.type === "reasoning_delta") {
                             const text = data.text as string;
@@ -1194,12 +1176,9 @@ export function TRChatPanel({
                         }
 
                         if (data.type === "citations") {
-                            // End-of-stream signal — scrub any lingering
-                            // placeholders so they don't persist into the
-                            // finalised message.
                             clearStreamingPlaceholders();
-                            const incoming = (data.citations ??
-                                []) as TRCitationAnnotation[];
+                            const incoming = (data.citations ?? []) as TRCitationAnnotation[];
+                            streamAnnotations = incoming;
                             setMessages((prev) => {
                                 const updated = [...prev];
                                 const last = updated[updated.length - 1];
@@ -1232,6 +1211,37 @@ export function TRChatPanel({
                 }
                 return updated;
             });
+
+            // Persist turn to backend
+            if (activeChatId) {
+                try {
+                    const assistantEvents = eventsRef.current as unknown[];
+                    const persistResult = await persistTabularChatMessages(
+                        reviewId,
+                        activeChatId,
+                        {
+                            user_message: trimmed,
+                            assistant_events: assistantEvents,
+                            annotations: streamAnnotations as unknown[],
+                            is_first_exchange: isFirstExchange,
+                            review_title: reviewTitle ?? null,
+                            project_name: projectName ?? null,
+                        },
+                    );
+                    if (persistResult.title) {
+                        setCurrentChatTitle(persistResult.title);
+                        setChats((prev) =>
+                            prev.map((c) =>
+                                c.id === activeChatId
+                                    ? { ...c, title: persistResult.title! }
+                                    : c,
+                            ),
+                        );
+                    }
+                } catch {
+                    /* persist failure is non-fatal */
+                }
+            }
         } catch (err: unknown) {
             const isAbort = err instanceof Error && err.name === "AbortError";
             stopDrip();

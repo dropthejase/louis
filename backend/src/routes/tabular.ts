@@ -2,10 +2,9 @@
  * Tabular review routes — AI-powered column-based document analysis.
  *
  * A tabular review applies a configurable set of column prompts to one or more
- * documents, storing each cell result in the `tabular_cells` table. This router
- * still uses `runLLMStream` + `TABULAR_TOOLS` from chatTools.ts for the
- * `POST /tabular-review/:reviewId/chat` endpoint — all other streaming has
- * moved to the AgentCore agent.
+ * documents, storing each cell result in the `tabular_cells` table. Chat is
+ * handled by the AgentCore louisTabular agent; this router provides the
+ * chat record lifecycle endpoints (create / persist).
  */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
@@ -14,12 +13,6 @@ import type { SqlParameter } from "@aws-sdk/client-rds-data";
 import { downloadFile } from "../lib/storage";
 import { loadActiveVersion } from "../lib/documentVersions";
 import { normalizeDocxZipPaths } from "../lib/convert";
-import {
-    runLLMStream,
-    TABULAR_TOOLS,
-    type ChatMessage,
-    type TabularCellStore,
-} from "../lib/chatTools";
 import { completeText, streamChatWithTools } from "../lib/llm";
 import { getUserModelSettings } from "../lib/userSettings";
 import {
@@ -1137,332 +1130,156 @@ tabularRouter.get(
 );
 
 // ---------------------------------------------------------------------------
-// Tabular citation parsing
+// POST /tabular-review/:reviewId/chats — create a chat record
 // ---------------------------------------------------------------------------
 
-type TabularParsedCitation = {
-    ref: number;
-    col_index: number;
-    row_index: number;
-    quote: string;
-};
-
-const TABULAR_CITATIONS_BLOCK_RE = /<CITATIONS>\s*([\s\S]*?)\s*<\/CITATIONS>/;
-
-function parseTabularCitations(text: string): TabularParsedCitation[] {
-    const match = text.match(TABULAR_CITATIONS_BLOCK_RE);
-    if (!match) return [];
-    try {
-        return JSON.parse(match[1]) as TabularParsedCitation[];
-    } catch {
-        return [];
-    }
-}
-
-function extractTabularAnnotations(
-    fullText: string,
-    tabularStore: TabularCellStore,
-) {
-    return parseTabularCitations(fullText).map((c) => ({
-        type: "tabular_citation" as const,
-        ref: c.ref,
-        col_index: c.col_index,
-        row_index: c.row_index,
-        col_name:
-            tabularStore.columns[c.col_index]?.name ?? `Col ${c.col_index}`,
-        doc_name:
-            tabularStore.documents[c.row_index]?.filename ??
-            `Row ${c.row_index}`,
-        quote: c.quote,
-    }));
-}
-
-// ---------------------------------------------------------------------------
-// Build messages for tabular chat
-// ---------------------------------------------------------------------------
-
-function buildTabularMessages(
-    messages: ChatMessage[],
-    tabularStore: TabularCellStore,
-    reviewTitle: string,
-): unknown[] {
-    const docList = tabularStore.documents
-        .map((d, i) => `- ROW:${i} "${d.filename}"`)
-        .join("\n");
-    const colList = tabularStore.columns
-        .map((c, i) => `- COL:${i} "${c.name}"`)
-        .join("\n");
-
-    const systemContent = `You are Mike, an AI legal assistant. You are helping with the tabular review titled "${reviewTitle}".
-
-The review extracts specific fields from multiple legal documents into a structured table.
-You do NOT have the cell content yet — call read_table_cells to fetch the cells you need before answering.
-
-DOCUMENTS (rows):
-${docList || "- (none)"}
-
-COLUMNS (fields):
-${colList || "- (none)"}
-
-TABULAR CITATION INSTRUCTIONS:
-When you reference specific cell content, place a numbered marker [1], [2], etc. inline in your prose at the point of reference.
-
-After your complete response, append a <CITATIONS> block containing a JSON array with one entry per marker:
-
-<CITATIONS>
-[
-  {"ref": 1, "col_index": 0, "row_index": 2, "quote": "verbatim text from the cell"},
-  {"ref": 2, "col_index": 1, "row_index": 0, "quote": "another excerpt"}
-]
-</CITATIONS>
-
-Rules:
-- col_index and row_index are 0-based (matching the COL/ROW numbers listed above)
-- Only cite cells you have read via read_table_cells
-- quote should be verbatim text from the cell's summary
-- Omit <CITATIONS> if you make no citations
-- Do not fabricate cell content
-- Answer in clear, concise prose. You may use markdown formatting.`;
-
-    const formatted: unknown[] = [{ role: "system", content: systemContent }];
-    for (const msg of messages) {
-        formatted.push({ role: msg.role, content: msg.content ?? "" });
-    }
-    return formatted;
-}
-
-// ---------------------------------------------------------------------------
-// POST /tabular-review/:reviewId/chat — agentic streaming
-// ---------------------------------------------------------------------------
-
-// POST /tabular-review/:reviewId/chat
-tabularRouter.post("/:reviewId/chat", requireAuth, async (req, res) => {
+tabularRouter.post("/:reviewId/chats", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
-    const {
-        messages,
-        chat_id: existingChatId,
-        review_title: clientReviewTitle,
-        project_name: clientProjectName,
-    } = req.body as {
-        messages: ChatMessage[];
-        chat_id?: string;
-        review_title?: string;
-        project_name?: string;
-    };
 
-    const lastUser = [...(messages ?? [])]
-        .reverse()
-        .find((m) => m.role === "user");
-    if (!lastUser?.content?.trim()) {
-        return void res
-            .status(400)
-            .json({ detail: "messages must include a user message" });
-    }
-
-    const review = await queryOne<ReviewRow>(
-        `SELECT * FROM tabular_reviews WHERE id = :id`,
+    const review = await queryOne<{
+        id: string;
+        user_id: string;
+        project_id: string | null;
+    }>(
+        `SELECT id, user_id, project_id FROM tabular_reviews WHERE id = :id`,
         [{ name: "id", value: { stringValue: reviewId } }],
     );
     if (!review)
         return void res.status(404).json({ detail: "Review not found" });
-    const reviewAccess = await ensureReviewAccess(review, userId, userEmail);
-    if (!reviewAccess.ok)
+    const access = await ensureReviewAccess(review, userId, userEmail);
+    if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
-    // Fetch all cells and documents for this review
-    const cells = await query<CellRow>(
-        `SELECT * FROM tabular_cells WHERE review_id = :reviewId`,
-        [{ name: "reviewId", value: { stringValue: reviewId } }],
+    const chat = await queryOne<{ id: string }>(
+        `INSERT INTO tabular_review_chats (review_id, user_id)
+         VALUES (:reviewId, :userId)
+         RETURNING id`,
+        [
+            { name: "reviewId", value: { stringValue: reviewId } },
+            { name: "userId", value: { stringValue: userId } },
+        ],
     );
 
-    const docIds = [...new Set(cells.map((c) => c.document_id))];
-    let docs: { id: string; filename: string }[] = [];
-    if (docIds.length > 0) {
-        const placeholders = docIds.map((_, i) => `:did${i}`).join(", ");
-        docs = await query<{ id: string; filename: string }>(
-            `SELECT id, filename FROM documents WHERE id IN (${placeholders})
-             ORDER BY created_at ASC`,
-            docIds.map((id, i) => ({
-                name: `did${i}`,
-                value: { stringValue: id },
-            })),
-        );
-    }
+    res.status(201).json({ chatId: chat!.id });
+});
 
-    const sortedColumns = (review.columns_config ?? []).slice().sort(
-        (a, b) => a.index - b.index,
-    );
+// ---------------------------------------------------------------------------
+// POST /tabular-review/:reviewId/chats/:chatId/messages — persist assistant turn
+// ---------------------------------------------------------------------------
 
-    const tabularStore: TabularCellStore = {
-        columns: sortedColumns,
-        documents: docs,
-        cells: new Map(
-            cells.map((c) => [
-                `${c.column_index}:${c.document_id}`,
-                parseCellContent(c.content),
-            ]),
-        ),
-    };
+tabularRouter.post(
+    "/:reviewId/chats/:chatId/messages",
+    requireAuth,
+    async (req, res) => {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId, chatId } = req.params;
+        const {
+            user_message,
+            assistant_events,
+            annotations,
+            is_first_exchange,
+            review_title,
+            project_name,
+        } = req.body as {
+            user_message: string;
+            assistant_events: unknown[];
+            annotations?: unknown[];
+            is_first_exchange?: boolean;
+            review_title?: string | null;
+            project_name?: string | null;
+        };
 
-    // Create or verify chat record
-    let chatId = existingChatId ?? null;
-    let chatTitle: string | null = null;
-    const isFirstExchange =
-        messages.filter((m) => m.role === "user").length === 1;
-
-    if (chatId) {
-        // Either chat owner OR any project member of the parent review can
-        // continue the chat. We've already verified review access above.
-        const existing = await queryOne<{
+        // Verify review access
+        const review = await queryOne<{
             id: string;
-            title: string | null;
-            review_id: string;
             user_id: string;
+            project_id: string | null;
+            title: string | null;
         }>(
-            `SELECT id, title, review_id, user_id
-             FROM tabular_review_chats WHERE id = :id`,
-            [{ name: "id", value: { stringValue: chatId } }],
+            `SELECT id, user_id, project_id, title FROM tabular_reviews WHERE id = :id`,
+            [{ name: "id", value: { stringValue: reviewId } }],
         );
-        const canUse =
-            !!existing &&
-            (existing.review_id === reviewId || existing.user_id === userId);
-        if (!canUse || !existing) chatId = null;
-        else chatTitle = existing.title;
-    }
+        if (!review)
+            return void res.status(404).json({ detail: "Review not found" });
+        const access = await ensureReviewAccess(review, userId, userEmail);
+        if (!access.ok)
+            return void res.status(404).json({ detail: "Review not found" });
 
-    if (!chatId) {
-        const newChat = await queryOne<{ id: string; title: string | null }>(
-            `INSERT INTO tabular_review_chats (review_id, user_id)
-             VALUES (:reviewId, :userId)
-             RETURNING id, title`,
+        // Verify chat belongs to this review
+        const chat = await queryOne<{ id: string; title: string | null }>(
+            `SELECT id, title FROM tabular_review_chats
+             WHERE id = :id AND review_id = :reviewId`,
             [
+                { name: "id", value: { stringValue: chatId } },
                 { name: "reviewId", value: { stringValue: reviewId } },
-                { name: "userId", value: { stringValue: userId } },
             ],
         );
-        chatId = newChat?.id ?? null;
-        chatTitle = newChat?.title ?? null;
-    }
+        if (!chat)
+            return void res.status(404).json({ detail: "Chat not found" });
 
-    // Persist user message
-    if (chatId) {
+        // Persist user message
         await execute(
             `INSERT INTO tabular_review_chat_messages (chat_id, role, content)
-             VALUES (:chatId, :role, :content)`,
+             VALUES (:chatId, 'user', :content)`,
             [
                 { name: "chatId", value: { stringValue: chatId } },
-                { name: "role", value: { stringValue: "user" } },
+                { name: "content", value: { stringValue: JSON.stringify(user_message) } },
+            ],
+        );
+
+        // Persist assistant message
+        await execute(
+            `INSERT INTO tabular_review_chat_messages
+               (chat_id, role, content, annotations)
+             VALUES
+               (:chatId, 'assistant', :content::jsonb, :annotations::jsonb)`,
+            [
+                { name: "chatId", value: { stringValue: chatId } },
                 {
                     name: "content",
-                    value: { stringValue: JSON.stringify(lastUser.content) },
+                    value: assistant_events?.length
+                        ? { stringValue: JSON.stringify(assistant_events) }
+                        : { isNull: true },
+                },
+                {
+                    name: "annotations",
+                    value: annotations?.length
+                        ? { stringValue: JSON.stringify(annotations) }
+                        : { isNull: true },
                 },
             ],
         );
-    }
 
-    const apiMessages = buildTabularMessages(
-        messages,
-        tabularStore,
-        review.title || "Untitled Review",
-    );
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-    const write = (line: string) => res.write(line);
-
-    if (chatId) {
-        write(`data: ${JSON.stringify({ type: "chat_id", chatId })}\n\n`);
-    }
-
-    try {
-        const { fullText, events } = await runLLMStream({
-            apiMessages,
-            docStore: new Map(),
-            docIndex: {},
-            userId,
-            write,
-            extraTools: TABULAR_TOOLS,
-            tabularStore,
-            buildCitations: (text) =>
-                extractTabularAnnotations(text, tabularStore),
-        });
-
-        const annotations = extractTabularAnnotations(fullText, tabularStore);
-
-        if (chatId) {
-            await execute(
-                `INSERT INTO tabular_review_chat_messages
-                   (chat_id, role, content, annotations)
-                 VALUES
-                   (:chatId, :role, :content::jsonb, :annotations::jsonb)`,
-                [
-                    { name: "chatId", value: { stringValue: chatId } },
-                    { name: "role", value: { stringValue: "assistant" } },
-                    {
-                        name: "content",
-                        value: events.length
-                            ? { stringValue: JSON.stringify(events) }
-                            : { isNull: true },
-                    },
-                    {
-                        name: "annotations",
-                        value: annotations.length
-                            ? { stringValue: JSON.stringify(annotations) }
-                            : { isNull: true },
-                    },
-                ],
-            );
-            await execute(
-                `UPDATE tabular_review_chats SET updated_at = NOW()
-                 WHERE id = :id`,
-                [{ name: "id", value: { stringValue: chatId } }],
-            );
-        }
+        await execute(
+            `UPDATE tabular_review_chats SET updated_at = NOW() WHERE id = :id`,
+            [{ name: "id", value: { stringValue: chatId } }],
+        );
 
         // Generate title on first exchange
-        if (chatId && isFirstExchange && !chatTitle && lastUser.content) {
+        let title: string | null = chat.title;
+        if (is_first_exchange && !title && user_message) {
             const { title_model } = await getUserModelSettings();
-            const title = await generateChatTitle(
-                title_model,
-                lastUser.content,
-                {
-                    reviewTitle: clientReviewTitle ?? review.title ?? null,
-                    projectName: clientProjectName ?? null,
-                },
-            );
+            title = await generateChatTitle(title_model, user_message, {
+                reviewTitle: review_title ?? review.title ?? null,
+                projectName: project_name ?? null,
+            });
             if (title) {
                 await execute(
-                    `UPDATE tabular_review_chats SET title = :title
-                     WHERE id = :id`,
+                    `UPDATE tabular_review_chats SET title = :title WHERE id = :id`,
                     [
                         { name: "title", value: { stringValue: title } },
                         { name: "id", value: { stringValue: chatId } },
                     ],
                 );
-                write(
-                    `data: ${JSON.stringify({ type: "chat_title", chatId, title })}\n\n`,
-                );
             }
         }
-    } catch (err) {
-        console.error("[tabular/chat] error", err);
-        try {
-            write(
-                `data: ${JSON.stringify({ type: "error", message: String(err) })}\n\n`,
-            );
-            write("data: [DONE]\n\n");
-        } catch {
-            /* ignore */
-        }
-    } finally {
-        res.end();
-    }
-});
+
+        res.json({ title: title ?? null });
+    },
+);
 
 function parseCellContent(
     raw: unknown,
