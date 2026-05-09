@@ -24,6 +24,7 @@ interface ApiStackProps extends StackProps {
   userPool: cognito.UserPool;
   docsBucket: s3.Bucket;
   sessionsBucket: s3.Bucket;
+  agentDeployBucket: s3.Bucket;
   frontendUrl?: string;
   dbClusterArn: string;
   dbSecretArn: string;
@@ -208,6 +209,54 @@ export class ApiStack extends Stack {
       effect: iam.Effect.ALLOW,
       actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
       resources: [creditsTable.tableArn],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'RdsDataApi',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'rds-data:ExecuteStatement',
+        'rds-data:BatchExecuteStatement',
+        'rds-data:BeginTransaction',
+        'rds-data:CommitTransaction',
+        'rds-data:RollbackTransaction',
+      ],
+      resources: [props.dbClusterArn],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SecretsManagerDb',
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [props.dbSecretArn],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3DocsAccess',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+      resources: [`${props.docsBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3SessionsAccess',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+      resources: [`${props.sessionsBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3AgentDeployRead',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject'],
+      resources: [`${props.agentDeployBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3PresignedUrls',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket'],
+      resources: [props.docsBucket.bucketArn],
     }));
 
     new CfnOutput(this, 'CreditsTableArn', { value: creditsTable.tableArn });

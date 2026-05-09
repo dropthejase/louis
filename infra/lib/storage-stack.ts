@@ -28,6 +28,7 @@ export class StorageStack extends Stack {
   public readonly docsBucket: s3.Bucket;
   public readonly sessionsBucket: s3.Bucket;
   public readonly frontendBucket: s3.Bucket;
+  public readonly agentDeployBucket: s3.Bucket;
   public readonly distribution: cloudfront.Distribution;
 
   constructor(scope: Construct, id: string, props: StorageStackProps) {
@@ -47,6 +48,16 @@ export class StorageStack extends Stack {
 
     // Sessions bucket — private, stores Strands agent conversation snapshots
     this.sessionsBucket = new s3.Bucket(this, 'SessionsBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      versioned: false,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
+
+    // Agent deploy bucket — stores ZIP packages for AgentCore Runtime deployments.
+    // Prefixed per agent: louisMain/<name>.zip, louisTabular/<name>.zip etc.
+    this.agentDeployBucket = new s3.Bucket(this, 'AgentDeployBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       versioned: false,
@@ -106,6 +117,7 @@ export class StorageStack extends Stack {
     new CfnOutput(this, 'DocsBucketName', { value: this.docsBucket.bucketName });
     new CfnOutput(this, 'SessionsBucketName', { value: this.sessionsBucket.bucketName });
     new CfnOutput(this, 'FrontendBucketName', { value: this.frontendBucket.bucketName });
+    new CfnOutput(this, 'AgentDeployBucketName', { value: this.agentDeployBucket.bucketName });
     new CfnOutput(this, 'DistributionDomainName', { value: this.distribution.distributionDomainName });
     new CfnOutput(this, 'DistributionId', { value: this.distribution.distributionId });
   }

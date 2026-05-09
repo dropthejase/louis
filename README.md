@@ -33,7 +33,7 @@ Auth: Cognito User Pool issues the id token. API Gateway validates it via the na
 backend/        Express API (Lambda entrypoint via serverless-http)
 frontend/       Next.js app (static export, Amplify Auth)
 infra/          CDK app — StorageStack, DatabaseStack, AuthStack, ApiStack, ConversionStack
-agent/          AgentCore agent (Strands, 10 tools)
+agents/         AgentCore agents; app/main = main chat, app/tabular = tabular review chat
 conversion/     LibreOffice Lambda container (DOCX→PDF, x86_64)
 scripts/        Deploy and utility scripts
 ```
@@ -103,17 +103,14 @@ Deploy order matters: DatabaseStack before AuthStack and ApiStack. ConversionSta
 
 Reads `ClusterArn`, `SecretArn`, `DatabaseName` from the `DatabaseStack` CloudFormation outputs and runs `backend/migrations/000_one_shot_schema.sql` via the RDS Data API. Safe to re-run (all statements are idempotent).
 
-### 3. Deploy the AgentCore agent
+### 3. Deploy the AgentCore agents
 
 ```bash
-npm install -g @aws/agentcore
-cd agent && npm install
-
-# From repo root — reads AgentCoreExecutionRoleArn from ApiStack CFN outputs
-AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
+# From repo root — reads all config from CFN outputs, no CLI tooling required
+AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain
 ```
 
-On first run the script reads the `AgentCoreExecutionRoleArn` output from `ApiStack`, injects it into `agent/agentcore/agentcore.json`, builds the agent (zip), and deploys via `agentcore deploy`. Subsequent runs skip the role injection if the ARN is already set.
+Builds the agent (`tsc` + `npm ci --omit=dev`), zips `dist/` + `node_modules/`, uploads to the `AgentDeployBucket` S3 bucket, then calls `create-agent-runtime` (first run) or `update-agent-runtime` (subsequent runs). Runtime ID and ARN are stored in SSM at `/louis/agents/louisMain/runtimeId` and `/louis/agents/louisMain/runtimeArn`. No Docker or agentcore CLI required.
 
 ### 4. Configure frontend environment
 
@@ -145,7 +142,8 @@ cd infra && npx cdk deploy ApiStack
 **Agent changes:**
 
 ```bash
-AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh
+AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain
+# or: AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
 ```
 
 **Frontend changes:**
@@ -165,7 +163,7 @@ cd infra && npx cdk deploy ConversionStack
 
 | Stack | Provisions |
 | --- | --- |
-| `StorageStack` | S3 docs bucket (private, EventBridge enabled), S3 sessions + frontend buckets, CloudFront + OAC |
+| `StorageStack` | S3 docs bucket (private, EventBridge enabled), S3 sessions + frontend + agent deploy buckets, CloudFront + OAC |
 | `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 (min 0 / max 1 ACU, RDS Data API, VPC isolated subnets, auto-pause) |
 | `AuthStack` | Cognito User Pool (TOTP MFA, email verification), App Client, Post-Confirmation Lambda (creates user_profiles row), Identity Pool, authenticated IAM role |
 | `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container), AgentCore execution IAM role, DynamoDB credits table |

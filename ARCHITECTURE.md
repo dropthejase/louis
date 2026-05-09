@@ -74,16 +74,17 @@ All stacks live in `infra/`, deployed with `npx cdk deploy <StackName>`. Cross-s
 | `StorageStack` | S3 docs bucket (private, EventBridge enabled, CORS); S3 frontend bucket; CloudFront distribution with OAC; SPA 404→200 fallback | `DocsBucketName`, `FrontendBucketName`, `DistributionDomainName`, `DistributionId` |
 | `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 (min 0 / max 1 ACU, RDS Data API, VPC isolated subnets, auto-pause) | `ClusterArn`, `SecretArn`, `DatabaseName` |
 | `AuthStack` | Cognito User Pool (TOTP-only MFA, email verification, strong password policy); App Client (SRP, no client secret); Post-Confirmation Lambda (inserts `user_profiles` row); Identity Pool (native User Pool federation); authenticated IAM role (per-user S3 prefix) | `UserPoolId`, `UserPoolClientId`, `IdentityPoolId`, `AuthenticatedRoleArn` |
-| `ApiStack` | REST API Gateway (Cognito authorizer); API Lambda (ARM64 container, 1024 MB, 29 s, Bedrock + S3 + RDS Data API + Secrets Manager permissions); AgentCore execution IAM role; DynamoDB credits table (per-user monthly metering) | `ApiUrl`, `AgentCoreExecutionRoleArn`, `CreditsTableName` |
+| `ApiStack` | REST API Gateway (Cognito authorizer); API Lambda (ARM64 container, 1024 MB, 29 s, Bedrock + S3 + RDS Data API + Secrets Manager permissions); AgentCore execution IAM role (Bedrock + DynamoDB + RDS + S3 + Secrets Manager); DynamoDB credits table | `ApiUrl`, `AgentCoreExecutionRoleArn`, `CreditsTableName` |
+| `StorageStack` | S3 docs bucket (private, EventBridge enabled), sessions bucket, frontend bucket, **agent deploy bucket** (`louisMain/`, `louisTabular/` prefixes), CloudFront + OAC | `DocsBucketName`, `SessionsBucketName`, `AgentDeployBucketName`, `DistributionId` |
 | `ConversionStack` | Conversion Lambda (x86_64 container, 2048 MB, 5 min); EventBridge rule triggering on `documents/*.docx` + `documents/*.doc` PutObject; RDS Data API + Secrets Manager permissions | `ConversionLambdaArn` |
 
-AgentCore is deployed separately via `@aws/agentcore` CLI (`scripts/deploy-agent.sh`) — not through CDK.
+Agents are deployed via `scripts/deploy-agent.sh <agentName>` (no Docker, no agentcore CLI). The script builds a ZIP (`dist/` + `node_modules/`), uploads to the agent deploy bucket, then calls `create-agent-runtime` or `update-agent-runtime`. Runtime IDs and ARNs are stored in SSM at `/louis/agents/<agentName>/runtimeId` and `/louis/agents/<agentName>/runtimeArn`.
 
 ---
 
 ## Database
 
-Aurora Serverless v2 PostgreSQL 16.3, accessed exclusively via the RDS Data API (no VPC egress needed from Lambda). All queries use the `query` / `queryOne` / `execute` helpers in `backend/src/lib/db.ts` (and a copy in `agent/src/lib/db.ts`) which wrap `RDSDataClient` with `formatRecordsAs: "JSON"`.
+Aurora Serverless v2 PostgreSQL 16.3, accessed exclusively via the RDS Data API (no VPC egress needed from Lambda). All queries use the `query` / `queryOne` / `execute` helpers in `backend/src/lib/db.ts` (and a copy in `agents/app/main/src/lib/db.ts`) which wrap `RDSDataClient` with `formatRecordsAs: "JSON"`.
 
 Schema is loaded once via `scripts/init-db.sh` from `backend/migrations/000_one_shot_schema.sql`. All statements are idempotent — safe to re-run.
 
@@ -93,7 +94,7 @@ Key tables: `user_profiles`, `documents`, `document_versions`, `chats`, `chat_me
 
 ## Agent Architecture
 
-The agent is a Node 20 zip package running an Express HTTP server that implements the AgentCore invocation protocol.
+Each agent is a Node 22 ZIP package (`dist/` + `node_modules/`) running a raw Express HTTP server that implements the AgentCore invocation protocol (`GET /ping`, `POST /invocations` SSE). OTEL auto-instrumentation (`@aws/aws-distro-opentelemetry-node-autoinstrumentation`) is injected at startup via the `entryPoint: ["opentelemetry-instrument", "dist/index.js"]` field in `create-agent-runtime`.
 
 ### Security: userId propagation
 
@@ -101,7 +102,7 @@ AgentCore Runtime validates the Cognito JWT before the `/invocations` handler ru
 
 ### Strands Agent
 
-`agent/src/agent.ts` instantiates a `@strands-agents/sdk` `Agent` with a `BedrockModel` and 10 tools:
+`agents/app/main/src/agent.ts` instantiates a `@strands-agents/sdk` `Agent` with a `BedrockModel` and 10 tools:
 
 | Tool | Purpose |
 |---|---|
@@ -118,11 +119,11 @@ AgentCore Runtime validates the Cognito JWT before the `/invocations` handler ru
 
 ### Credits metering
 
-A Strands `AfterModelCallEvent` hook in `agent/src/agent.ts` increments `credits_used` in DynamoDB (`PK=userId`, `SK=YYYY-MM`, atomic ADD) after each successful model call. The API backend checks DynamoDB before allowing a new chat invocation and returns 429 when the monthly limit is exceeded; the frontend shows a `CreditsExhaustedModal`.
+A Strands `AfterModelCallEvent` hook in `agents/app/main/src/agent.ts` increments `credits_used` in DynamoDB (`PK=userId`, `SK=YYYY-MM`, atomic ADD) after each successful model call. The API backend checks DynamoDB before allowing a new chat invocation and returns 429 when the monthly limit is exceeded; the frontend shows a `CreditsExhaustedModal`.
 
 ### SSE Event Protocol
 
-The agent streams over Server-Sent Events. `agent/src/index.ts` translates Strands SDK events into SSE types that drive UI elements:
+The agent streams over Server-Sent Events. `agents/app/main/src/index.ts` translates Strands SDK events into SSE types that drive UI elements:
 
 | SSE `type` | Emitted when | UI element |
 |---|---|---|

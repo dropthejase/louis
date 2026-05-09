@@ -31,6 +31,7 @@ const apiStack = new ApiStack(app, 'ApiStack', {
   userPool: authStack.userPool,
   docsBucket: storageStack.docsBucket,
   sessionsBucket: storageStack.sessionsBucket,
+  agentDeployBucket: storageStack.agentDeployBucket,
   frontendUrl: `https://${storageStack.distribution.distributionDomainName}`,
   dbClusterArn: databaseStack.clusterArn,
   dbSecretArn: databaseStack.secretArn,
