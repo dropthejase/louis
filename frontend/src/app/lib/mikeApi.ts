@@ -1,12 +1,13 @@
 /**
- * Mike API client — all requests to the AWS backend.
- * API Gateway calls use Supabase Bearer JWT (validated by Lambda Token authorizer).
+ * Louis API client — all requests to the AWS backend.
+ * API Gateway calls use Cognito id token Bearer JWT (validated by native Cognito authorizer).
  * AgentCore calls use the same Bearer JWT (AgentCore JWT inbound authorizer).
  * File uploads go via multipart POST to API Gateway Lambda.
  */
 
-import { supabase } from "@/lib/supabase";
-import { API_URL, AGENTCORE_URL } from "@/lib/aws/config";
+import { getIdToken } from "@/lib/aws/amplify-auth";
+import { API_URL, AGENTCORE_URL, AGENTCORE_TABULAR_URL } from "@/lib/aws/config";
+import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import type {
     AssistantEvent,
     MikeChat,
@@ -40,11 +41,8 @@ interface ServerChatDetailOut {
 const API_BASE = API_URL;
 
 async function getAuthHeader(): Promise<string> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) throw new Error("Not authenticated");
-    return `Bearer ${session.access_token}`;
+    const token = await getIdToken();
+    return `Bearer ${token}`;
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -422,18 +420,16 @@ export async function streamChat(payload: {
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...rest } = payload;
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session) throw new Error("No active session");
+    const [token, userId] = await Promise.all([getIdToken(), getCurrentUserId()]);
     return fetch(AGENTCORE_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            Authorization: `Bearer ${session.access_token}`,
+            Authorization: `Bearer ${token}`,
+            "X-Amzn-Bedrock-AgentCore-Runtime-User-Id": userId,
         },
-        body: JSON.stringify(rest),
+        body: JSON.stringify({ ...rest, userId }),
         signal,
     });
 }
@@ -548,25 +544,53 @@ export async function streamTabularGeneration(
     });
 }
 
+export async function createTabularChat(reviewId: string): Promise<{ chatId: string }> {
+    return apiRequest<{ chatId: string }>(`/tabular-review/${reviewId}/chats`, {
+        method: "POST",
+    });
+}
+
 export async function streamTabularChat(
     reviewId: string,
-    messages: { role: string; content: string }[],
-    chat_id?: string | null,
+    chatId: string,
+    prompt: string,
+    model?: string,
     signal?: AbortSignal,
-    context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
-    const authHeader = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
+    const [token, userId] = await Promise.all([getIdToken(), getCurrentUserId()]);
+    return fetch(AGENTCORE_TABULAR_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: authHeader },
-        body: JSON.stringify({
-            messages,
-            chat_id: chat_id ?? undefined,
-            review_title: context?.reviewTitle ?? undefined,
-            project_name: context?.projectName ?? undefined,
-        }),
+        headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${token}`,
+            "X-Amzn-Bedrock-AgentCore-Runtime-User-Id": userId,
+        },
+        body: JSON.stringify({ reviewId, chatId, prompt, model }),
         signal: signal ?? undefined,
     });
+}
+
+export async function persistTabularChatMessages(
+    reviewId: string,
+    chatId: string,
+    payload: {
+        user_message: string;
+        assistant_events: unknown[];
+        annotations?: unknown[];
+        is_first_exchange?: boolean;
+        review_title?: string | null;
+        project_name?: string | null;
+    },
+): Promise<{ title: string | null }> {
+    return apiRequest<{ title: string | null }>(
+        `/tabular-review/${reviewId}/chats/${chatId}/messages`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        },
+    );
 }
 
 export interface TRCitationAnnotation {

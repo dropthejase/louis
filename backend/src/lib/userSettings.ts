@@ -1,56 +1,37 @@
-import { createServerSupabase } from "./supabase";
-import {
-    resolveModel,
-    DEFAULT_TITLE_MODEL,
-    DEFAULT_TABULAR_MODEL,
-    type UserApiKeys,
-} from "./llm";
+/**
+ * Per-user model preference loader for the backend Lambda.
+ *
+ * Reads the user's chosen tabular model from user_profiles and falls back to
+ * the system defaults for any unset fields. title_model is always the system
+ * default (not user-configurable).
+ */
+import { queryOne } from "./db";
+import { resolveModel, DEFAULT_TITLE_MODEL, DEFAULT_TABULAR_MODEL } from "./llm";
 
 export type UserModelSettings = {
-    title_model: string;
-    tabular_model: string;
-    api_keys: UserApiKeys;
+  title_model: string;
+  tabular_model: string;
 };
 
-// All LLM calls go through Bedrock — no user API keys needed for routing.
-// DEFAULT_TITLE_MODEL is always used for title generation.
-function resolveTitleModel(_apiKeys: UserApiKeys): string {
-    return DEFAULT_TITLE_MODEL;
-}
-
+/**
+ * Load model preferences for a user.
+ * Falls back to system defaults when userId is omitted or no profile row exists.
+ *
+ * @returns `title_model` — always the system default (claude-haiku-4-5).
+ * @returns `tabular_model` — user-configured model, or the system default.
+ */
 export async function getUserModelSettings(
-    userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
+  userId?: string,
 ): Promise<UserModelSettings> {
-    const client = db ?? createServerSupabase();
-    const { data } = await client
-        .from("user_profiles")
-        .select("tabular_model, claude_api_key")
-        .eq("user_id", userId)
-        .single();
-
-    const api_keys: UserApiKeys = {
-        claude: data?.claude_api_key ?? null,
-    };
-
+  if (userId) {
+    const data = await queryOne<{ tabular_model: string | null }>(
+      `SELECT tabular_model FROM user_profiles WHERE user_id = :userId`,
+      [{ name: "userId", value: { stringValue: userId } }],
+    );
     return {
-        title_model: resolveTitleModel(api_keys),
-        tabular_model: resolveModel(data?.tabular_model, DEFAULT_TABULAR_MODEL),
-        api_keys,
+      title_model: DEFAULT_TITLE_MODEL,
+      tabular_model: resolveModel(data?.tabular_model, DEFAULT_TABULAR_MODEL),
     };
-}
-
-export async function getUserApiKeys(
-    userId: string,
-    db?: ReturnType<typeof createServerSupabase>,
-): Promise<UserApiKeys> {
-    const client = db ?? createServerSupabase();
-    const { data } = await client
-        .from("user_profiles")
-        .select("claude_api_key")
-        .eq("user_id", userId)
-        .single();
-    return {
-        claude: data?.claude_api_key ?? null,
-    };
+  }
+  return { title_model: DEFAULT_TITLE_MODEL, tabular_model: DEFAULT_TABULAR_MODEL };
 }

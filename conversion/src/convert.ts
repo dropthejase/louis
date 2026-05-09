@@ -1,3 +1,11 @@
+/**
+ * LibreOffice-based DOCX→PDF conversion for the conversion Lambda.
+ *
+ * Nearly identical to backend/src/lib/convert.ts but in a separate package
+ * because the conversion Lambda is a standalone x86_64 container. The
+ * `convertedPdfKey` function here derives the PDF key from the full S3 source
+ * key (path-based) rather than from (userId, docId) as in the backend version.
+ */
 import { promisify } from 'util';
 import JSZip from 'jszip';
 

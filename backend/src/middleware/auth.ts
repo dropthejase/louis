@@ -1,22 +1,19 @@
 // backend/src/middleware/auth.ts
 //
-// Auth middleware for Express routes.
-//
-// Lambda + API Gateway only:
-//   The Lambda authorizer validates the Supabase JWT against the JWKS endpoint
-//   and injects userId + userEmail into the API Gateway request context.
-//   serverless-http surfaces this as req.apiGateway.event.
+// Auth middleware — extracts userId from Cognito User Pool authorizer claims.
+// API Gateway native Cognito authorizer injects JWT claims into
+// requestContext.authorizer.claims. The sub claim is the Cognito user ID.
 
 import { Request, Response, NextFunction } from "express";
 
-// serverless-http attaches the raw Lambda event to req.apiGateway when running
-// inside a Lambda. We type just the fields we need.
 type ApiGatewayContext = {
   event?: {
     requestContext?: {
       authorizer?: {
-        userId?: string;
-        userEmail?: string;
+        claims?: {
+          sub?: string;
+          email?: string;
+        };
       };
     };
   };
@@ -28,19 +25,28 @@ declare module "express-serve-static-core" {
   }
 }
 
+/**
+ * Express middleware that enforces Cognito authentication.
+ *
+ * Reads the JWT claims injected by API Gateway's native Cognito authorizer
+ * from `req.apiGateway.event.requestContext.authorizer.claims`. Sets
+ * `res.locals.userId` (from `sub`), `res.locals.userEmail`, and
+ * `res.locals.token` (the raw Bearer token, forwarded to the agent).
+ * Returns 401 if the `sub` claim is absent.
+ */
 export async function requireAuth(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  const authorizer = req.apiGateway?.event?.requestContext?.authorizer;
-  if (!authorizer?.userId) {
+  const claims = req.apiGateway?.event?.requestContext?.authorizer?.claims;
+  if (!claims?.sub) {
     res.status(401).json({ detail: "Unauthorized" });
     return;
   }
 
-  res.locals.userId = authorizer.userId;
-  res.locals.userEmail = (authorizer.userEmail ?? "").toLowerCase();
+  res.locals.userId = claims.sub;
+  res.locals.userEmail = claims.email ? claims.email.toLowerCase() : undefined;
   const auth = req.headers.authorization ?? "";
   res.locals.token = auth.startsWith("Bearer ") ? auth.slice(7).trim() : "";
   next();

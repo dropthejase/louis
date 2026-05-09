@@ -12,8 +12,12 @@ import {
 import { useUserProfile } from "@/contexts/UserProfileContext";
 import { MODELS } from "@/app/components/assistant/ModelToggle";
 
+const TABULAR_MODELS = MODELS.filter((m) =>
+    ["claude-sonnet-4-6", "claude-haiku-4-5"].includes(m.id),
+);
+
 export default function ModelsPage() {
-    const { profile, updateModelPreference } = useUserProfile();
+    const { profile, updateTabularModel } = useUserProfile();
 
     return (
         <div className="space-y-4">
@@ -29,13 +33,12 @@ export default function ModelsPage() {
                             Tabular review model
                         </label>
                         <TabularModelDropdown
-                            value={
-                                profile?.tabularModel ?? "claude-sonnet-4-6"
-                            }
-                            onChange={(id) =>
-                                updateModelPreference("tabularModel", id)
-                            }
+                            value={profile?.tabularModel ?? "claude-sonnet-4-6"}
+                            onChange={updateTabularModel}
                         />
+                        <p className="text-xs text-gray-400 mt-1.5">
+                            Sonnet is more thorough; Haiku is faster and cheaper.
+                        </p>
                     </div>
                 </div>
             </div>
@@ -51,7 +54,7 @@ function TabularModelDropdown({
     onChange: (id: string) => void;
 }) {
     const [isOpen, setIsOpen] = useState(false);
-    const selected = MODELS.find((m) => m.id === value);
+    const selected = TABULAR_MODELS.find((m) => m.id === value);
 
     return (
         <DropdownMenu onOpenChange={setIsOpen}>
@@ -76,7 +79,7 @@ function TabularModelDropdown({
                 <DropdownMenuLabel className="text-[10px] uppercase tracking-wider text-gray-400">
                     Anthropic (via Bedrock)
                 </DropdownMenuLabel>
-                {MODELS.map((m) => (
+                {TABULAR_MODELS.map((m) => (
                     <DropdownMenuItem
                         key={m.id}
                         className="cursor-pointer"

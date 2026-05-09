@@ -1,21 +1,30 @@
+/**
+ * CDK stack: DOCX→PDF conversion Lambda + EventBridge rules.
+ *
+ * The conversion Lambda runs as an x86_64 Docker image (LibreOffice is not available for
+ * ARM64 in Lambda container images). It is triggered by EventBridge Object Created events
+ * on `.docx` and `.doc` files under the `documents/` prefix; EventBridge is used rather
+ * than direct S3 notifications to avoid the CDK cross-stack imported-bucket limitation.
+ * Two separate EventBridge rules handle `.docx` and `.doc` suffixes respectively because
+ * EventBridge content filtering does not support OR within a single suffix filter.
+ * Timeout is 5 minutes to accommodate large or complex documents.
+ */
 import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as s3 from 'aws-cdk-lib/aws-s3';
-import * as s3n from 'aws-cdk-lib/aws-s3-notifications';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as path from 'path';
 import { Stage } from './shared/stage';
 
 interface ConversionStackProps extends StackProps {
   stage: Stage;
-  // Pass bucket ARN + name as strings to avoid cross-stack construct references
-  // that would create a dependency cycle (S3 event notifications reference Lambda ARN,
-  // which would make StorageStack depend on ConversionStack and vice versa).
   docsBucketArn: string;
   docsBucketName: string;
-  supabaseSecret: secretsmanager.ISecret;
+  dbClusterArn: string;
+  dbSecretArn: string;
+  dbName: string;
 }
 
 export class ConversionStack extends Stack {
@@ -24,12 +33,6 @@ export class ConversionStack extends Stack {
   constructor(scope: Construct, id: string, props: ConversionStackProps) {
     super(scope, id, props);
 
-    // Import bucket by ARN to avoid cross-stack construct dependency cycle
-    const docsBucket = s3.Bucket.fromBucketAttributes(this, 'ImportedDocsBucket', {
-      bucketArn: props.docsBucketArn,
-      bucketName: props.docsBucketName,
-    });
-
     const lambdaRole = new iam.Role(this, 'ConversionLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
@@ -37,34 +40,68 @@ export class ConversionStack extends Stack {
       ],
     });
 
-    docsBucket.grantReadWrite(lambdaRole);
-    props.supabaseSecret.grantRead(lambdaRole);
+    // Grant read/write on the docs bucket by ARN — no cross-stack construct reference needed.
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+      resources: [`${props.docsBucketArn}/*`],
+    }));
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket'],
+      resources: [props.docsBucketArn],
+    }));
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['rds-data:ExecuteStatement'],
+      resources: [props.dbClusterArn],
+    }));
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [props.dbSecretArn],
+    }));
 
     this.conversionLambda = new lambda.DockerImageFunction(this, 'ConversionLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../conversion')),
       role: lambdaRole,
-      timeout: Duration.minutes(5), // LibreOffice conversion can be slow for large docs
+      timeout: Duration.minutes(5),
       memorySize: 2048,
       environment: {
         DOCS_BUCKET_NAME: props.docsBucketName,
-        SUPABASE_SECRET_ARN: props.supabaseSecret.secretArn,
         POWERTOOLS_SERVICE_NAME: 'mike-conversion',
-        POWERTOOLS_LOG_LEVEL: props.stage === 'dev' ? 'DEBUG' : 'INFO',
+        POWERTOOLS_LOG_LEVEL: 'INFO',
+        DB_CLUSTER_ARN: props.dbClusterArn,
+        DB_SECRET_ARN: props.dbSecretArn,
+        DB_NAME: props.dbName,
       },
     });
 
-    // Trigger on .docx and .doc uploads to documents/ prefix
-    docsBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(this.conversionLambda),
-      { prefix: 'documents/', suffix: '.docx' }
-    );
+    // EventBridge rule: trigger on .docx and .doc uploads to documents/ prefix.
+    // Requires eventBridgeEnabled: true on the S3 bucket (set in StorageStack).
+    const docxRule = new events.Rule(this, 'DocxUploadRule', {
+      eventPattern: {
+        source: ['aws.s3'],
+        detailType: ['Object Created'],
+        detail: {
+          bucket: { name: [props.docsBucketName] },
+          object: { key: [{ prefix: 'documents/' }, { suffix: '.docx' }] },
+        },
+      },
+    });
+    docxRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
 
-    docsBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(this.conversionLambda),
-      { prefix: 'documents/', suffix: '.doc' }
-    );
+    const docRule = new events.Rule(this, 'DocUploadRule', {
+      eventPattern: {
+        source: ['aws.s3'],
+        detailType: ['Object Created'],
+        detail: {
+          bucket: { name: [props.docsBucketName] },
+          object: { key: [{ prefix: 'documents/' }, { suffix: '.doc' }] },
+        },
+      },
+    });
+    docRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
 
     new CfnOutput(this, 'ConversionLambdaArn', { value: this.conversionLambda.functionArn });
   }

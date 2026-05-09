@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { streamChat, apiRequest } from "@/app/lib/mikeApi";
-import { supabase } from "@/lib/supabase";
+import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useGenerateChatTitle } from "./useGenerateChatTitle";
 import type {
@@ -44,6 +44,8 @@ export function useAssistantChat({
     const [isResponseLoading, setIsResponseLoading] = useState(false);
     const [isLoadingCitations, setIsLoadingCitations] = useState(false);
     const [chatId, setChatId] = useState<string | undefined>(initialChatId);
+    const [creditsExhausted, setCreditsExhausted] = useState(false);
+    const [creditsResetDate, setCreditsResetDate] = useState("");
 
     const abortControllerRef = useRef<AbortController | null>(null);
     const runtimeSessionIdRef = useRef<string | undefined>(undefined);
@@ -59,16 +61,13 @@ export function useAssistantChat({
         if (!initialChatId) return;
 
         // Load agentcore_session_id for multi-turn continuity.
-        supabase
-            .from("chats")
-            .select("agentcore_session_id")
-            .eq("id", initialChatId)
-            .single()
-            .then(({ data }) => {
-                if (data?.agentcore_session_id) {
-                    runtimeSessionIdRef.current = data.agentcore_session_id as string;
+        apiRequest<{ agentcore_session_id: string | null }>(`/chat/${initialChatId}/session-id`)
+            .then(({ agentcore_session_id }) => {
+                if (agentcore_session_id) {
+                    runtimeSessionIdRef.current = agentcore_session_id;
                 }
-            });
+            })
+            .catch(() => {});
 
         // Hydrate messages from S3 snapshot via backend only when no initial messages were provided.
         if (initialMessages.length > 0) return;
@@ -371,6 +370,20 @@ export function useAssistantChat({
             });
 
             if (!response.ok) {
+                if (response.status === 429) {
+                    try {
+                        const body = await response.json() as { error?: string; reset_date?: string };
+                        if (body.error === 'credits_exhausted') {
+                            setCreditsExhausted(true);
+                            setCreditsResetDate(body.reset_date ?? "");
+                            setMessages((prev) => prev.slice(0, -1));
+                            setIsResponseLoading(false);
+                            return null;
+                        }
+                    } catch {
+                        // fall through to generic error
+                    }
+                }
                 const errText = await response.text();
                 throw new Error(`HTTP ${response.status}: ${errText}`);
             }
@@ -405,6 +418,17 @@ export function useAssistantChat({
                             streamedChatId = data.chatId;
                             setChatId(data.chatId);
                             setCurrentChatId(data.chatId);
+                            // Persist session ID immediately — before AgentCore
+                            // runs — so a tab-close mid-stream still saves it.
+                            if (runtimeSessionIdRef.current) {
+                                void apiRequest(`/chat/${data.chatId}/session-id`, {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        agentcore_session_id: runtimeSessionIdRef.current,
+                                    }),
+                                }).catch(() => {});
+                            }
                             continue;
                         }
 
@@ -938,7 +962,8 @@ export function useAssistantChat({
         if (newChatId) {
             setChatId(newChatId);
             setCurrentChatId(newChatId);
-            runtimeSessionIdRef.current = crypto.randomUUID();
+            const userId = await getCurrentUserId().catch(() => "unknown");
+            runtimeSessionIdRef.current = `${userId}-${crypto.randomUUID()}`;
         }
 
         return newChatId;
@@ -954,5 +979,8 @@ export function useAssistantChat({
         setMessages,
         cancel,
         chatId,
+        creditsExhausted,
+        creditsResetDate,
+        dismissCreditsModal: () => setCreditsExhausted(false),
     };
 }

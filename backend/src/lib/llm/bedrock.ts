@@ -67,6 +67,16 @@ function toBedrockMessages(
 // streamChatWithTools
 // ---------------------------------------------------------------------------
 
+/**
+ * Streaming multi-turn chat via the Bedrock Converse API with tool-call loop.
+ *
+ * Runs up to `maxIterations` model turns. After each turn where the model
+ * requests tools, it calls `runTools` and appends the results as a user
+ * message before continuing. Stops when stop_reason is not "tool_use",
+ * when no tools are requested, or when the iteration cap is hit.
+ *
+ * @param params.runTools Callback that executes all tool calls for one turn.
+ */
 export async function streamBedrock(
   params: StreamChatParams,
 ): Promise<StreamChatResult> {
@@ -209,6 +219,11 @@ export async function streamBedrock(
 // completeText (non-streaming)
 // ---------------------------------------------------------------------------
 
+/**
+ * Non-streaming single-turn completion via the Bedrock Converse API.
+ * Returns the model's full text response; used for lightweight tasks like
+ * title generation where streaming is unnecessary.
+ */
 export async function completeBedrockText(params: {
   model: string;
   systemPrompt?: string;

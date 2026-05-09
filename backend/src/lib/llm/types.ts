@@ -1,3 +1,9 @@
+/**
+ * Shared type definitions for the LLM abstraction layer.
+ *
+ * All callers use these types when calling streamChatWithTools or completeText;
+ * the Bedrock-specific wire format is handled internally in bedrock.ts.
+ */
 // backend/src/lib/llm/types.ts
 
 export type Provider = "claude"; // Gemini removed — all calls go through Bedrock
@@ -34,10 +40,6 @@ export type StreamCallbacks = {
   onToolCallStart?: (call: NormalizedToolCall) => void;
 };
 
-export type UserApiKeys = {
-  claude?: string | null;
-};
-
 export type StreamChatParams = {
   model: string;
   systemPrompt: string;
@@ -46,7 +48,6 @@ export type StreamChatParams = {
   maxIterations?: number;
   callbacks?: StreamCallbacks;
   runTools?: (calls: NormalizedToolCall[]) => Promise<NormalizedToolResult[]>;
-  apiKeys?: UserApiKeys;
   enableThinking?: boolean;
 };
 

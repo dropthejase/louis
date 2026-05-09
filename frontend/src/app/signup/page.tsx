@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import {
+    signUp,
+    confirmSignUp,
+    signIn,
+    setUpTOTP,
+    verifyTOTPSetup,
+    updateMFAPreference,
+} from "@/lib/aws/amplify-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
@@ -10,88 +17,123 @@ import { SiteLogo } from "@/components/site-logo";
 import { CheckCircle2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 
+type Step = "form" | "confirm" | "totp" | "done";
+
 export default function SignupPage() {
     const router = useRouter();
     const { isAuthenticated, authLoading } = useAuth();
+    const [step, setStep] = useState<Step>("form");
+
+    // Form fields
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
     const [confirmPassword, setConfirmPassword] = useState("");
-    const [name, setName] = useState("");
-    const [organisation, setOrganisation] = useState("");
+    const [firstName, setFirstName] = useState("");
+    const [lastName, setLastName] = useState("");
+
+    // Confirmation / TOTP
+    const [confirmCode, setConfirmCode] = useState("");
+    const [totpUri, setTotpUri] = useState("");
+    const [totpCode, setTotpCode] = useState("");
+
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [success, setSuccess] = useState(false);
 
     useEffect(() => {
-        if (!authLoading && isAuthenticated && !success) {
+        if (!authLoading && isAuthenticated && step !== "done") {
             router.replace("/assistant");
         }
-    }, [authLoading, isAuthenticated, router, success]);
+    }, [authLoading, isAuthenticated, router, step]);
 
     const handleSignup = async (e: React.FormEvent) => {
         e.preventDefault();
-        setLoading(true);
         setError(null);
 
-        // Validate passwords match
         if (password !== confirmPassword) {
             setError("Passwords do not match");
-            setLoading(false);
+            return;
+        }
+        if (password.length < 8) {
+            setError("Password must be at least 8 characters");
             return;
         }
 
-        // Validate password length
-        if (password.length < 6) {
-            setError("Password must be at least 6 characters");
-            setLoading(false);
-            return;
-        }
-
+        setLoading(true);
         try {
-            const { data, error } = await supabase.auth.signUp({
-                email,
+            const result = await signUp({
+                username: email,
                 password,
+                options: {
+                    userAttributes: {
+                        email,
+                        given_name: firstName.trim(),
+                        family_name: lastName.trim(),
+                    },
+                },
             });
-
-            if (error) throw error;
-
-            if (data.session) {
-                const trimmedName = name.trim();
-                const trimmedOrg = organisation.trim();
-                if (trimmedName || trimmedOrg) {
-                    // The handle_new_user DB trigger creates the
-                    // user_profiles row synchronously on auth.users insert,
-                    // so we UPDATE rather than upsert — RLS permits update
-                    // of the user's own row but blocks self-INSERT.
-                    const { error: profileError } = await supabase
-                        .from("user_profiles")
-                        .update({
-                            ...(trimmedName && { display_name: trimmedName }),
-                            ...(trimmedOrg && { organisation: trimmedOrg }),
-                            updated_at: new Date().toISOString(),
-                        })
-                        .eq("user_id", data.session.user.id);
-                    if (profileError) {
-                        console.error(
-                            "[signup] failed to persist profile fields",
-                            profileError,
-                        );
-                    }
-                }
+            if (result.nextStep.signUpStep === "CONFIRM_SIGN_UP") {
+                setStep("confirm");
+            } else if (result.isSignUpComplete) {
+                await handlePostConfirm();
             }
-            setSuccess(true);
-            setTimeout(() => {
-                router.push("/assistant");
-            }, 2000);
-        } catch (error: any) {
-            setError(error.message || "An error occurred during signup");
+        } catch (err: any) {
+            setError(err.message || "An error occurred during signup");
         } finally {
             setLoading(false);
         }
     };
 
-    // Success View
-    if (success) {
+    const handleConfirm = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        setLoading(true);
+        try {
+            await confirmSignUp(email, confirmCode);
+            await handlePostConfirm();
+        } catch (err: any) {
+            setError(err.message || "Confirmation failed");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handlePostConfirm = async () => {
+        // Sign in to get a session, then set up TOTP MFA
+        const result = await signIn(email, password);
+        if (result.isSignedIn) {
+            await initTotpSetup();
+        } else if (result.nextStep.signInStep === "CONTINUE_SIGN_IN_WITH_TOTP_SETUP") {
+            // Cognito started TOTP setup in the flow — extract URI from nextStep
+            const uri = (result.nextStep as any).totpSetupDetails?.getSetupUri?.("Louis")?.toString() ?? "";
+            setTotpUri(uri);
+            setStep("totp");
+        }
+    };
+
+    const initTotpSetup = async () => {
+        const totpOutput = await setUpTOTP();
+        const uri = totpOutput.getSetupUri("Louis").toString();
+        setTotpUri(uri);
+        setStep("totp");
+    };
+
+    const handleTotpVerify = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setError(null);
+        setLoading(true);
+        try {
+            await verifyTOTPSetup({ code: totpCode });
+            await updateMFAPreference({ totp: "PREFERRED" });
+            setStep("done");
+            setTimeout(() => router.push("/assistant"), 1500);
+        } catch (err: any) {
+            setError(err.message || "TOTP verification failed");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    if (step === "done") {
         return (
             <div className="min-h-dvh bg-white flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
                 <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
@@ -114,7 +156,105 @@ export default function SignupPage() {
         );
     }
 
-    // Default Signup Form View
+    if (step === "totp") {
+        return (
+            <div className="min-h-dvh bg-white flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
+                <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
+                    <SiteLogo size="md" className="md:text-4xl" asLink />
+                </div>
+                <div className="w-full max-w-md">
+                    <div className="bg-white border border-gray-200 rounded-2xl p-8">
+                        <h2 className="text-2xl font-serif mb-2">
+                            Set up authenticator
+                        </h2>
+                        <p className="text-sm text-gray-500 mb-4">
+                            Scan this QR code with your authenticator app (Google Authenticator, Authy, etc.), then enter the 6-digit code to verify.
+                        </p>
+                        {totpUri && (
+                            <div className="flex justify-center mb-4">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                    src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(totpUri)}`}
+                                    alt="TOTP QR code"
+                                    width={180}
+                                    height={180}
+                                    className="rounded"
+                                />
+                            </div>
+                        )}
+                        <form onSubmit={handleTotpVerify} className="space-y-4">
+                            <Input
+                                type="text"
+                                inputMode="numeric"
+                                value={totpCode}
+                                onChange={(e) => setTotpCode(e.target.value)}
+                                placeholder="6-digit code"
+                                maxLength={6}
+                                required
+                                className="w-full"
+                            />
+                            {error && (
+                                <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
+                                    {error}
+                                </div>
+                            )}
+                            <Button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full bg-black hover:bg-gray-900 text-white"
+                            >
+                                {loading ? "Verifying..." : "Verify & continue"}
+                            </Button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (step === "confirm") {
+        return (
+            <div className="min-h-dvh bg-white flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
+                <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
+                    <SiteLogo size="md" className="md:text-4xl" asLink />
+                </div>
+                <div className="w-full max-w-md">
+                    <div className="bg-white border border-gray-200 rounded-2xl p-8">
+                        <h2 className="text-2xl font-serif mb-2">
+                            Check your email
+                        </h2>
+                        <p className="text-sm text-gray-500 mb-6">
+                            We sent a verification code to{" "}
+                            <strong>{email}</strong>. Enter it below.
+                        </p>
+                        <form onSubmit={handleConfirm} className="space-y-4">
+                            <Input
+                                type="text"
+                                value={confirmCode}
+                                onChange={(e) => setConfirmCode(e.target.value)}
+                                placeholder="Verification code"
+                                required
+                                className="w-full"
+                            />
+                            {error && (
+                                <div className="text-red-600 text-sm bg-red-50 p-3 rounded">
+                                    {error}
+                                </div>
+                            )}
+                            <Button
+                                type="submit"
+                                disabled={loading}
+                                className="w-full bg-black hover:bg-gray-900 text-white"
+                            >
+                                {loading ? "Verifying..." : "Verify"}
+                            </Button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-dvh bg-white flex items-start justify-center px-6 pt-32 md:pt-40 pb-10 relative">
             <div className="absolute top-4 md:top-8 left-1/2 -translate-x-1/2">
@@ -140,46 +280,41 @@ export default function SignupPage() {
                     </div>
 
                     <form onSubmit={handleSignup} className="space-y-4">
-                        <div>
-                            <label
-                                htmlFor="name"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
-                                Name{" "}
-                                <span className="text-gray-400 font-normal">
-                                    (optional)
-                                </span>
-                            </label>
-                            <Input
-                                id="name"
-                                type="text"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="Your name"
-                                className="w-full"
-                            />
-                        </div>
-
-                        <div>
-                            <label
-                                htmlFor="organisation"
-                                className="block text-sm font-medium text-gray-700 mb-2"
-                            >
-                                Organisation{" "}
-                                <span className="text-gray-400 font-normal">
-                                    (optional)
-                                </span>
-                            </label>
-                            <Input
-                                id="organisation"
-                                type="text"
-                                value={organisation}
-                                onChange={(e) =>
-                                    setOrganisation(e.target.value)
-                                }
-                                placeholder="Your organisation"
-                                className="w-full"
-                            />
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label
+                                    htmlFor="firstName"
+                                    className="block text-sm font-medium text-gray-700 mb-2"
+                                >
+                                    First name
+                                </label>
+                                <Input
+                                    id="firstName"
+                                    type="text"
+                                    value={firstName}
+                                    onChange={(e) => setFirstName(e.target.value)}
+                                    placeholder="First name"
+                                    required
+                                    className="w-full"
+                                />
+                            </div>
+                            <div>
+                                <label
+                                    htmlFor="lastName"
+                                    className="block text-sm font-medium text-gray-700 mb-2"
+                                >
+                                    Last name
+                                </label>
+                                <Input
+                                    id="lastName"
+                                    type="text"
+                                    value={lastName}
+                                    onChange={(e) => setLastName(e.target.value)}
+                                    placeholder="Last name"
+                                    required
+                                    className="w-full"
+                                />
+                            </div>
                         </div>
 
                         <div>
@@ -212,7 +347,7 @@ export default function SignupPage() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                placeholder="Create a password (min. 6 characters)"
+                                placeholder="Min. 8 chars, upper, lower, number, symbol"
                                 required
                                 className="w-full"
                             />
@@ -229,9 +364,7 @@ export default function SignupPage() {
                                 id="confirmPassword"
                                 type="password"
                                 value={confirmPassword}
-                                onChange={(e) =>
-                                    setConfirmPassword(e.target.value)
-                                }
+                                onChange={(e) => setConfirmPassword(e.target.value)}
                                 placeholder="Confirm your password"
                                 required
                                 className="w-full"
@@ -253,7 +386,6 @@ export default function SignupPage() {
                         </Button>
                     </form>
 
-                    {/* Terms and Privacy */}
                     <div className="mt-4 text-center text-xs text-gray-500">
                         By signing up, you agree to our{" "}
                         <Link

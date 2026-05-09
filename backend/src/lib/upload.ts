@@ -1,3 +1,9 @@
+/**
+ * Multer-based file-upload middleware for the backend Express app.
+ *
+ * Files are held in memory (never written to disk) and capped at 100 MB.
+ * Returns HTTP 413 with a human-readable message when the limit is exceeded.
+ */
 import type { RequestHandler } from "express";
 import multer from "multer";
 
@@ -14,6 +20,13 @@ const memoryUpload = multer({
   },
 });
 
+/**
+ * Express middleware that parses a single multipart file upload from the
+ * given form field name, storing the bytes in `req.file.buffer`.
+ *
+ * @param fieldName The multipart field name to read the file from.
+ * Returns 400 on multer errors, 413 when the file exceeds MAX_UPLOAD_SIZE_BYTES.
+ */
 export function singleFileUpload(fieldName: string): RequestHandler {
   return (req, res, next) => {
     memoryUpload.single(fieldName)(req, res, (err) => {

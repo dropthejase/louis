@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/lib/supabase";
+import { signIn } from "@/lib/aws/amplify-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { SiteLogo } from "@/components/site-logo";
 import { useAuth } from "@/contexts/AuthContext";
+
 export default function LoginPage() {
     const router = useRouter();
     const { isAuthenticated, authLoading } = useAuth();
@@ -28,16 +29,14 @@ export default function LoginPage() {
         setError(null);
 
         try {
-            const { data, error } = await supabase.auth.signInWithPassword({
-                email,
-                password,
-            });
-
-            if (error) throw error;
-
-            router.push("/assistant");
-        } catch (error: any) {
-            setError(error.message || "An error occurred during login");
+            const result = await signIn(email, password);
+            if (result.isSignedIn) {
+                router.push("/assistant");
+            } else {
+                setError(`Sign-in incomplete: ${result.nextStep.signInStep}`);
+            }
+        } catch (err: any) {
+            setError(err.message || "An error occurred during login");
         } finally {
             setLoading(false);
         }
@@ -49,7 +48,6 @@ export default function LoginPage() {
                 <SiteLogo size="md" className="md:text-4xl" asLink />
             </div>
             <div className="w-full max-w-md">
-                {/* Login Form */}
                 <div className="bg-white border border-gray-200 rounded-2xl p-8">
                     <div className="flex justify-between items-center mb-6">
                         <h2 className="text-left text-2xl font-serif">

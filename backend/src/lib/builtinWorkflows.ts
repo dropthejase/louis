@@ -1,3 +1,11 @@
+/**
+ * Built-in workflow definitions seeded into every deployment.
+ *
+ * These workflows are surfaced to all users as read-only system templates
+ * (is_system = true in the DB). Prompt text is stored here in the codebase
+ * rather than in the DB so changes are version-controlled and deployed atomically.
+ * A migration or seed script is responsible for writing these to the workflows table.
+ */
 export const BUILTIN_WORKFLOWS: { id: string; title: string; prompt_md: string }[] = [
     {
         id: "builtin-cp-checklist",

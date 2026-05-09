@@ -172,7 +172,7 @@ export default function AccountPage() {
                 </div>
                 <div>
                     <p className="text-base font-medium text-gray-500 capitalize">
-                        {profile?.tier || "Free"}
+                        Free
                     </p>
                 </div>
             </div>

@@ -1,30 +1,19 @@
-import type { createServerSupabase } from "./supabase";
-
-type Supa = ReturnType<typeof createServerSupabase>;
-
-interface DocRow {
-    id: string;
-    latest_version_number?: number | null;
-    [k: string]: unknown;
-}
-
-interface VersionPathRow extends DocRow {
-    /** Set from document_versions.storage_path of the active version. */
-    storage_path?: string | null;
-    /** Set from document_versions.pdf_storage_path of the active version. */
-    pdf_storage_path?: string | null;
-    current_version_id?: string | null;
-    /** Set from document_versions.version_number of the active version. */
-    active_version_number?: number | null;
-}
+/**
+ * Helpers for resolving document storage paths via the document_versions table.
+ *
+ * Storage paths (DOCX bytes and PDF renditions) live on document_versions rows,
+ * not on documents. Every read-from-storage path must go through these helpers
+ * so the current version is always respected.
+ */
+import { query, queryOne } from "./db";
 
 export interface ActiveVersion {
-    id: string;
-    storage_path: string;
-    pdf_storage_path: string | null;
-    version_number: number | null;
-    display_name: string | null;
-    source: string | null;
+  id: string;
+  storage_path: string;
+  pdf_storage_path: string | null;
+  version_number: number | null;
+  display_name: string | null;
+  source: string | null;
 }
 
 /**
@@ -36,37 +25,51 @@ export interface ActiveVersion {
  * every read-from-storage path goes through here.
  */
 export async function loadActiveVersion(
-    documentId: string,
-    db: Supa,
-    versionId?: string | null,
+  documentId: string,
+  versionId?: string | null,
 ): Promise<ActiveVersion | null> {
-    const { data: doc } = await db
-        .from("documents")
-        .select("current_version_id")
-        .eq("id", documentId)
-        .single();
-    const targetVersionId =
-        (typeof versionId === "string" && versionId) ||
-        (doc?.current_version_id as string | undefined) ||
-        null;
-    if (!targetVersionId) return null;
+  const doc = await queryOne<{ current_version_id: string | null }>(
+    `SELECT current_version_id FROM documents WHERE id = :documentId`,
+    [{ name: "documentId", value: { stringValue: documentId } }],
+  );
+  const targetVersionId =
+    (typeof versionId === "string" && versionId) ||
+    doc?.current_version_id ||
+    null;
+  if (!targetVersionId) return null;
 
-    const { data: v } = await db
-        .from("document_versions")
-        .select(
-            "id, document_id, storage_path, pdf_storage_path, version_number, display_name, source",
-        )
-        .eq("id", targetVersionId)
-        .single();
-    if (!v || v.document_id !== documentId || !v.storage_path) return null;
-    return {
-        id: v.id as string,
-        storage_path: v.storage_path as string,
-        pdf_storage_path: (v.pdf_storage_path as string | null) ?? null,
-        version_number: (v.version_number as number | null) ?? null,
-        display_name: (v.display_name as string | null) ?? null,
-        source: (v.source as string | null) ?? null,
-    };
+  const v = await queryOne<{
+    id: string;
+    document_id: string;
+    storage_path: string;
+    pdf_storage_path: string | null;
+    version_number: number | null;
+    display_name: string | null;
+    source: string | null;
+  }>(
+    `SELECT id, document_id, storage_path, pdf_storage_path, version_number, display_name, source
+     FROM document_versions WHERE id = :versionId`,
+    [{ name: "versionId", value: { stringValue: targetVersionId } }],
+  );
+  if (!v || v.document_id !== documentId || !v.storage_path) return null;
+  return {
+    id: v.id,
+    storage_path: v.storage_path,
+    pdf_storage_path: v.pdf_storage_path ?? null,
+    version_number: v.version_number ?? null,
+    display_name: v.display_name ?? null,
+    source: v.source ?? null,
+  };
+}
+
+interface DocRow {
+  id: string;
+  current_version_id?: string | null;
+  storage_path?: string | null;
+  pdf_storage_path?: string | null;
+  active_version_number?: number | null;
+  latest_version_number?: number | null;
+  [k: string]: unknown;
 }
 
 /**
@@ -75,52 +78,36 @@ export async function loadActiveVersion(
  * regardless of list size. Documents with no current_version_id retain
  * null paths.
  */
-export async function attachActiveVersionPaths<T extends VersionPathRow>(
-    db: Supa,
-    docs: T[],
+export async function attachActiveVersionPaths<T extends DocRow>(
+  docs: T[],
 ): Promise<T[]> {
-    if (docs.length === 0) return docs;
-    const versionIds = docs
-        .map((d) => d.current_version_id)
-        .filter((id): id is string => typeof id === "string");
-    if (versionIds.length === 0) {
-        for (const d of docs) {
-            d.storage_path = null;
-            d.pdf_storage_path = null;
-        }
-        return docs;
-    }
-    const { data: rows } = await db
-        .from("document_versions")
-        .select("id, storage_path, pdf_storage_path, version_number")
-        .in("id", versionIds);
-    const byId = new Map<
-        string,
-        {
-            storage_path: string | null;
-            pdf_storage_path: string | null;
-            version_number: number | null;
-        }
-    >();
-    for (const r of (rows ?? []) as {
-        id: string;
-        storage_path: string | null;
-        pdf_storage_path: string | null;
-        version_number: number | null;
-    }[]) {
-        byId.set(r.id, {
-            storage_path: r.storage_path ?? null,
-            pdf_storage_path: r.pdf_storage_path ?? null,
-            version_number: r.version_number ?? null,
-        });
-    }
-    for (const d of docs) {
-        const v = d.current_version_id ? byId.get(d.current_version_id) : null;
-        d.storage_path = v?.storage_path ?? null;
-        d.pdf_storage_path = v?.pdf_storage_path ?? null;
-        d.active_version_number = v?.version_number ?? null;
-    }
+  if (docs.length === 0) return docs;
+  const versionIds = docs
+    .map((d) => d.current_version_id)
+    .filter((id): id is string => typeof id === "string");
+  if (versionIds.length === 0) {
+    for (const d of docs) { d.storage_path = null; d.pdf_storage_path = null; }
     return docs;
+  }
+  const placeholders = versionIds.map((_, i) => `:id${i}`).join(", ");
+  const rows = await query<{
+    id: string;
+    storage_path: string | null;
+    pdf_storage_path: string | null;
+    version_number: number | null;
+  }>(
+    `SELECT id, storage_path, pdf_storage_path, version_number
+     FROM document_versions WHERE id IN (${placeholders})`,
+    versionIds.map((id, i) => ({ name: `id${i}`, value: { stringValue: id } })),
+  );
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  for (const d of docs) {
+    const v = d.current_version_id ? byId.get(d.current_version_id) : null;
+    d.storage_path = v?.storage_path ?? null;
+    d.pdf_storage_path = v?.pdf_storage_path ?? null;
+    d.active_version_number = v?.version_number ?? null;
+  }
+  return docs;
 }
 
 /**
@@ -130,30 +117,23 @@ export async function attachActiveVersionPaths<T extends VersionPathRow>(
  * One extra query regardless of list size.
  */
 export async function attachLatestVersionNumbers<T extends DocRow>(
-    db: Supa,
-    docs: T[],
+  docs: T[],
 ): Promise<T[]> {
-    if (docs.length === 0) return docs;
-    const ids = docs.map((d) => d.id);
-    const { data: rows } = await db
-        .from("document_versions")
-        .select("document_id, version_number")
-        .in("document_id", ids)
-        .eq("source", "assistant_edit")
-        .not("version_number", "is", null);
-
-    const latestByDoc = new Map<string, number>();
-    for (const r of (rows ?? []) as {
-        document_id: string;
-        version_number: number | null;
-    }[]) {
-        if (r.version_number == null) continue;
-        const prev = latestByDoc.get(r.document_id) ?? 0;
-        if (r.version_number > prev)
-            latestByDoc.set(r.document_id, r.version_number);
-    }
-    for (const d of docs) {
-        d.latest_version_number = latestByDoc.get(d.id) ?? null;
-    }
-    return docs;
+  if (docs.length === 0) return docs;
+  const placeholders = docs.map((_, i) => `:id${i}`).join(", ");
+  const rows = await query<{ document_id: string; version_number: number | null }>(
+    `SELECT document_id, version_number FROM document_versions
+     WHERE document_id IN (${placeholders})
+       AND source = 'assistant_edit'
+       AND version_number IS NOT NULL`,
+    docs.map((d, i) => ({ name: `id${i}`, value: { stringValue: d.id } })),
+  );
+  const latestByDoc = new Map<string, number>();
+  for (const r of rows) {
+    if (r.version_number == null) continue;
+    const prev = latestByDoc.get(r.document_id) ?? 0;
+    if (r.version_number > prev) latestByDoc.set(r.document_id, r.version_number);
+  }
+  for (const d of docs) d.latest_version_number = latestByDoc.get(d.id) ?? null;
+  return docs;
 }

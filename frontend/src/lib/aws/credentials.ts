@@ -4,18 +4,17 @@ import {
   GetCredentialsForIdentityCommand,
 } from "@aws-sdk/client-cognito-identity";
 import type { AwsCredentialIdentity } from "@smithy/types";
-import { AWS_REGION, IDENTITY_POOL_ID, SUPABASE_LOGINS_KEY } from "./config";
+import { AWS_REGION, IDENTITY_POOL_ID, COGNITO_LOGINS_KEY } from "./config";
 
 // Cached credentials — shared across callers in the same browser session.
 let cached: { credentials: AwsCredentialIdentity; jwt: string } | null = null;
 
 /**
- * Exchange a Supabase JWT for temporary IAM credentials via Cognito Identity Pool.
- * Results are cached until 5 minutes before the credentials expire.
- * Pass `forceRefresh: true` to bypass the cache (e.g. after a new login).
+ * Exchange a Cognito id token for temporary IAM credentials via the
+ * Identity Pool. Cached until 5 min before expiry.
  */
 export async function getIdentityPoolCredentials(
-  supabaseJwt: string,
+  cognitoIdToken: string,
   forceRefresh = false,
 ): Promise<AwsCredentialIdentity> {
   const now = new Date();
@@ -23,7 +22,7 @@ export async function getIdentityPoolCredentials(
   if (
     !forceRefresh &&
     cached &&
-    cached.jwt === supabaseJwt &&
+    cached.jwt === cognitoIdToken &&
     cached.credentials.expiration &&
     cached.credentials.expiration.getTime() - now.getTime() > 5 * 60 * 1000
   ) {
@@ -35,7 +34,7 @@ export async function getIdentityPoolCredentials(
   const { IdentityId } = await client.send(
     new GetIdCommand({
       IdentityPoolId: IDENTITY_POOL_ID,
-      Logins: { [SUPABASE_LOGINS_KEY]: supabaseJwt },
+      Logins: { [COGNITO_LOGINS_KEY]: cognitoIdToken },
     }),
   );
 
@@ -44,7 +43,7 @@ export async function getIdentityPoolCredentials(
   const { Credentials } = await client.send(
     new GetCredentialsForIdentityCommand({
       IdentityId,
-      Logins: { [SUPABASE_LOGINS_KEY]: supabaseJwt },
+      Logins: { [COGNITO_LOGINS_KEY]: cognitoIdToken },
     }),
   );
 
@@ -63,7 +62,7 @@ export async function getIdentityPoolCredentials(
     expiration: Credentials.Expiration,
   };
 
-  cached = { credentials, jwt: supabaseJwt };
+  cached = { credentials, jwt: cognitoIdToken };
   return credentials;
 }
 

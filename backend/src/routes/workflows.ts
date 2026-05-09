@@ -1,24 +1,29 @@
+/**
+ * Workflow routes — user-defined assistant and tabular workflow templates.
+ *
+ * Workflows come in two types: `assistant` (a system-prompt extension applied
+ * to a chat turn) and `tabular` (a columns_config preset for tabular reviews).
+ * Sharing is per-workflow via the `workflow_shares` table. System workflows
+ * (is_system = true) are read-only and visible to all users; they cannot be
+ * modified or deleted via this API.
+ */
 import { Router } from "express";
-import { createClient } from "@supabase/supabase-js";
 import { requireAuth } from "../middleware/auth";
-import { createServerSupabase } from "../lib/supabase";
-
-function getAdminClient() {
-  return createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-    process.env.SUPABASE_SECRET_KEY ?? "",
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
-}
+import { query, queryOne, execute } from "../lib/db";
+import type { SqlParameter } from "@aws-sdk/client-rds-data";
 
 export const workflowsRouter = Router();
-
-type Db = ReturnType<typeof createServerSupabase>;
 
 type WorkflowRecord = {
   id: string;
   user_id: string | null;
   is_system: boolean;
+  type?: string;
+  title?: string;
+  prompt_md?: string | null;
+  columns_config?: unknown;
+  practice?: string | null;
+  created_at?: string;
   [key: string]: unknown;
 };
 
@@ -46,31 +51,30 @@ async function resolveWorkflowAccess(
   workflowId: string,
   userId: string,
   userEmail: string | null | undefined,
-  db: Db,
 ): Promise<WorkflowAccess> {
-  const { data: workflow } = await db
-    .from("workflows")
-    .select("*")
-    .eq("id", workflowId)
-    .single();
+  const workflow = await queryOne<WorkflowRecord>(
+    `SELECT * FROM workflows WHERE id = :id`,
+    [{ name: "id", value: { stringValue: workflowId } }],
+  );
   if (!workflow) return null;
-  const workflowRecord = workflow as WorkflowRecord;
-  if (workflowRecord.user_id === userId) {
-    return { workflow: workflowRecord, allowEdit: true, isOwner: true };
+  if (workflow.user_id === userId) {
+    return { workflow, allowEdit: true, isOwner: true };
   }
 
   const normalizedUserEmail = (userEmail ?? "").trim().toLowerCase();
   if (!normalizedUserEmail) return null;
 
-  const { data: share } = await db
-    .from("workflow_shares")
-    .select("allow_edit")
-    .eq("workflow_id", workflowId)
-    .eq("shared_with_email", normalizedUserEmail)
-    .maybeSingle();
+  const share = await queryOne<{ allow_edit: boolean }>(
+    `SELECT allow_edit FROM workflow_shares
+     WHERE workflow_id = :workflowId AND shared_with_email = :email`,
+    [
+      { name: "workflowId", value: { stringValue: workflowId } },
+      { name: "email", value: { stringValue: normalizedUserEmail } },
+    ],
+  );
   if (!share) return null;
 
-  return { workflow: workflowRecord, allowEdit: !!share.allow_edit, isOwner: false };
+  return { workflow, allowEdit: !!share.allow_edit, isOwner: false };
 }
 
 // GET /workflows
@@ -78,51 +82,66 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string;
   const { type } = req.query as { type?: string };
-  const db = createServerSupabase();
 
   // Own workflows
-  let ownQuery = db
-    .from("workflows")
-    .select("*")
-    .eq("user_id", userId)
-    .eq("is_system", false)
-    .order("created_at", { ascending: false });
-  if (type) ownQuery = ownQuery.eq("type", type);
-  const { data: own, error: ownErr } = await ownQuery;
-  if (ownErr) return void res.status(500).json({ detail: ownErr.message });
+  const ownParams: SqlParameter[] = [
+    { name: "userId", value: { stringValue: userId } },
+  ];
+  let ownSql = `SELECT * FROM workflows
+                WHERE user_id = :userId AND is_system = false`;
+  if (type) {
+    ownSql += ` AND type = :type`;
+    ownParams.push({ name: "type", value: { stringValue: type } });
+  }
+  ownSql += ` ORDER BY created_at DESC`;
+  const own = await query<WorkflowRecord>(ownSql, ownParams);
 
   // Shared workflows (where the current user's email appears in workflow_shares)
   const normalizedUserEmail = userEmail.trim().toLowerCase();
-  const { data: shares } = await db
-    .from("workflow_shares")
-    .select("workflow_id, shared_by_user_id, allow_edit")
-    .eq("shared_with_email", normalizedUserEmail);
+  const shares = await query<{
+    workflow_id: string;
+    shared_by_user_id: string;
+    allow_edit: boolean;
+  }>(
+    `SELECT workflow_id, shared_by_user_id, allow_edit
+     FROM workflow_shares
+     WHERE shared_with_email = :email`,
+    [{ name: "email", value: { stringValue: normalizedUserEmail } }],
+  );
 
   let sharedWorkflows: Record<string, unknown>[] = [];
-  if (shares && shares.length > 0) {
+  if (shares.length > 0) {
     const sharedIds = shares.map((s) => s.workflow_id);
-    let sharedQuery = db.from("workflows").select("*").in("id", sharedIds);
-    if (type) sharedQuery = sharedQuery.eq("type", type);
-    const { data: wfs } = await sharedQuery;
+    const placeholders = sharedIds.map((_, i) => `:wid${i}`).join(", ");
+    const params: SqlParameter[] = sharedIds.map((id, i) => ({
+      name: `wid${i}`,
+      value: { stringValue: id },
+    }));
+    let sharedSql = `SELECT * FROM workflows WHERE id IN (${placeholders})`;
+    if (type) {
+      sharedSql += ` AND type = :type`;
+      params.push({ name: "type", value: { stringValue: type } });
+    }
+    const wfs = await query<WorkflowRecord>(sharedSql, params);
 
-    if (wfs && wfs.length > 0) {
-      // Fetch sharer profiles
+    if (wfs.length > 0) {
+      // Fetch sharer profiles for display name
       const sharerIds = [...new Set(shares.map((s) => s.shared_by_user_id).filter(Boolean))];
-      const { data: profiles } = sharerIds.length > 0
-        ? await db.from("user_profiles").select("user_id, display_name").in("user_id", sharerIds)
-        : { data: [] };
-
-      // Fetch sharer emails via admin client
-      const admin = getAdminClient();
-      const { data: authData } = await admin.auth.admin.listUsers({ perPage: 1000 });
-      const authUsers = authData?.users ?? [];
+      let profiles: { user_id: string; email: string | null; display_name: string | null }[] = [];
+      if (sharerIds.length > 0) {
+        const profPlaceholders = sharerIds.map((_, i) => `:sid${i}`).join(", ");
+        profiles = await query<{ user_id: string; email: string | null; display_name: string | null }>(
+          `SELECT user_id, email, display_name FROM user_profiles
+           WHERE user_id IN (${profPlaceholders})`,
+          sharerIds.map((id, i) => ({ name: `sid${i}`, value: { stringValue: id } })),
+        );
+      }
 
       sharedWorkflows = wfs.map((wf) => {
         const share = shares.find((s) => s.workflow_id === wf.id);
         const sharerId = share?.shared_by_user_id;
-        const profile = profiles?.find((p) => p.user_id === sharerId);
-        const authUser = authUsers.find((u) => u.id === sharerId);
-        const shared_by_name = profile?.display_name || authUser?.email || null;
+        const profile = profiles.find((p) => p.user_id === sharerId);
+        const shared_by_name = profile?.display_name ?? profile?.email ?? null;
         return withWorkflowAccess(wf, {
           allowEdit: !!share?.allow_edit,
           isOwner: false,
@@ -132,7 +151,7 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
     }
   }
 
-  const ownWithFlag = (own ?? []).map((wf) =>
+  const ownWithFlag = own.map((wf) =>
     withWorkflowAccess(wf, { allowEdit: true, isOwner: true }),
   );
   res.json([...ownWithFlag, ...sharedWorkflows]);
@@ -155,50 +174,100 @@ workflowsRouter.post("/", requireAuth, async (req, res) => {
       .status(400)
       .json({ detail: "type must be 'assistant' or 'tabular'" });
 
-  const db = createServerSupabase();
-  const { data, error } = await db
-    .from("workflows")
-    .insert({
-      user_id: userId,
-      title: title.trim(),
-      type,
-      prompt_md: prompt_md ?? null,
-      columns_config: columns_config ?? null,
-      practice: practice ?? null,
-      is_system: false,
-    })
-    .select("*")
-    .single();
-  if (error) return void res.status(500).json({ detail: error.message });
+  const data = await queryOne<WorkflowRecord>(
+    `INSERT INTO workflows
+       (user_id, title, type, prompt_md, columns_config, practice, is_system)
+     VALUES
+       (:userId, :title, :type, :promptMd, :columnsConfig::jsonb, :practice, false)
+     RETURNING *`,
+    [
+      { name: "userId", value: { stringValue: userId } },
+      { name: "title", value: { stringValue: title.trim() } },
+      { name: "type", value: { stringValue: type } },
+      {
+        name: "promptMd",
+        value: prompt_md != null ? { stringValue: prompt_md } : { isNull: true },
+      },
+      {
+        name: "columnsConfig",
+        value: columns_config != null
+          ? { stringValue: JSON.stringify(columns_config) }
+          : { isNull: true },
+      },
+      {
+        name: "practice",
+        value: practice != null ? { stringValue: practice } : { isNull: true },
+      },
+    ],
+  );
+  if (!data) return void res.status(500).json({ detail: "Failed to create workflow" });
   res.status(201).json(data);
 });
 
-async function handleWorkflowUpdate(req: import("express").Request, res: import("express").Response) {
+async function handleWorkflowUpdate(
+  req: import("express").Request,
+  res: import("express").Response,
+) {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
-  const updates: Record<string, unknown> = {};
-  if (req.body.title != null) updates.title = req.body.title;
-  if (req.body.prompt_md != null) updates.prompt_md = req.body.prompt_md;
-  if (req.body.columns_config != null)
-    updates.columns_config = req.body.columns_config;
-  if ("practice" in req.body) updates.practice = req.body.practice ?? null;
 
-  const db = createServerSupabase();
-  const access = await resolveWorkflowAccess(workflowId, userId, userEmail, db);
+  const access = await resolveWorkflowAccess(workflowId, userId, userEmail);
   if (!access || access.workflow.is_system || !access.allowEdit) {
     return void res
       .status(404)
       .json({ detail: "Workflow not found or not editable" });
   }
-  const { data, error } = await db
-    .from("workflows")
-    .update(updates)
-    .eq("id", workflowId)
-    .eq("is_system", false)
-    .select("*")
-    .single();
-  if (error || !data)
+
+  const sets: string[] = [];
+  const params: SqlParameter[] = [
+    { name: "id", value: { stringValue: workflowId } },
+  ];
+  if (req.body.title != null) {
+    sets.push(`title = :title`);
+    params.push({ name: "title", value: { stringValue: String(req.body.title) } });
+  }
+  if (req.body.prompt_md != null) {
+    sets.push(`prompt_md = :promptMd`);
+    params.push({
+      name: "promptMd",
+      value: { stringValue: String(req.body.prompt_md) },
+    });
+  }
+  if (req.body.columns_config != null) {
+    sets.push(`columns_config = :columnsConfig::jsonb`);
+    params.push({
+      name: "columnsConfig",
+      value: { stringValue: JSON.stringify(req.body.columns_config) },
+    });
+  }
+  if ("practice" in req.body) {
+    sets.push(`practice = :practice`);
+    params.push({
+      name: "practice",
+      value:
+        req.body.practice != null
+          ? { stringValue: String(req.body.practice) }
+          : { isNull: true },
+    });
+  }
+  if (sets.length === 0) {
+    // Nothing to update — return the existing record with access flags.
+    return void res.json(
+      withWorkflowAccess(access.workflow, {
+        allowEdit: access.allowEdit,
+        isOwner: access.isOwner,
+      }),
+    );
+  }
+
+  const data = await queryOne<WorkflowRecord>(
+    `UPDATE workflows SET ${sets.join(", ")}
+     WHERE id = :id AND is_system = false
+     RETURNING *`,
+    params,
+  );
+  if (!data)
     return void res
       .status(404)
       .json({ detail: "Workflow not found or not editable" });
@@ -220,27 +289,25 @@ workflowsRouter.patch("/:workflowId", requireAuth, handleWorkflowUpdate);
 workflowsRouter.delete("/:workflowId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
-  const db = createServerSupabase();
-  const { error } = await db
-    .from("workflows")
-    .delete()
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .eq("is_system", false);
-  if (error) return void res.status(500).json({ detail: error.message });
+  await execute(
+    `DELETE FROM workflows
+     WHERE id = :id AND user_id = :userId AND is_system = false`,
+    [
+      { name: "id", value: { stringValue: workflowId } },
+      { name: "userId", value: { stringValue: userId } },
+    ],
+  );
   res.status(204).send();
 });
 
 // GET /workflows/hidden
 workflowsRouter.get("/hidden", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
-  const db = createServerSupabase();
-  const { data, error } = await db
-    .from("hidden_workflows")
-    .select("workflow_id")
-    .eq("user_id", userId);
-  if (error) return void res.status(500).json({ detail: error.message });
-  res.json((data ?? []).map((r) => r.workflow_id));
+  const data = await query<{ workflow_id: string }>(
+    `SELECT workflow_id FROM hidden_workflows WHERE user_id = :userId`,
+    [{ name: "userId", value: { stringValue: userId } }],
+  );
+  res.json(data.map((r) => r.workflow_id));
 });
 
 // POST /workflows/hidden
@@ -249,11 +316,15 @@ workflowsRouter.post("/hidden", requireAuth, async (req, res) => {
   const { workflow_id } = req.body as { workflow_id: string };
   if (!workflow_id?.trim())
     return void res.status(400).json({ detail: "workflow_id is required" });
-  const db = createServerSupabase();
-  const { error } = await db
-    .from("hidden_workflows")
-    .upsert({ user_id: userId, workflow_id }, { onConflict: "user_id,workflow_id" });
-  if (error) return void res.status(500).json({ detail: error.message });
+  await execute(
+    `INSERT INTO hidden_workflows (user_id, workflow_id)
+     VALUES (:userId, :workflowId)
+     ON CONFLICT (user_id, workflow_id) DO NOTHING`,
+    [
+      { name: "userId", value: { stringValue: userId } },
+      { name: "workflowId", value: { stringValue: workflow_id } },
+    ],
+  );
   res.status(204).send();
 });
 
@@ -261,13 +332,14 @@ workflowsRouter.post("/hidden", requireAuth, async (req, res) => {
 workflowsRouter.delete("/hidden/:workflowId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
-  const db = createServerSupabase();
-  const { error } = await db
-    .from("hidden_workflows")
-    .delete()
-    .eq("user_id", userId)
-    .eq("workflow_id", workflowId);
-  if (error) return void res.status(500).json({ detail: error.message });
+  await execute(
+    `DELETE FROM hidden_workflows
+     WHERE user_id = :userId AND workflow_id = :workflowId`,
+    [
+      { name: "userId", value: { stringValue: userId } },
+      { name: "workflowId", value: { stringValue: workflowId } },
+    ],
+  );
   res.status(204).send();
 });
 
@@ -276,8 +348,7 @@ workflowsRouter.get("/:workflowId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
-  const db = createServerSupabase();
-  const access = await resolveWorkflowAccess(workflowId, userId, userEmail, db);
+  const access = await resolveWorkflowAccess(workflowId, userId, userEmail);
   if (!access)
     return void res.status(404).json({ detail: "Workflow not found" });
   res.json(
@@ -292,42 +363,50 @@ workflowsRouter.get("/:workflowId", requireAuth, async (req, res) => {
 workflowsRouter.get("/:workflowId/shares", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId } = req.params;
-  const db = createServerSupabase();
 
-  const { data: wf } = await db
-    .from("workflows")
-    .select("id")
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .eq("is_system", false)
-    .single();
+  const wf = await queryOne<{ id: string }>(
+    `SELECT id FROM workflows
+     WHERE id = :id AND user_id = :userId AND is_system = false`,
+    [
+      { name: "id", value: { stringValue: workflowId } },
+      { name: "userId", value: { stringValue: userId } },
+    ],
+  );
   if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
 
-  const { data: shares, error } = await db
-    .from("workflow_shares")
-    .select("id, shared_with_email, allow_edit, created_at")
-    .eq("workflow_id", workflowId)
-    .order("created_at", { ascending: true });
-  if (error) return void res.status(500).json({ detail: error.message });
+  const shares = await query(
+    `SELECT id, shared_with_email, allow_edit, created_at
+     FROM workflow_shares
+     WHERE workflow_id = :workflowId
+     ORDER BY created_at ASC`,
+    [{ name: "workflowId", value: { stringValue: workflowId } }],
+  );
 
-  res.json(shares ?? []);
+  res.json(shares);
 });
 
 // DELETE /workflows/:workflowId/shares/:shareId
 workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const { workflowId, shareId } = req.params;
-  const db = createServerSupabase();
 
-  const { data: wf } = await db
-    .from("workflows")
-    .select("id")
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .single();
+  const wf = await queryOne<{ id: string }>(
+    `SELECT id FROM workflows WHERE id = :id AND user_id = :userId`,
+    [
+      { name: "id", value: { stringValue: workflowId } },
+      { name: "userId", value: { stringValue: userId } },
+    ],
+  );
   if (!wf) return void res.status(404).json({ detail: "Workflow not found" });
 
-  await db.from("workflow_shares").delete().eq("id", shareId).eq("workflow_id", workflowId);
+  await execute(
+    `DELETE FROM workflow_shares
+     WHERE id = :shareId AND workflow_id = :workflowId`,
+    [
+      { name: "shareId", value: { stringValue: shareId } },
+      { name: "workflowId", value: { stringValue: workflowId } },
+    ],
+  );
   res.status(204).send();
 });
 
@@ -339,29 +418,37 @@ workflowsRouter.post("/:workflowId/share", requireAuth, async (req, res) => {
 
   if (!emails?.length) return void res.status(400).json({ detail: "emails is required" });
 
-  const db = createServerSupabase();
   // Verify ownership
-  const { data: wf } = await db
-    .from("workflows")
-    .select("id")
-    .eq("id", workflowId)
-    .eq("user_id", userId)
-    .eq("is_system", false)
-    .single();
+  const wf = await queryOne<{ id: string }>(
+    `SELECT id FROM workflows
+     WHERE id = :id AND user_id = :userId AND is_system = false`,
+    [
+      { name: "id", value: { stringValue: workflowId } },
+      { name: "userId", value: { stringValue: userId } },
+    ],
+  );
   if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
 
-  const rows = emails.map((email: string) => ({
-    workflow_id: workflowId,
-    shared_by_user_id: userId,
-    shared_with_email: email.trim().toLowerCase(),
-    allow_edit: allow_edit ?? false,
-  }));
   // Upsert on (workflow_id, shared_with_email) so re-sharing to the same
   // person updates the existing row instead of stacking duplicates.
-  const { error } = await db
-    .from("workflow_shares")
-    .upsert(rows, { onConflict: "workflow_id,shared_with_email" });
-  if (error) return void res.status(500).json({ detail: error.message });
+  for (const rawEmail of emails) {
+    if (typeof rawEmail !== "string") continue;
+    const email = rawEmail.trim().toLowerCase();
+    if (!email) continue;
+    await execute(
+      `INSERT INTO workflow_shares
+         (workflow_id, shared_by_user_id, shared_with_email, allow_edit)
+       VALUES (:workflowId, :sharedBy, :email, :allowEdit)
+       ON CONFLICT (workflow_id, shared_with_email)
+       DO UPDATE SET allow_edit = EXCLUDED.allow_edit`,
+      [
+        { name: "workflowId", value: { stringValue: workflowId } },
+        { name: "sharedBy", value: { stringValue: userId } },
+        { name: "email", value: { stringValue: email } },
+        { name: "allowEdit", value: { booleanValue: allow_edit ?? false } },
+      ],
+    );
+  }
 
   res.status(204).send();
 });

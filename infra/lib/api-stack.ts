@@ -1,41 +1,46 @@
+/**
+ * CDK stack: API Gateway + backend Lambda + AgentCore execution role + DynamoDB credits table.
+ *
+ * API Gateway uses a native Cognito User Pool authorizer (300s cache) — the backend Lambda
+ * receives the JWT and trusts the `sub` claim as userId without re-validating the signature.
+ * The AgentCore execution role is created here (not in a separate stack) because it needs
+ * access to the same DynamoDB credits table; its ARN is exported for use by deploy-agent.sh.
+ * Backend Lambda is ARM64; the conversion Lambda is x86_64 (LibreOffice constraint).
+ */
 import * as cdk from 'aws-cdk-lib';
 import { Stack, StackProps, Duration, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import * as path from 'path';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as cognito from 'aws-cdk-lib/aws-cognito';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Stage } from './shared/stage';
 
 interface ApiStackProps extends StackProps {
   stage: Stage;
-  authorizerFnArn: string;
+  userPool: cognito.UserPool;
   docsBucket: s3.Bucket;
   sessionsBucket: s3.Bucket;
+  agentDeployBucket: s3.Bucket;
   frontendUrl?: string;
+  dbClusterArn: string;
+  dbSecretArn: string;
+  dbName: string;
 }
 
 export class ApiStack extends Stack {
   public readonly api: apigateway.RestApi;
   public readonly apiLambda: lambda.Function;
-  public readonly supabaseSecret: secretsmanager.Secret;
+  public readonly agentCoreExecutionRoleArn: string;
+  public readonly creditsTableName: string;
+  public readonly creditsTableArn: string;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
 
-    // Secrets Manager — stores Supabase URL + service role key
-    // Values populated manually after deploy: aws secretsmanager put-secret-value ...
-    this.supabaseSecret = new secretsmanager.Secret(this, 'SupabaseCredentials', {
-      description: 'Supabase URL and service role key for Mike API Lambda',
-      generateSecretString: {
-        secretStringTemplate: JSON.stringify({ url: 'REPLACE_ME', serviceRoleKey: 'REPLACE_ME' }),
-        generateStringKey: '_unused', // placeholder to satisfy CDK requirement
-      },
-    });
-
-    // API Lambda execution role
     const lambdaRole = new iam.Role(this, 'ApiLambdaRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
@@ -43,16 +48,9 @@ export class ApiStack extends Stack {
       ],
     });
 
-    // Allow Lambda to read Supabase secret
-    this.supabaseSecret.grantRead(lambdaRole);
-
-    // Allow Lambda to read/write docs bucket (for presigned URLs and direct access)
     props.docsBucket.grantReadWrite(lambdaRole);
-
-    // Allow Lambda to read session snapshots from the sessions bucket
     props.sessionsBucket.grantRead(lambdaRole);
 
-    // Allow Lambda to invoke Bedrock models — scoped to specific model ARNs
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
@@ -63,7 +61,44 @@ export class ApiStack extends Stack {
       ],
     }));
 
-    // API Lambda — Docker image from backend/Dockerfile.lambda
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['cognito-idp:AdminDeleteUser'],
+      resources: [props.userPool.userPoolArn],
+    }));
+
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'rds-data:ExecuteStatement',
+        'rds-data:BatchExecuteStatement',
+        'rds-data:BeginTransaction',
+        'rds-data:CommitTransaction',
+        'rds-data:RollbackTransaction',
+      ],
+      resources: [props.dbClusterArn],
+    }));
+
+    lambdaRole.addToPolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [props.dbSecretArn],
+    }));
+
+    const creditsTable = new dynamodb.Table(this, 'CreditsTable', {
+      partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'month', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    creditsTable.grantReadWriteData(lambdaRole);
+
+    new CfnOutput(this, 'CreditsTableName', { value: creditsTable.tableName });
+
+    this.creditsTableName = creditsTable.tableName;
+    this.creditsTableArn = creditsTable.tableArn;
+
     this.apiLambda = new lambda.DockerImageFunction(this, 'ApiLambda', {
       code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../backend'), {
         file: 'Dockerfile.lambda',
@@ -73,60 +108,163 @@ export class ApiStack extends Stack {
       timeout: cdk.Duration.seconds(29),
       memorySize: 1024,
       environment: {
-        SUPABASE_SECRET_ARN: this.supabaseSecret.secretArn,
+        DB_CLUSTER_ARN: props.dbClusterArn,
+        DB_SECRET_ARN: props.dbSecretArn,
+        DB_NAME: props.dbName,
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
+        USER_POOL_ID: props.userPool.userPoolId,
         FRONTEND_URL: props.frontendUrl ?? '*',
+        CREDITS_TABLE_NAME: creditsTable.tableName,
         NODE_ENV: 'production',
-        POWERTOOLS_SERVICE_NAME: 'mike-api',
-        POWERTOOLS_LOG_LEVEL: props.stage === 'dev' ? 'DEBUG' : 'INFO',
+        POWERTOOLS_SERVICE_NAME: 'louis-api',
+        POWERTOOLS_LOG_LEVEL: 'INFO',
         AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       },
       tracing: lambda.Tracing.ACTIVE,
     });
 
-    // REST API Gateway
-    this.api = new apigateway.RestApi(this, 'MikeApi', {
-      description: 'Mike on AWS — REST API',
+    this.api = new apigateway.RestApi(this, 'LouisApi', {
+      description: 'Louis on AWS — REST API',
       deployOptions: {
         stageName: props.stage,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
-        dataTraceEnabled: props.stage === 'dev',
+        dataTraceEnabled: false,
         metricsEnabled: true,
       },
       defaultCorsPreflightOptions: {
-        allowOrigins: apigateway.Cors.ALL_ORIGINS, // tighten to CloudFront domain post-deploy
+        allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
         allowHeaders: ['Content-Type', 'Authorization'],
       },
     });
 
-    // Token authorizer — references Lambda authorizer from AuthStack via ARN to avoid cross-stack cycle
-    const authorizerFn = lambda.Function.fromFunctionAttributes(this, 'ImportedAuthorizerFn', {
-      functionArn: props.authorizerFnArn,
-      sameEnvironment: true,
-    });
-    const authorizer = new apigateway.TokenAuthorizer(this, 'JwtAuthorizer', {
-      handler: authorizerFn,
+    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(this, 'CognitoAuthorizer', {
+      cognitoUserPools: [props.userPool],
       resultsCacheTtl: Duration.seconds(300),
       identitySource: 'method.request.header.Authorization',
     });
 
-    // Proxy all routes to API Lambda with authorizer
     const proxyResource = this.api.root.addResource('{proxy+}');
     proxyResource.addMethod('ANY', new apigateway.LambdaIntegration(this.apiLambda), {
       authorizer,
-      authorizationType: apigateway.AuthorizationType.CUSTOM,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
 
-    // Also add root route
     this.api.root.addMethod('ANY', new apigateway.LambdaIntegration(this.apiLambda), {
       authorizer,
-      authorizationType: apigateway.AuthorizationType.CUSTOM,
+      authorizationType: apigateway.AuthorizationType.COGNITO,
     });
+
+    // AgentCore Runtime execution role — used by deploy-agent.sh to populate agentcore.json.
+    const agentCoreRole = new iam.Role(this, 'AgentCoreExecutionRole', {
+      roleName: 'MikeAgentCoreExecutionRole',
+      assumedBy: new iam.ServicePrincipal('bedrock-agentcore.amazonaws.com', {
+        conditions: {
+          StringEquals: { 'aws:SourceAccount': this.account },
+          ArnLike: { 'aws:SourceArn': `arn:aws:bedrock-agentcore:${this.region}:${this.account}:*` },
+        },
+      }),
+      description: 'AgentCore Runtime execution role for Mike agent',
+    });
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchLogs',
+      effect: iam.Effect.ALLOW,
+      actions: ['logs:CreateLogGroup', 'logs:DescribeLogGroups', 'logs:DescribeLogStreams', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+      resources: [
+        `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/bedrock-agentcore/runtimes/*`,
+        `arn:aws:logs:${this.region}:${this.account}:log-group:*`,
+      ],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'XRayTracing',
+      effect: iam.Effect.ALLOW,
+      actions: ['xray:PutTraceSegments', 'xray:PutTelemetryRecords', 'xray:GetSamplingRules', 'xray:GetSamplingTargets'],
+      resources: ['*'],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchMetrics',
+      effect: iam.Effect.ALLOW,
+      actions: ['cloudwatch:PutMetricData'],
+      resources: ['*'],
+      conditions: { StringEquals: { 'cloudwatch:namespace': 'bedrock-agentcore' } },
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'BedrockModelAccess',
+      effect: iam.Effect.ALLOW,
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      resources: [
+        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0`,
+        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0`,
+        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0`,
+      ],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'DynamoDBCredits',
+      effect: iam.Effect.ALLOW,
+      actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
+      resources: [creditsTable.tableArn],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'RdsDataApi',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'rds-data:ExecuteStatement',
+        'rds-data:BatchExecuteStatement',
+        'rds-data:BeginTransaction',
+        'rds-data:CommitTransaction',
+        'rds-data:RollbackTransaction',
+      ],
+      resources: [props.dbClusterArn],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SecretsManagerDb',
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [props.dbSecretArn],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3DocsAccess',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+      resources: [`${props.docsBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3SessionsAccess',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+      resources: [`${props.sessionsBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3AgentDeployRead',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject'],
+      resources: [`${props.agentDeployBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3PresignedUrls',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket'],
+      resources: [props.docsBucket.bucketArn],
+    }));
+
+    new CfnOutput(this, 'CreditsTableArn', { value: creditsTable.tableArn });
+
+    this.agentCoreExecutionRoleArn = agentCoreRole.roleArn;
 
     new CfnOutput(this, 'ApiUrl', { value: this.api.url });
     new CfnOutput(this, 'ApiLambdaArn', { value: this.apiLambda.functionArn });
-    new CfnOutput(this, 'SupabaseSecretArn', { value: this.supabaseSecret.secretArn });
+    new CfnOutput(this, 'AgentCoreExecutionRoleArn', { value: agentCoreRole.roleArn });
   }
 }

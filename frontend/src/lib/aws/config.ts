@@ -16,7 +16,15 @@ export const API_URL =
 export const AGENTCORE_URL =
   process.env.NEXT_PUBLIC_AGENTCORE_URL ?? "";
 
-// The Supabase OIDC logins key for Cognito Identity Pool.
-// Must match the provider registered in the Identity Pool (AuthStack).
-export const SUPABASE_LOGINS_KEY =
-  `${process.env.NEXT_PUBLIC_SUPABASE_URL}/auth/v1`;
+export const AGENTCORE_TABULAR_URL =
+  process.env.NEXT_PUBLIC_AGENTCORE_TABULAR_URL ?? "";
+
+export const USER_POOL_ID =
+  process.env.NEXT_PUBLIC_USER_POOL_ID ?? "";
+
+export const USER_POOL_CLIENT_ID =
+  process.env.NEXT_PUBLIC_USER_POOL_CLIENT_ID ?? "";
+
+// Cognito logins key for Identity Pool — matches the User Pool provider name
+export const COGNITO_LOGINS_KEY =
+  `cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}`;

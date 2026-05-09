@@ -1,8 +1,14 @@
+/**
+ * Express application factory for the backend API.
+ *
+ * Mounts all route routers under their public path prefixes and configures
+ * CORS (origin locked to FRONTEND_URL). Used by both the local dev server
+ * (index.ts) and the Lambda handler (lambda.ts) via serverless-http.
+ */
 import express from "express";
 import cors from "cors";
 import { chatRouter } from "./routes/chat";
 import { projectsRouter } from "./routes/projects";
-import { projectChatRouter } from "./routes/projectChat";
 import { documentsRouter } from "./routes/documents";
 import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
@@ -22,7 +28,6 @@ app.use(express.json({ limit: "50mb" }));
 
 app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
-app.use("/projects/:projectId/chat", projectChatRouter);
 app.use("/single-documents", documentsRouter);
 app.use("/tabular-review", tabularRouter);
 app.use("/workflows", workflowsRouter);
