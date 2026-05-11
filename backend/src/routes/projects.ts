@@ -4,9 +4,7 @@
  *
  * Projects are the primary grouping mechanism; documents and chats can
  * belong to a project. Access is either by ownership (user_id) or by email
- * in shared_with. `handleDocumentUpload` is exported so the standalone
- * documents router can reuse the same upload + conversion + version-row
- * creation logic.
+ * in shared_with.
  */
 import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
@@ -16,9 +14,8 @@ import {
   attachLatestVersionNumbers,
 } from "../lib/documentVersions";
 import { downloadFile, uploadFile, storageKey } from "../lib/storage";
-import { docxToPdf, convertedPdfKey } from "../lib/convert";
+import { convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
-import { singleFileUpload } from "../lib/upload";
 
 export const projectsRouter = Router();
 const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
@@ -520,23 +517,127 @@ projectsRouter.post(
   },
 );
 
-// POST /projects/:projectId/documents
-projectsRouter.post(
-  "/:projectId/documents",
-  requireAuth,
-  singleFileUpload("file"),
-  async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { projectId } = req.params;
+// POST /projects/:projectId/documents/prepare
+projectsRouter.post("/:projectId/documents/prepare", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const { projectId } = req.params;
+  const { filename, size_bytes } = req.body as { filename?: string; size_bytes?: number };
 
-    const access = await checkProjectAccess(projectId, userId, userEmail);
-    if (!access.ok)
-      return void res.status(404).json({ detail: "Project not found" });
+  const access = await checkProjectAccess(projectId, userId, userEmail);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
 
-    await handleDocumentUpload(req, res, userId, projectId);
-  },
-);
+  if (!filename?.trim())
+    return void res.status(400).json({ detail: "filename is required" });
+
+  const suffix = filename.includes(".")
+    ? filename.split(".").pop()!.toLowerCase()
+    : "";
+  if (!ALLOWED_TYPES.has(suffix))
+    return void res.status(400).json({
+      detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+    });
+
+  const doc = await queryOne<{ id: string; filename: string }>(
+    `INSERT INTO documents (project_id, user_id, filename, file_type, size_bytes, status)
+     VALUES (:projectId, :userId, :filename, :fileType, :sizeBytes, 'processing')
+     RETURNING id, filename`,
+    [
+      { name: "projectId", value: { stringValue: projectId } },
+      { name: "userId", value: { stringValue: userId } },
+      { name: "filename", value: { stringValue: filename.trim() } },
+      { name: "fileType", value: { stringValue: suffix } },
+      { name: "sizeBytes", value: { longValue: size_bytes ?? 0 } },
+    ],
+  );
+  if (!doc)
+    return void res.status(500).json({ detail: "Failed to create document record" });
+
+  const uploadKey = storageKey(userId, doc.id, filename.trim());
+  res.status(201).json({ docId: doc.id, uploadKey });
+});
+
+// POST /projects/:projectId/documents/:documentId/register
+projectsRouter.post("/:projectId/documents/:documentId/register", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const userEmail = res.locals.userEmail as string | undefined;
+  const { projectId, documentId } = req.params;
+  const { upload_key } = req.body as { upload_key?: string };
+
+  if (!upload_key?.trim())
+    return void res.status(400).json({ detail: "upload_key is required" });
+
+  const access = await checkProjectAccess(projectId, userId, userEmail);
+  if (!access.ok)
+    return void res.status(404).json({ detail: "Project not found" });
+
+  const doc = await queryOne<{
+    id: string;
+    filename: string;
+    file_type: string | null;
+    size_bytes: number;
+    status: string;
+  }>(
+    `SELECT id, filename, file_type, size_bytes, status
+     FROM documents
+     WHERE id = :id AND user_id = :userId AND project_id = :projectId`,
+    [
+      { name: "id", value: { stringValue: documentId } },
+      { name: "userId", value: { stringValue: userId } },
+      { name: "projectId", value: { stringValue: projectId } },
+    ],
+  );
+  if (!doc)
+    return void res.status(404).json({ detail: "Document not found" });
+  if (doc.status !== "processing")
+    return void res.status(409).json({ detail: "Document already registered" });
+
+  const suffix = doc.file_type ?? "";
+  // PDF is its own rendition. DOCX/DOC: Conversion Lambda sets pdf_storage_path via EventBridge.
+  const pdfStoragePath = suffix === "pdf" ? upload_key.trim() : null;
+
+  const versionRow = await queryOne<{ id: string }>(
+    `INSERT INTO document_versions
+       (document_id, storage_path, pdf_storage_path, source, version_number, display_name)
+     VALUES
+       (:documentId, :storagePath, :pdfStoragePath, 'upload', 1, :displayName)
+     RETURNING id`,
+    [
+      { name: "documentId", value: { stringValue: documentId } },
+      { name: "storagePath", value: { stringValue: upload_key.trim() } },
+      {
+        name: "pdfStoragePath",
+        value: pdfStoragePath != null
+          ? { stringValue: pdfStoragePath }
+          : { isNull: true },
+      },
+      { name: "displayName", value: { stringValue: doc.filename } },
+    ],
+  );
+  if (!versionRow)
+    return void res.status(500).json({ detail: "Failed to create version record" });
+
+  await execute(
+    `UPDATE documents
+     SET current_version_id = :versionId, status = 'ready', updated_at = NOW()
+     WHERE id = :id`,
+    [
+      { name: "versionId", value: { stringValue: versionRow.id } },
+      { name: "id", value: { stringValue: documentId } },
+    ],
+  );
+
+  const updated = await queryOne<DocumentRow>(
+    `SELECT * FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
+  res.status(201).json({
+    ...updated,
+    storage_path: upload_key.trim(),
+    pdf_storage_path: pdfStoragePath,
+  });
+});
 
 // GET /projects/:projectId/chats — every assistant chat under this project
 // (any author with project access). Used by the project page's chat tab so
@@ -742,258 +843,3 @@ projectsRouter.patch(
   },
 );
 
-/**
- * Shared upload handler used by both the project and standalone document routes.
- *
- * Validates file type (pdf/docx/doc), writes bytes to S3, triggers DOCX→PDF
- * conversion, extracts a structure tree, creates the `documents` row and its
- * initial `document_versions` V1 row, and returns the created document as JSON.
- *
- * @param projectId Pass null for standalone documents.
- * Returns 400 on unsupported file types, 500 on storage or DB failures.
- */
-export async function handleDocumentUpload(
-  req: import("express").Request,
-  res: import("express").Response,
-  userId: string,
-  projectId: string | null,
-) {
-  const file = req.file;
-  if (!file) return void res.status(400).json({ detail: "file is required" });
-
-  const filename = file.originalname;
-  const suffix = filename.includes(".")
-    ? filename.split(".").pop()!.toLowerCase()
-    : "";
-  if (!ALLOWED_TYPES.has(suffix))
-    return void res.status(400).json({
-      detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
-    });
-
-  const content = file.buffer;
-  const doc = await queryOne<DocumentRow>(
-    `INSERT INTO documents
-       (project_id, user_id, filename, file_type, size_bytes, status)
-     VALUES
-       (:projectId, :userId, :filename, :fileType, :sizeBytes, :status)
-     RETURNING *`,
-    [
-      {
-        name: "projectId",
-        value: projectId != null ? { stringValue: projectId } : { isNull: true },
-      },
-      { name: "userId", value: { stringValue: userId } },
-      { name: "filename", value: { stringValue: filename } },
-      { name: "fileType", value: { stringValue: suffix } },
-      { name: "sizeBytes", value: { longValue: content.byteLength } },
-      { name: "status", value: { stringValue: "processing" } },
-    ],
-  );
-
-  if (!doc)
-    return void res
-      .status(500)
-      .json({ detail: "Failed to create document record" });
-
-  try {
-    const docId = doc.id;
-    const key = storageKey(userId, docId, filename);
-    const contentType =
-      suffix === "pdf"
-        ? "application/pdf"
-        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    await uploadFile(
-      key,
-      content.buffer.slice(
-        content.byteOffset,
-        content.byteOffset + content.byteLength,
-      ) as ArrayBuffer,
-      contentType,
-    );
-
-    const rawBuf = content.buffer.slice(
-      content.byteOffset,
-      content.byteOffset + content.byteLength,
-    ) as ArrayBuffer;
-    const tree = await extractStructureTree(rawBuf, suffix, filename);
-    const pageCount = suffix === "pdf" ? await countPdfPages(rawBuf) : null;
-
-    // Convert DOCX/DOC → PDF for display. PDFs are their own rendition.
-    let pdfStoragePath: string | null = null;
-    if (suffix === "docx" || suffix === "doc") {
-      try {
-        const pdfBuf = await docxToPdf(content);
-        const pdfKey = convertedPdfKey(userId, docId);
-        await uploadFile(
-          pdfKey,
-          pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-          ) as ArrayBuffer,
-          "application/pdf",
-        );
-        pdfStoragePath = pdfKey;
-      } catch (err) {
-        console.error(
-          `[upload] DOCX→PDF conversion failed for ${filename}:`,
-          err,
-        );
-      }
-    } else if (suffix === "pdf") {
-      pdfStoragePath = key;
-    }
-
-    // Storage paths live on document_versions — create the V1 row and
-    // point documents.current_version_id at it.
-    const versionRow = await queryOne<{ id: string }>(
-      `INSERT INTO document_versions
-         (document_id, storage_path, pdf_storage_path, source, version_number, display_name)
-       VALUES
-         (:documentId, :storagePath, :pdfStoragePath, :source, :versionNumber, :displayName)
-       RETURNING id`,
-      [
-        { name: "documentId", value: { stringValue: docId } },
-        { name: "storagePath", value: { stringValue: key } },
-        {
-          name: "pdfStoragePath",
-          value: pdfStoragePath != null
-            ? { stringValue: pdfStoragePath }
-            : { isNull: true },
-        },
-        { name: "source", value: { stringValue: "upload" } },
-        { name: "versionNumber", value: { longValue: 1 } },
-        { name: "displayName", value: { stringValue: filename } },
-      ],
-    );
-    if (!versionRow) {
-      throw new Error("Failed to record upload version");
-    }
-
-    await execute(
-      `UPDATE documents SET
-         current_version_id = :versionId,
-         size_bytes = :sizeBytes,
-         page_count = :pageCount,
-         structure_tree = :structureTree::jsonb,
-         status = :status,
-         updated_at = NOW()
-       WHERE id = :docId`,
-      [
-        { name: "versionId", value: { stringValue: versionRow.id } },
-        { name: "sizeBytes", value: { longValue: content.byteLength } },
-        {
-          name: "pageCount",
-          value: pageCount != null ? { longValue: pageCount } : { isNull: true },
-        },
-        {
-          name: "structureTree",
-          value: tree != null
-            ? { stringValue: JSON.stringify(tree) }
-            : { isNull: true },
-        },
-        { name: "status", value: { stringValue: "ready" } },
-        { name: "docId", value: { stringValue: docId } },
-      ],
-    );
-
-    const updated = await queryOne<DocumentRow>(
-      `SELECT * FROM documents WHERE id = :docId`,
-      [{ name: "docId", value: { stringValue: docId } }],
-    );
-    const responseDoc = updated
-      ? {
-          ...updated,
-          storage_path: key,
-          pdf_storage_path: pdfStoragePath,
-        }
-      : updated;
-    return void res.status(201).json(responseDoc);
-  } catch (e) {
-    await execute(
-      `UPDATE documents SET status = :status WHERE id = :docId`,
-      [
-        { name: "status", value: { stringValue: "error" } },
-        { name: "docId", value: { stringValue: doc.id } },
-      ],
-    );
-    return void res
-      .status(500)
-      .json({ detail: `Document processing failed: ${String(e)}` });
-  }
-}
-
-async function countPdfPages(buf: ArrayBuffer): Promise<number | null> {
-  try {
-    const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs" as string);
-    const pdf = await (
-      pdfjsLib as unknown as {
-        getDocument: (opts: unknown) => {
-          promise: Promise<{ numPages: number }>;
-        };
-      }
-    ).getDocument({ data: new Uint8Array(buf) }).promise;
-    return pdf.numPages;
-  } catch {
-    return null;
-  }
-}
-
-async function extractStructureTree(
-  content: ArrayBuffer,
-  fileType: string,
-  filename: string,
-): Promise<unknown[] | null> {
-  try {
-    if (fileType === "pdf") {
-      const pdfjsLib = await import(
-        "pdfjs-dist/legacy/build/pdf.mjs" as string
-      );
-      const pdf = await (
-        pdfjsLib as unknown as {
-          getDocument: (opts: unknown) => {
-            promise: Promise<{
-              numPages: number;
-              getOutline: () => Promise<{ title?: string }[]>;
-            }>;
-          };
-        }
-      ).getDocument({ data: new Uint8Array(content) }).promise;
-      if (pdf.numPages <= 5) return null;
-      const outline = await pdf.getOutline();
-      if (outline?.length) {
-        return outline.map((item, i) => ({
-          id: `h1-${i}`,
-          title: item.title ?? `Item ${i + 1}`,
-          level: 1,
-          page_number: null,
-          children: [],
-        }));
-      }
-      return Array.from({ length: pdf.numPages }, (_, i) => ({
-        id: `page-${i + 1}`,
-        title: `Page ${i + 1}`,
-        level: 1,
-        page_number: i + 1,
-        children: [],
-      }));
-    } else {
-      const mammoth = await import("mammoth");
-      const result = await mammoth.extractRawText({
-        buffer: Buffer.from(content),
-      });
-      const lines = result.value.split("\n").filter((l) => l.trim());
-      const nodes = lines
-        .slice(0, 30)
-        .map((line, i) => ({
-          id: `h1-${i}`,
-          title: line.slice(0, 100),
-          level: 1,
-          page_number: null,
-          children: [],
-        }));
-      return nodes.length ? nodes : null;
-    }
-  } catch {
-    return null;
-  }
-}

@@ -6,6 +6,7 @@
  */
 
 import { getIdToken } from "@/lib/aws/amplify-auth";
+import { uploadFileToS3 } from "@/lib/aws/storage";
 import { API_URL, AGENTCORE_URL, AGENTCORE_TABULAR_URL } from "@/lib/aws/config";
 import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import type {
@@ -274,31 +275,52 @@ export async function renameDocumentVersion(
 export async function uploadProjectDocument(
     projectId: string,
     file: File,
+    onProgress?: (percent: number) => void,
 ): Promise<MikeDocument> {
     const authHeader = await getAuthHeader();
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(
-        `${API_BASE}/projects/${projectId}/documents`,
-        { method: "POST", body: form, headers: { Authorization: authHeader } },
-    );
-    if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<MikeDocument>;
+
+    const prepareRes = await fetch(`${API_BASE}/projects/${projectId}/documents/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ filename: file.name, size_bytes: file.size }),
+    });
+    if (!prepareRes.ok) throw new Error(await prepareRes.text());
+    const { docId, uploadKey } = await prepareRes.json() as { docId: string; uploadKey: string };
+
+    await uploadFileToS3(uploadKey, file, onProgress);
+
+    const registerRes = await fetch(`${API_BASE}/projects/${projectId}/documents/${docId}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ upload_key: uploadKey }),
+    });
+    if (!registerRes.ok) throw new Error(await registerRes.text());
+    return registerRes.json() as Promise<MikeDocument>;
 }
 
 export async function uploadStandaloneDocument(
     file: File,
+    onProgress?: (percent: number) => void,
 ): Promise<MikeDocument> {
     const authHeader = await getAuthHeader();
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(`${API_BASE}/single-documents`, {
+
+    const prepareRes = await fetch(`${API_BASE}/single-documents/prepare`, {
         method: "POST",
-        body: form,
-        headers: { Authorization: authHeader },
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ filename: file.name, size_bytes: file.size }),
     });
-    if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<MikeDocument>;
+    if (!prepareRes.ok) throw new Error(await prepareRes.text());
+    const { docId, uploadKey } = await prepareRes.json() as { docId: string; uploadKey: string };
+
+    await uploadFileToS3(uploadKey, file, onProgress);
+
+    const registerRes = await fetch(`${API_BASE}/single-documents/${docId}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ upload_key: uploadKey }),
+    });
+    if (!registerRes.ok) throw new Error(await registerRes.text());
+    return registerRes.json() as Promise<MikeDocument>;
 }
 
 export async function listStandaloneDocuments(): Promise<MikeDocument[]> {

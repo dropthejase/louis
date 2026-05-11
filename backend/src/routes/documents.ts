@@ -18,6 +18,7 @@ import {
   getSignedUrl,
   versionStorageKey,
   uploadFile,
+  storageKey,
 } from "../lib/storage";
 import { docxToPdf } from "../lib/convert";
 import {
@@ -31,9 +32,10 @@ import {
 } from "../lib/documentVersions";
 import { ensureDocAccess } from "../lib/access";
 import { singleFileUpload } from "../lib/upload";
-import { handleDocumentUpload } from "./projects";
 
 export const documentsRouter = Router();
+
+const ALLOWED_TYPES = new Set(["pdf", "docx", "doc"]);
 
 // Build a permalink to /download for a stored object. Frontend hits this
 // route to fetch bytes; query params encode the storage path + display name.
@@ -56,6 +58,115 @@ interface DocumentRow {
   [k: string]: unknown;
 }
 
+// POST /single-documents/prepare
+documentsRouter.post("/prepare", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const { filename, size_bytes } = req.body as { filename?: string; size_bytes?: number };
+
+  if (!filename?.trim())
+    return void res.status(400).json({ detail: "filename is required" });
+
+  const suffix = filename.includes(".")
+    ? filename.split(".").pop()!.toLowerCase()
+    : "";
+  if (!ALLOWED_TYPES.has(suffix))
+    return void res.status(400).json({
+      detail: `Unsupported file type: ${suffix}. Allowed: pdf, docx, doc`,
+    });
+
+  const doc = await queryOne<{ id: string; filename: string }>(
+    `INSERT INTO documents (user_id, filename, file_type, size_bytes, status)
+     VALUES (:userId, :filename, :fileType, :sizeBytes, 'processing')
+     RETURNING id, filename`,
+    [
+      { name: "userId", value: { stringValue: userId } },
+      { name: "filename", value: { stringValue: filename.trim() } },
+      { name: "fileType", value: { stringValue: suffix } },
+      { name: "sizeBytes", value: { longValue: size_bytes ?? 0 } },
+    ],
+  );
+  if (!doc)
+    return void res.status(500).json({ detail: "Failed to create document record" });
+
+  const uploadKey = storageKey(userId, doc.id, filename.trim());
+  res.status(201).json({ docId: doc.id, uploadKey });
+});
+
+// POST /single-documents/:documentId/register
+documentsRouter.post("/:documentId/register", requireAuth, async (req, res) => {
+  const userId = res.locals.userId as string;
+  const { documentId } = req.params;
+  const { upload_key } = req.body as { upload_key?: string };
+
+  if (!upload_key?.trim())
+    return void res.status(400).json({ detail: "upload_key is required" });
+
+  const doc = await queryOne<{
+    id: string;
+    filename: string;
+    file_type: string | null;
+    size_bytes: number;
+    status: string;
+  }>(
+    `SELECT id, filename, file_type, size_bytes, status
+     FROM documents
+     WHERE id = :id AND user_id = :userId AND project_id IS NULL`,
+    [
+      { name: "id", value: { stringValue: documentId } },
+      { name: "userId", value: { stringValue: userId } },
+    ],
+  );
+  if (!doc)
+    return void res.status(404).json({ detail: "Document not found" });
+  if (doc.status !== "processing")
+    return void res.status(409).json({ detail: "Document already registered" });
+
+  const suffix = doc.file_type ?? "";
+  // PDF is its own rendition. DOCX/DOC: Conversion Lambda sets pdf_storage_path via EventBridge.
+  const pdfStoragePath = suffix === "pdf" ? upload_key.trim() : null;
+
+  const versionRow = await queryOne<{ id: string }>(
+    `INSERT INTO document_versions
+       (document_id, storage_path, pdf_storage_path, source, version_number, display_name)
+     VALUES
+       (:documentId, :storagePath, :pdfStoragePath, 'upload', 1, :displayName)
+     RETURNING id`,
+    [
+      { name: "documentId", value: { stringValue: documentId } },
+      { name: "storagePath", value: { stringValue: upload_key.trim() } },
+      {
+        name: "pdfStoragePath",
+        value: pdfStoragePath != null
+          ? { stringValue: pdfStoragePath }
+          : { isNull: true },
+      },
+      { name: "displayName", value: { stringValue: doc.filename } },
+    ],
+  );
+  if (!versionRow)
+    return void res.status(500).json({ detail: "Failed to create version record" });
+
+  await execute(
+    `UPDATE documents
+     SET current_version_id = :versionId, status = 'ready', updated_at = NOW()
+     WHERE id = :id`,
+    [
+      { name: "versionId", value: { stringValue: versionRow.id } },
+      { name: "id", value: { stringValue: documentId } },
+    ],
+  );
+
+  const updated = await queryOne<DocumentRow>(
+    `SELECT * FROM documents WHERE id = :id`,
+    [{ name: "id", value: { stringValue: documentId } }],
+  );
+  res.status(201).json({
+    ...updated,
+    storage_path: upload_key.trim(),
+    pdf_storage_path: pdfStoragePath,
+  });
+});
+
 // GET /single-documents
 documentsRouter.get("/", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
@@ -69,17 +180,6 @@ documentsRouter.get("/", requireAuth, async (req, res) => {
   await attachActiveVersionPaths(docs);
   res.json(docs);
 });
-
-// POST /single-documents
-documentsRouter.post(
-  "/",
-  requireAuth,
-  singleFileUpload("file"),
-  async (req, res) => {
-    const userId = res.locals.userId as string;
-    await handleDocumentUpload(req, res, userId, null);
-  },
-);
 
 // DELETE /single-documents/:documentId
 documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
