@@ -11,7 +11,8 @@
  * makes no sense in a standalone-document context.
  */
 import { Agent, BedrockModel, SessionManager, AfterModelCallEvent } from '@strands-agents/sdk';
-import { S3Storage } from '@strands-agents/sdk/dist/src/session/s3-storage.js';
+// @ts-expect-error — package exports map not supported under moduleResolution:node; Node 22 resolves subpath exports at runtime
+import { S3Storage } from '@strands-agents/sdk/session/s3-storage';
 import { S3Client } from '@aws-sdk/client-s3';
 import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { DocStore, DocIndex } from './lib/doc-context';
