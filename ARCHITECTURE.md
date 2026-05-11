@@ -92,6 +92,8 @@ Schema is loaded once via `scripts/init-db.sh` from `backend/migrations/000_one_
 
 Key tables: `user_profiles`, `documents`, `document_versions`, `chats`, `chat_messages`, `projects`, `workflows`, `tabular_reviews`, `tabular_cells`, `tabular_review_chat_messages`.
 
+**`documents.structure_tree` (jsonb):** Column exists in schema but is not written to. Previously the upload handler extracted a heading/section tree from each document on ingest and stored it here, but nothing in the frontend, backend, or agents ever reads it. Extraction was removed from the upload path (wasted CPU on every upload). Column retained for potential future use — can be backfilled via a batch job if a feature needs it.
+
 ---
 
 ## Agent Architecture
@@ -193,18 +195,24 @@ The Cognito Identity Pool authenticated IAM role restricts direct S3 access to `
 ## Data Flow: Document Upload
 
 ```
-1. Browser → POST /projects/:id/documents (multipart, Bearer JWT)
+1. Browser → POST /single-documents/prepare (or /projects/:id/documents/prepare)
            → API Gateway → Cognito authorizer → API Lambda
-2. API Lambda writes to S3:
-   s3.PutObject("documents/<sub>/<doc-id>/<filename>.docx")
-   Inserts document + document_versions rows in Aurora.
-3. S3 PutObject → EventBridge → Conversion Lambda
-   (filter: prefix "documents/", suffix ".docx" or ".doc")
-4. Conversion Lambda:
-   a. Downloads .docx from S3
-   b. Runs LibreOffice headless: DOCX → PDF
+   API Lambda inserts documents row (status='processing'), returns { docId, uploadKey }.
+
+2. Browser → S3 PutObject directly (Amplify uploadData, Identity Pool temp creds)
+   s3.PutObject("documents/<identity-sub>/<doc-id>/source.<ext>")
+   Lambda never touches file bytes.
+
+3. Browser → POST /single-documents/:docId/register (or /projects/:id/documents/:docId/register)
+   API Lambda inserts document_versions V1 row, sets current_version_id, status='ready'.
+
+4. S3 PutObject → EventBridge → Conversion Lambda
+   (filter: prefix "documents/", suffix ".docx", ".doc", or ".pdf")
+   a. Downloads file from S3
+   b. DOCX/DOC: runs LibreOffice headless → PDF; PDF: copies to converted-pdfs/ prefix
    c. Uploads .pdf to S3
-   d. Updates document_versions.pdf_storage_path + documents.status = 'ready' in Aurora
+   d. Updates document_versions.pdf_storage_path in Aurora
+
 5. Frontend fetches presigned GET URL via API Lambda for DOCX or PDF.
 ```
 
