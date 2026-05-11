@@ -102,7 +102,7 @@ export class ApiStack extends Stack {
     this.creditsTableArn = creditsTable.tableArn;
 
     this.apiLambda = new NodejsFunction(this, 'ApiLambda', {
-      entry: path.join(__dirname, '../../backend/src/lambda.ts'),
+      entry: path.join(__dirname, '../lambda/lambda.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
       architecture: lambda.Architecture.ARM_64,

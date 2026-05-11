@@ -1,7 +1,0 @@
-node_modules
-dist
-.env*
-!.env.example
-!.env.lambda.example
-*.log
-.DS_Store

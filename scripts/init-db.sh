@@ -37,7 +37,7 @@ echo "Cluster : $CLUSTER_ARN"
 echo "Database: $DB_NAME"
 echo ""
 
-SCHEMA_FILE="backend/migrations/000_one_shot_schema.sql"
+SCHEMA_FILE="infra/migrations/000_one_shot_schema.sql"
 if [[ ! -f "$SCHEMA_FILE" ]]; then
   echo "ERROR: Schema file not found: $SCHEMA_FILE (run from repo root)" && exit 1
 fi

@@ -10,8 +10,8 @@ Licensed AGPL-3.0.
 CloudFront → S3 (static Next.js export)
 
 API Gateway REST API (Cognito User Pool authorizer)
-└→ Lambda container (Express + serverless-http + Lambda Powertools)
-└→ Aurora Serverless v2 PostgreSQL 16.3 (RDS Data API, VPC isolated subnets)
+└→ Lambda ZIP (Express + serverless-http + Lambda Powertools)
+└→ Aurora Serverless v2 PostgreSQL 17.9 (RDS Data API, VPC isolated subnets)
 
 AgentCore Runtime (JWT inbound authorizer — Cognito OIDC)
 └→ Strands agent (10 tools, Bedrock Claude)
@@ -30,9 +30,9 @@ Auth: Cognito User Pool issues the id token. API Gateway validates it via the na
 ## Repo Structure
 
 ```text
-backend/        Express API (Lambda entrypoint via serverless-http)
 frontend/       Next.js app (static export, Amplify Auth)
 infra/          CDK app — StorageStack, DatabaseStack, AuthStack, ApiStack, ConversionStack
+                └─ lambda/  Express API Lambda (serverless-http, Powertools)
 agents/         AgentCore agents; app/main = main chat, app/tabular = tabular review chat
 conversion/     LibreOffice Lambda container (DOCX→PDF, x86_64)
 scripts/        Deploy and utility scripts
@@ -108,7 +108,7 @@ Deploy order matters: DatabaseStack before AuthStack and ApiStack. ConversionSta
 ./scripts/init-db.sh
 ```
 
-Reads `ClusterArn`, `SecretArn`, `DatabaseName` from the `DatabaseStack` CloudFormation outputs and runs `backend/migrations/000_one_shot_schema.sql` via the RDS Data API. Safe to re-run (all statements are idempotent).
+Reads `ClusterArn`, `SecretArn`, `DatabaseName` from the `DatabaseStack` CloudFormation outputs and runs `infra/migrations/000_one_shot_schema.sql` via the RDS Data API. Safe to re-run (all statements are idempotent).
 
 ### 3. Deploy the AgentCore agents
 
@@ -172,9 +172,9 @@ cd infra && npx cdk deploy ConversionStack
 | Stack | Provisions |
 | --- | --- |
 | `StorageStack` | S3 docs bucket (private, EventBridge enabled), S3 sessions + frontend + agent deploy buckets, CloudFront + OAC |
-| `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 (min 0 / max 1 ACU, RDS Data API, VPC isolated subnets, auto-pause) |
+| `DatabaseStack` | Aurora Serverless v2 PostgreSQL 17.9 (min 0 / max 1 ACU, RDS Data API, VPC isolated subnets, auto-pause) |
 | `AuthStack` | Cognito User Pool (TOTP MFA, email verification), App Client, Post-Confirmation Lambda (creates user_profiles row), Identity Pool, authenticated IAM role |
-| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 container), AgentCore execution IAM role, DynamoDB credits table |
+| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 ZIP), AgentCore execution IAM role, DynamoDB credits table |
 | `ConversionStack` | LibreOffice Lambda (x86_64 container), EventBridge rule triggering on `.docx`/`.doc` uploads to `documents/` prefix |
 
 All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC (no public S3 access). Aurora: `DESTROY` removal policy — fully cleaned up on `cdk destroy`.
@@ -234,10 +234,7 @@ Three Claude tiers via Bedrock (eu-west-1 cross-region inference):
 ## Build Checks
 
 ```bash
-# Backend
-cd backend && npx tsc --noEmit
-
-# Infra
+# Infra (includes Lambda source)
 cd infra && npx tsc --noEmit
 
 # Agents
