@@ -80,8 +80,11 @@ echo "Discovery URL:  ${DISCOVERY_URL}"
 # ---------------------------------------------------------------------------
 echo "==> Building ${AGENT_NAME}..."
 cd "${AGENT_DIR}"
-npm ci --omit=dev --legacy-peer-deps
+rm -rf node_modules
+npm ci --legacy-peer-deps
 npm run build
+rm -rf node_modules
+npm ci --omit=dev --os linux --cpu arm64 --legacy-peer-deps
 cd - > /dev/null
 
 # ---------------------------------------------------------------------------
