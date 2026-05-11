@@ -78,6 +78,7 @@ echo "Discovery URL:  ${DISCOVERY_URL}"
 # ---------------------------------------------------------------------------
 # Build
 # ---------------------------------------------------------------------------
+REPO_ROOT=$(pwd)
 echo "==> Building ${AGENT_NAME}..."
 cd "${AGENT_DIR}"
 rm -rf node_modules
@@ -94,7 +95,7 @@ ZIP_FILE="${AGENT_NAME}.zip"
 S3_KEY="${AGENT_NAME}/${ZIP_FILE}"
 
 echo "==> Packaging ${ZIP_FILE}..."
-(cd "${AGENT_DIR}" && zip -qr "../../${ZIP_FILE}" dist/ node_modules/ package.json)
+(cd "${AGENT_DIR}" && zip -qr "${REPO_ROOT}/${ZIP_FILE}" dist/ node_modules/ package.json)
 
 echo "==> Uploading to s3://${DEPLOY_BUCKET}/${S3_KEY}..."
 aws s3 cp "${ZIP_FILE}" "s3://${DEPLOY_BUCKET}/${S3_KEY}" --region "${REGION}"
