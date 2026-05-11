@@ -5,3 +5,4 @@ dist
 !.env.lambda.example
 *.log
 .DS_Store
+lambda-pkg/

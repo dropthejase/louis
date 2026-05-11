@@ -100,10 +100,10 @@ export class ApiStack extends Stack {
     this.creditsTableName = creditsTable.tableName;
     this.creditsTableArn = creditsTable.tableArn;
 
-    this.apiLambda = new lambda.DockerImageFunction(this, 'ApiLambda', {
-      code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../backend'), {
-        file: 'Dockerfile.lambda',
-      }),
+    this.apiLambda = new lambda.Function(this, 'ApiLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/lambda-pkg')),
+      handler: 'dist/lambda.handler',
       architecture: lambda.Architecture.ARM_64,
       role: lambdaRole,
       timeout: cdk.Duration.seconds(29),

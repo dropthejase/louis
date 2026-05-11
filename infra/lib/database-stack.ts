@@ -37,7 +37,7 @@ export class DatabaseStack extends Stack {
 
     const cluster = new rds.DatabaseCluster(this, 'AuroraCluster', {
       engine: rds.DatabaseClusterEngine.auroraPostgres({
-        version: rds.AuroraPostgresEngineVersion.VER_16_3,
+        version: rds.AuroraPostgresEngineVersion.VER_17_9,
       }),
       writer: rds.ClusterInstance.serverlessV2('writer'),
       serverlessV2MinCapacity: 0,
