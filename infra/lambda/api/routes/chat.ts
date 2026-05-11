@@ -131,9 +131,9 @@ function snapshotMessagesToMikeMessages(
     for (const msg of messages) {
         if (msg.role === "user") {
             // Only include user text blocks (skip tool_result blocks).
-            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text" — accept both.
+            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text"; snapshot may omit type entirely — accept all.
             const textBlocks = msg.content.filter(
-                (b) => (b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
+                (b) => (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
             );
             if (textBlocks.length === 0) continue;
             const content = textBlocks
@@ -144,9 +144,9 @@ function snapshotMessagesToMikeMessages(
             result.push({ role: "user", content });
         } else {
             // assistant message
-            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text" — accept both.
+            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text"; snapshot may omit type entirely — accept all.
             const textBlocks = msg.content.filter(
-                (b) => (b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
+                (b) => (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
             );
             const toolUseBlocks = msg.content.filter(
                 (b) => b.type === "tool_use" || b.type === "toolUse",

@@ -381,31 +381,11 @@ export async function listProjectChats(projectId: string): Promise<MikeChat[]> {
 }
 
 export async function getChat(chatId: string): Promise<MikeChatDetailOut> {
-    const raw = await apiRequest<ServerChatDetailOut>(`/chat/${chatId}`);
-    const messages: MikeMessage[] = raw.messages.map((m) => {
-        if (m.role === "user") {
-            return {
-                role: "user",
-                content: typeof m.content === "string" ? m.content : "",
-                files: m.files ?? undefined,
-                workflow: m.workflow ?? undefined,
-            };
-        }
-        const events = Array.isArray(m.content)
-            ? (m.content as AssistantEvent[])
-            : undefined;
-        return {
-            role: "assistant",
-            content:
-                events
-                    ?.filter((e) => e.type === "content")
-                    .map((e) => (e as { type: "content"; text: string }).text)
-                    .join("") ?? "",
-            annotations: m.annotations ?? undefined,
-            events,
-        };
-    });
-    return { chat: raw.chat, messages };
+    const [chatRes, messagesRes] = await Promise.all([
+        apiRequest<{ chat: MikeChat }>(`/chat/${chatId}`),
+        apiRequest<{ messages: MikeMessage[] }>(`/chat/${chatId}/messages`),
+    ]);
+    return { chat: chatRes.chat, messages: messagesRes.messages };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {

@@ -155,4 +155,8 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 
 ## Pending / Open Items
 
-None — all features migrated.
+| Area | Gap | Notes |
+|------|-----|-------|
+| Sidebar — user tier | `main` reads `profile.tier` from DB (`user_profiles.tier` column) and displays it below the user's name (e.g. "Free", "Pro"). Dev hardcodes `"Free"`. | Need to expose `tier` field in `GET /user/profile` response and consume it in the dev `AppSidebar`. |
+| Account Settings page | `main` has a dropdown on the sidebar user widget → "Account Settings" page. Dev sidebar has the same dropdown but the Account Settings page content needs parity review. | To be worked next. |
+| Credit enforcement | `main` has pre-flight credit check — requests blocked with 429 when credits exhausted. Dev tracks credits (DynamoDB) but no enforcement gate. | See project TODO. |
