@@ -17,6 +17,17 @@ import {
 
 const client = new RDSDataClient({ region: process.env.AWS_REGION ?? "eu-west-1" });
 
+// Auto-apply typeHint UUID to any param whose name is "id" or ends in "Id" / "_id".
+// Aurora Data API sends stringValue as `text`; Postgres uuid columns require the hint
+// to avoid "operator does not exist: uuid = text".
+function applyTypeHints(params: SqlParameter[]): SqlParameter[] {
+  return params.map((p) =>
+    p.value?.stringValue !== undefined && /^(id$|.*Id$|.*_id$)/.test(p.name ?? "")
+      ? { ...p, typeHint: "UUID" }
+      : p,
+  );
+}
+
 function getConfig() {
   const resourceArn = process.env.DB_CLUSTER_ARN;
   const secretArn = process.env.DB_SECRET_ARN;
@@ -43,7 +54,7 @@ export async function query<T = Record<string, unknown>>(
     new ExecuteStatementCommand({
       ...config,
       sql,
-      parameters,
+      parameters: applyTypeHints(parameters),
       formatRecordsAs: "JSON",
     }),
   );
@@ -75,7 +86,7 @@ export async function execute(
     new ExecuteStatementCommand({
       ...config,
       sql,
-      parameters,
+      parameters: applyTypeHints(parameters),
     }),
   );
 }
