@@ -21,6 +21,7 @@ REGION=${AWS_REGION:-eu-west-1}
 
 echo "==> Building frontend..."
 cd "${FRONTEND_DIR}"
+npm ci
 npm run build
 cd ..
 
