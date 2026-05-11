@@ -102,7 +102,7 @@ export class ApiStack extends Stack {
     this.creditsTableArn = creditsTable.tableArn;
 
     this.apiLambda = new NodejsFunction(this, 'ApiLambda', {
-      entry: path.join(__dirname, '../lambda/lambda.ts'),
+      entry: path.join(__dirname, '../lambda/api/lambda.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
       architecture: lambda.Architecture.ARM_64,
@@ -111,6 +111,11 @@ export class ApiStack extends Stack {
         sourceMap: false,
         target: 'node20',
         nodeModules: ['pdfjs-dist'],
+        externalModules: [
+          '@aws-lambda-powertools/logger',
+          '@aws-lambda-powertools/metrics',
+          '@aws-lambda-powertools/tracer',
+        ],
       },
       role: lambdaRole,
       timeout: cdk.Duration.seconds(29),
@@ -130,6 +135,10 @@ export class ApiStack extends Stack {
         AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1',
       },
       tracing: lambda.Tracing.ACTIVE,
+      layers: [
+        lambda.LayerVersion.fromLayerVersionArn(this, 'PowertoolsLayer',
+          'arn:aws:lambda:eu-west-1:094274105915:layer:AWSLambdaPowertoolsTypeScriptV2:47'),
+      ],
     });
 
     this.api = new apigateway.RestApi(this, 'LouisApi', {

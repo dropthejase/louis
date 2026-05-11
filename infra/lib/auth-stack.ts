@@ -37,7 +37,6 @@ export class AuthStack extends Stack {
 
     // Cognito User Pool
     this.userPool = new cognito.UserPool(this, 'UserPool', {
-      userPoolName: 'louis',
       selfSignUpEnabled: true,
       signInAliases: { email: true },
       autoVerify: { email: true },
@@ -71,7 +70,14 @@ export class AuthStack extends Stack {
       runtime: lambda.Runtime.NODEJS_20_X,
       entry: path.join(__dirname, '../lambda/post-confirmation/index.ts'),
       handler: 'handler',
-      bundling: { minify: true, externalModules: ['@aws-sdk/*'] },
+      bundling: {
+        minify: true,
+        externalModules: ['@aws-sdk/*', '@aws-lambda-powertools/logger'],
+      },
+      layers: [
+        lambda.LayerVersion.fromLayerVersionArn(this, 'PowertoolsLayer',
+          'arn:aws:lambda:eu-west-1:094274105915:layer:AWSLambdaPowertoolsTypeScriptV2:47'),
+      ],
       timeout: Duration.seconds(10),
       memorySize: 128,
       environment: {

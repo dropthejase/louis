@@ -63,7 +63,7 @@ export class ConversionStack extends Stack {
     }));
 
     this.conversionLambda = new lambda.DockerImageFunction(this, 'ConversionLambda', {
-      code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../../conversion')),
+      code: lambda.DockerImageCode.fromImageAsset(path.join(__dirname, '../lambda/conversion')),
       role: lambdaRole,
       timeout: Duration.minutes(5),
       memorySize: 2048,
