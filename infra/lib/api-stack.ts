@@ -56,9 +56,7 @@ export class ApiStack extends Stack {
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: [
-        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-opus-4-7',
-        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-sonnet-4-6',
-        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'arn:aws:bedrock:*::foundation-model/*',
         `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
       ],
     }));
@@ -215,9 +213,7 @@ export class ApiStack extends Stack {
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: [
-        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-opus-4-7',
-        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-sonnet-4-6',
-        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'arn:aws:bedrock:*::foundation-model/*',
         `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
       ],
     }));
