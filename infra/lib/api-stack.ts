@@ -106,6 +106,18 @@ export class ApiStack extends Stack {
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
       architecture: lambda.Architecture.ARM_64,
+      bundling: {
+        minify: true,
+        sourceMap: false,
+        target: 'node20',
+        nodeModules: [
+          'pdfjs-dist',
+          'libreoffice-convert',
+          'mammoth',
+          'docx',
+          'jszip',
+        ],
+      },
       role: lambdaRole,
       timeout: cdk.Duration.seconds(29),
       memorySize: 1024,
