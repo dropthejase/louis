@@ -183,10 +183,13 @@ function Divider({ onDrag }: { onDrag: (dx: number) => void }) {
   );
 }
 
-export default function ProjectChatPage() {
+export default function ProjectChatPageWrapper() {
   const { id: projectId, chatId } = useParams<{ id: string; chatId: string }>();
-  const navigate = useNavigate();
+  return <ProjectChatPage key={chatId} projectId={projectId!} chatId={chatId!} />;
+}
 
+function ProjectChatPage({ projectId, chatId }: { projectId: string; chatId: string }) {
+  const navigate = useNavigate();
   const { setSidebarOpen } = useSidebar();
   const { user } = useAuth();
   const { profile } = useUserProfile();

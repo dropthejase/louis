@@ -131,8 +131,9 @@ function snapshotMessagesToMikeMessages(
     for (const msg of messages) {
         if (msg.role === "user") {
             // Only include user text blocks (skip tool_result blocks).
+            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text" — accept both.
             const textBlocks = msg.content.filter(
-                (b) => b.type === "text" && typeof b.text === "string",
+                (b) => (b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
             );
             if (textBlocks.length === 0) continue;
             const content = textBlocks
@@ -143,11 +144,12 @@ function snapshotMessagesToMikeMessages(
             result.push({ role: "user", content });
         } else {
             // assistant message
+            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text" — accept both.
             const textBlocks = msg.content.filter(
-                (b) => b.type === "text" && typeof b.text === "string",
+                (b) => (b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
             );
             const toolUseBlocks = msg.content.filter(
-                (b) => b.type === "tool_use",
+                (b) => b.type === "tool_use" || b.type === "toolUse",
             );
 
             const fullText = textBlocks.map((b) => b.text ?? "").join("\n");
@@ -174,7 +176,7 @@ function snapshotMessagesToMikeMessages(
                         // content array from tool_result
                         const textEntry = (
                             resultRaw as { type: string; text?: string }[]
-                        ).find((e) => e.type === "text" && e.text);
+                        ).find((e) => (e.type === "text" || e.type === "textBlock") && e.text);
                         if (textEntry?.text) {
                             resultObj = JSON.parse(textEntry.text) as Record<
                                 string,

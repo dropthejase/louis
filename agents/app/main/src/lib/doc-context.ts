@@ -38,6 +38,11 @@ export async function buildDocContext(
     const doc = docs[i];
     const label = `doc-${i}`;
 
+    if (!doc.current_version_id) {
+      console.warn(`[doc-context] doc ${doc.id} (${doc.filename}) has no current_version_id — skipping`);
+      continue;
+    }
+
     const version = await queryOne<{ storage_path: string; version_number: number }>(
       `SELECT storage_path, version_number FROM document_versions WHERE id = :versionId`,
       [{ name: 'versionId', value: { stringValue: doc.current_version_id } }],
@@ -83,6 +88,11 @@ export async function buildProjectDocContext(
   for (let i = 0; i < docs.length; i++) {
     const doc = docs[i];
     const label = `doc-${i}`;
+
+    if (!doc.current_version_id) {
+      console.warn(`[doc-context] doc ${doc.id} (${doc.filename}) has no current_version_id — skipping`);
+      continue;
+    }
 
     const version = await queryOne<{ storage_path: string; version_number: number }>(
       `SELECT storage_path, version_number FROM document_versions WHERE id = :versionId`,

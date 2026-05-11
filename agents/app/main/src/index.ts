@@ -59,6 +59,9 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
   }
 
   const { chatId, prompt, projectId, model } = body;
+  // Always have a session ID — frontend sends one on turn 2+; generate a fallback
+  // on turn 1 so the SessionManager is always created and the snapshot is always saved.
+  const sessionId = body.runtimeSessionId ?? `${userId}-${crypto.randomUUID()}`;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -69,7 +72,7 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       ? await buildProjectDocContext(projectId)
       : await buildDocContext(userId);
 
-    const agent = createAgent(userId, docStore, docIndex, projectId, model, body.runtimeSessionId);
+    const agent = createAgent(userId, docStore, docIndex, projectId, model, sessionId);
 
     let fullText = '';
 
@@ -167,16 +170,14 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     sse(res, { type: 'content_done' });
     sse(res, { type: 'citations', citations: annotations });
 
-    // Store AgentCore session ID for multi-turn continuity
-    if (body.runtimeSessionId) {
-      await execute(
-        'UPDATE chats SET agentcore_session_id = :sessionId WHERE id = :chatId',
-        [
-          { name: 'sessionId', value: { stringValue: body.runtimeSessionId } },
-          { name: 'chatId', value: { stringValue: chatId } },
-        ],
-      );
-    }
+    // Store session ID so subsequent turns and page-reload can resume the session.
+    await execute(
+      'UPDATE chats SET agentcore_session_id = :sessionId WHERE id = :chatId',
+      [
+        { name: 'sessionId', value: { stringValue: sessionId } },
+        { name: 'chatId', value: { stringValue: chatId } },
+      ],
+    );
 
     res.write('data: [DONE]\n\n');
   } catch (err) {
