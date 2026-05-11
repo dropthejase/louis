@@ -113,7 +113,6 @@ export class ApiStack extends Stack {
         nodeModules: [
           'pdfjs-dist',
           'mammoth',
-          'docx',
           'jszip',
         ],
       },
