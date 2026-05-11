@@ -25,5 +25,8 @@ coverage
 .claude/
 .claire/
 
+# agent deployment ZIPs (created and deleted by deploy-agent.sh)
+*.zip
+
 # internal docs — plans, specs, superpowers. ARCHITECTURE.md lives at repo root.
 docs/

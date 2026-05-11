@@ -40,8 +40,8 @@ scripts/        Deploy and utility scripts
 
 ## Prerequisites
 
-- AWS CLI configured for `eu-west-1`
-- Node 20
+- AWS CLI v2.34.45 or later configured for `eu-west-1`
+- Node 22
 - **Finch** — required only for building the LibreOffice conversion Lambda container
 - CDK bootstrapped: `npx cdk bootstrap aws://ACCOUNT_ID/eu-west-1`
 
@@ -118,32 +118,31 @@ AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain
 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
 ```
 
-Builds the agent (`tsc` + `npm ci --omit=dev`), zips `dist/` + `node_modules/`, uploads to the `AgentDeployBucket` S3 bucket, then calls `create-agent-runtime` (first run) or `update-agent-runtime` (subsequent runs). Runtime ID and ARN are stored in SSM at `/louis/agents/louisMain/runtimeId` and `/louis/agents/louisMain/runtimeArn`. No Docker or agentcore CLI required.
+Builds the agent (`tsc` + `npm ci --omit=dev --os linux --cpu arm64`), zips `dist/` + `node_modules/`, uploads to the `AgentDeployBucket` S3 bucket, then calls `create-agent-runtime` (first run) or `update-agent-runtime` (subsequent runs). Runtime ID and ARN are stored in SSM at `/louis/agents/louisMain/runtimeId` and `/louis/agents/louisMain/runtimeArn`. No Docker or agentcore CLI required.
 
 ### 4. Configure frontend environment
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local
-# Fill in values from CDK outputs and AgentCore deploy output
+# Fill in values from CDK outputs — see Environment Variables section below
+# VITE_AGENTCORE_MAIN_ARN and VITE_AGENTCORE_TABULAR_ARN come from step 3 output
+# or: aws ssm get-parameter --name /louis/agents/louisMain/runtimeArn --region eu-west-1 --query Parameter.Value --output text
 ```
 
 ### 5. Deploy frontend
 
 ```bash
 # From repo root
-FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ./scripts/deploy-frontend.sh
+AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh
 ```
 
-Runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until the CDN cache clears.
-
-Both values come from `StorageStack` CDK outputs.
+Reads `FrontendBucketName` and `DistributionId` from `StorageStack` CFN outputs automatically. Runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until the CDN cache clears.
 
 ## Redeploying
 
 **Backend / API changes:**
 
 ```bash
-export CDK_DOCKER=finch
 cd infra && npx cdk deploy ApiStack
 ```
 
@@ -157,14 +156,16 @@ AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
 **Frontend changes:**
 
 ```bash
-FRONTEND_BUCKET=YOUR_BUCKET CF_DISTRIBUTION=YOUR_DIST_ID ./scripts/deploy-frontend.sh
+AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh
 ```
 
 **Conversion Lambda changes** (requires Finch):
 
 ```bash
+finch vm start
 export CDK_DOCKER=finch
 cd infra && npx cdk deploy ConversionStack
+finch vm stop
 ```
 
 ## CDK Stacks
@@ -182,7 +183,6 @@ All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC (no public S3 a
 Synth without deploying:
 
 ```bash
-export CDK_DOCKER=finch
 cd infra && npx tsc --noEmit && npx cdk synth
 ```
 
@@ -192,7 +192,6 @@ Per-user monthly credit tracking via DynamoDB:
 
 - **Table:** `PK=userId`, `SK=YYYY-MM`, `credits_used` (atomic `UpdateItem ADD`)
 - **Increment:** Strands `after_model_call` hook runs after each successful AgentCore model invocation
-- **Enforcement:** agent returns `error` SSE event when limit exceeded; frontend wires to `CreditsExhaustedModal`
 - **IAM:** AgentCore execution role has `dynamodb:GetItem` + `dynamodb:UpdateItem` on credits table only
 
 ## Environment Variables
@@ -208,28 +207,30 @@ Per-user monthly credit tracking via DynamoDB:
 | `SESSIONS_BUCKET_NAME` | Sessions S3 bucket name (StorageStack output) |
 | `USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
 | `FRONTEND_URL` | CloudFront domain for CORS (StorageStack output) |
+| `CREDITS_TABLE_NAME` | DynamoDB credits table name (ApiStack output) |
 
-### Frontend (build-time, `NEXT_PUBLIC_*`)
+### Frontend (build-time, `VITE_*`)
 
 | Var | Description |
 | --- | --- |
-| `NEXT_PUBLIC_USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
-| `NEXT_PUBLIC_USER_POOL_CLIENT_ID` | Cognito App Client ID (AuthStack output) |
-| `NEXT_PUBLIC_IDENTITY_POOL_ID` | Cognito Identity Pool ID (AuthStack output) |
-| `NEXT_PUBLIC_DOCS_BUCKET_NAME` | S3 docs bucket name (StorageStack output) |
-| `NEXT_PUBLIC_API_URL` | API Gateway invoke URL (ApiStack output) |
-| `NEXT_PUBLIC_AGENTCORE_URL` | AgentCore invocation endpoint for main chat (agentcore deploy output) |
-| `NEXT_PUBLIC_AGENTCORE_TABULAR_URL` | AgentCore invocation endpoint for tabular review chat (agentcore deploy output) |
+| `VITE_AWS_REGION` | AWS region (`eu-west-1`) |
+| `VITE_USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
+| `VITE_USER_POOL_CLIENT_ID` | Cognito App Client ID (AuthStack output) |
+| `VITE_IDENTITY_POOL_ID` | Cognito Identity Pool ID (AuthStack output) |
+| `VITE_DOCS_BUCKET_NAME` | S3 docs bucket name (StorageStack output) |
+| `VITE_API_URL` | API Gateway invoke URL (ApiStack output) |
+| `VITE_AGENTCORE_MAIN_ARN` | AgentCore runtime ARN for main chat (SSM: `/louis/agents/louisMain/runtimeArn`) |
+| `VITE_AGENTCORE_TABULAR_ARN` | AgentCore runtime ARN for tabular review chat (SSM: `/louis/agents/louisTabular/runtimeArn`) |
 
 ## Models
 
 Three Claude tiers via Bedrock (eu-west-1 cross-region inference):
 
-| UI label | Bedrock model ID |
-| --- | --- |
-| Claude Opus 4.7 | `eu.anthropic.claude-opus-4-7-20251101-v1:0` |
-| Claude Sonnet 4.6 *(default)* | `eu.anthropic.claude-sonnet-4-6-20250922-v1:0` |
-| Claude Haiku 4.5 | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
+| UI label | Logical model ID | Bedrock inference profile |
+| --- | --- | --- |
+| Claude Opus 4.7 | `claude-opus-4-7` | `eu.anthropic.claude-opus-4-7` |
+| Claude Sonnet 4.6 *(default)* | `claude-sonnet-4-6` | `eu.anthropic.claude-sonnet-4-6` |
+| Claude Haiku 4.5 | `claude-haiku-4-5` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
 
 ## Build Checks
 

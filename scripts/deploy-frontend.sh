@@ -1,30 +1,65 @@
 #!/bin/bash
 # Deploy Mike frontend: build → S3 sync → CloudFront invalidation.
 #
-# Required env vars (or pass as arguments):
-#   FRONTEND_BUCKET   — S3 bucket name for frontend (StorageStack output)
-#   CF_DISTRIBUTION   — CloudFront distribution ID (StorageStack output)
+# Usage:
+#   AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh
 #
 # Optional:
-#   FRONTEND_DIR      — path to frontend directory (default: frontend)
-#   WAIT             — set to 1 to wait for CloudFront invalidation to complete
+#   WAIT=1   — block until CloudFront invalidation completes
 #
-# Usage:
-#   FRONTEND_BUCKET=my-bucket CF_DISTRIBUTION=ABCDEF123 ./scripts/deploy-frontend.sh
+# Prerequisites: AWS CLI configured, StorageStack deployed.
 
-set -e
+set -euo pipefail
 
-FRONTEND_BUCKET=${FRONTEND_BUCKET:?FRONTEND_BUCKET required (StorageStack output)}
-CF_DISTRIBUTION=${CF_DISTRIBUTION:?CF_DISTRIBUTION required (StorageStack output)}
-FRONTEND_DIR=${FRONTEND_DIR:-frontend}
 REGION=${AWS_REGION:-eu-west-1}
+STORAGE_STACK=${STORAGE_STACK:-StorageStack}
+FRONTEND_DIR=${FRONTEND_DIR:-frontend}
 
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
+if ! command -v aws &>/dev/null; then
+  echo "ERROR: aws CLI not found" && exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Read CFN outputs
+# ---------------------------------------------------------------------------
+cfn_output() {
+  aws cloudformation describe-stacks \
+    --stack-name "$1" --region "${REGION}" \
+    --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" \
+    --output text
+}
+
+echo "==> Reading CloudFormation outputs..."
+
+FRONTEND_BUCKET=$(cfn_output "${STORAGE_STACK}" "FrontendBucketName")
+CF_DISTRIBUTION=$(cfn_output "${STORAGE_STACK}" "DistributionId")
+
+for var in FRONTEND_BUCKET CF_DISTRIBUTION; do
+  val="${!var}"
+  if [[ -z "${val}" || "${val}" == "None" ]]; then
+    echo "ERROR: Could not read ${var} from ${STORAGE_STACK}. Deploy CDK stacks first."
+    exit 1
+  fi
+done
+
+echo "Bucket:       ${FRONTEND_BUCKET}"
+echo "Distribution: ${CF_DISTRIBUTION}"
+
+# ---------------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------------
 echo "==> Building frontend..."
 cd "${FRONTEND_DIR}"
 npm ci
 npm run build
 cd ..
 
+# ---------------------------------------------------------------------------
+# Deploy
+# ---------------------------------------------------------------------------
 echo "==> Syncing to S3 (bucket: ${FRONTEND_BUCKET})..."
 aws s3 sync "${FRONTEND_DIR}/out/" "s3://${FRONTEND_BUCKET}" \
   --delete \
@@ -39,7 +74,7 @@ INVALIDATION_ID=$(aws cloudfront create-invalidation \
 
 echo "    Invalidation ID: ${INVALIDATION_ID}"
 
-if [ "${WAIT}" = "1" ]; then
+if [ "${WAIT:-}" = "1" ]; then
   echo "==> Waiting for invalidation to complete..."
   aws cloudfront wait invalidation-completed \
     --distribution-id "${CF_DISTRIBUTION}" \
@@ -49,4 +84,5 @@ else
   echo "    (set WAIT=1 to block until complete)"
 fi
 
-echo "==> Frontend deployed."
+echo ""
+echo "Done. Frontend deployed."
