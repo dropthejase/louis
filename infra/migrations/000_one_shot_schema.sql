@@ -1,7 +1,7 @@
--- Mike one-shot Supabase schema
--- Based on supabase-migration.sql plus the later backend/migrations/*.sql files.
--- Use this for a fresh Supabase database. Existing deployments should continue
--- to apply the incremental migration files instead.
+-- One-shot schema for Aurora PostgreSQL (RDS Data API).
+-- Auth: Cognito User Pool. user_id columns store Cognito sub (text).
+-- No auth.users FK, no RLS — access control enforced at application layer.
+-- user_profiles rows created by Post Confirmation Lambda.
 
 create extension if not exists "pgcrypto";
 
@@ -11,55 +11,17 @@ create extension if not exists "pgcrypto";
 
 create table if not exists public.user_profiles (
   id uuid primary key default gen_random_uuid(),
-  user_id uuid not null unique references auth.users(id) on delete cascade,
+  user_id text not null unique,
+  email text,
   display_name text,
   organisation text,
-  tier text not null default 'Free',
-  message_credits_used integer not null default 0,
-  credits_reset_date timestamptz not null default (now() + interval '30 days'),
-  tabular_model text not null default 'gemini-3-flash-preview',
-  claude_api_key text,
-  gemini_api_key text,
+  tabular_model text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 create index if not exists idx_user_profiles_user
   on public.user_profiles(user_id);
-
-alter table public.user_profiles enable row level security;
-
-drop policy if exists "Users can view their own profile" on public.user_profiles;
-create policy "Users can view their own profile"
-  on public.user_profiles for select
-  using (auth.uid() = user_id);
-
-drop policy if exists "Users can update their own profile" on public.user_profiles;
-create policy "Users can update their own profile"
-  on public.user_profiles for update
-  using (auth.uid() = user_id);
-
-create or replace function public.handle_new_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  insert into public.user_profiles (user_id)
-  values (new.id)
-  on conflict (user_id) do nothing;
-  return new;
-exception when others then
-  -- Never block signup if the profile insert fails.
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure public.handle_new_user();
 
 -- ---------------------------------------------------------------------------
 -- Projects and documents
@@ -103,7 +65,7 @@ create table if not exists public.documents (
   file_type text,
   size_bytes integer not null default 0,
   page_count integer,
-  structure_tree jsonb,
+  structure_tree jsonb not null default '[]'::jsonb,
   status text not null default 'pending',
   folder_id uuid references public.project_subfolders(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -233,6 +195,8 @@ create table if not exists public.chats (
   project_id uuid references public.projects(id) on delete cascade,
   user_id text not null,
   title text,
+  agentcore_session_id text,
+  agentcore_session_created_at timestamptz,
   created_at timestamptz not null default now()
 );
 
@@ -308,6 +272,10 @@ create table if not exists public.tabular_cells (
   status text not null default 'pending',
   created_at timestamptz not null default now()
 );
+
+alter table public.tabular_cells
+  add constraint tabular_cells_review_doc_col_unique
+  unique (review_id, document_id, column_index);
 
 create index if not exists idx_tabular_cells_review
   on public.tabular_cells(review_id, document_id, column_index);
