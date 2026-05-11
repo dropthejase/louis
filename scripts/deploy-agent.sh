@@ -174,6 +174,16 @@ if [[ -z "${RUNTIME_ID}" || "${RUNTIME_ID}" == "None" ]]; then
   aws ssm put-parameter \
     --name "/louis/agents/${AGENT_NAME}/runtimeArn" --value "${RUNTIME_ARN}" \
     --type String --overwrite --region "${REGION}" > /dev/null
+
+  # Print the env var line to add to frontend/.env.local
+  if [[ "${AGENT_NAME}" == "louisMain" ]]; then
+    ENV_VAR_NAME="VITE_AGENTCORE_MAIN_ARN"
+  else
+    ENV_VAR_NAME="VITE_AGENTCORE_TABULAR_ARN"
+  fi
+  echo ""
+  echo "Add to frontend/.env.local:"
+  echo "  ${ENV_VAR_NAME}=${RUNTIME_ARN}"
 else
   echo "==> Updating existing AgentCore Runtime '${RUNTIME_ID}'..."
   aws bedrock-agentcore-control update-agent-runtime \
