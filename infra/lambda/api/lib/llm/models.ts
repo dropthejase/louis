@@ -8,10 +8,10 @@
 // ---------------------------------------------------------------------------
 
 export const BEDROCK_HIGH_MODEL =
-  "eu.anthropic.claude-opus-4-7-20251101-v1:0";
+  "eu.anthropic.claude-opus-4-7";
 
 export const BEDROCK_MID_MODEL =
-  "eu.anthropic.claude-sonnet-4-6-20250922-v1:0";
+  "eu.anthropic.claude-sonnet-4-6";
 
 export const BEDROCK_LOW_MODEL =
   "eu.anthropic.claude-haiku-4-5-20251001-v1:0";

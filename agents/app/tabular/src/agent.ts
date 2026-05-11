@@ -3,8 +3,8 @@ import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import { makeReadTableCellsTool } from './tools/read-table-cells';
 
 const BEDROCK_MODEL_IDS: Record<string, string> = {
-  'claude-opus-4-7':   'eu.anthropic.claude-opus-4-7-20251101-v1:0',
-  'claude-sonnet-4-6': 'eu.anthropic.claude-sonnet-4-6-20250922-v1:0',
+  'claude-opus-4-7':   'eu.anthropic.claude-opus-4-7',
+  'claude-sonnet-4-6': 'eu.anthropic.claude-sonnet-4-6',
   'claude-haiku-4-5':  'eu.anthropic.claude-haiku-4-5-20251001-v1:0',
 };
 const DEFAULT_BEDROCK_MODEL_ID = BEDROCK_MODEL_IDS['claude-sonnet-4-6'];
