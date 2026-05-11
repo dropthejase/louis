@@ -45,6 +45,9 @@ export class AuthStack extends Stack {
         givenName: { required: true, mutable: true },
         familyName: { required: true, mutable: true },
       },
+      customAttributes: {
+        organisation: new cognito.StringAttribute({ mutable: true }),
+      },
       passwordPolicy: {
         minLength: 8,
         requireLowercase: true,
@@ -67,7 +70,7 @@ export class AuthStack extends Stack {
 
     // Post Confirmation Lambda — creates user_profiles row after email verification
     const postConfirmationFn = new lambdaNodejs.NodejsFunction(this, 'PostConfirmation', {
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       entry: path.join(__dirname, '../lambda/post-confirmation/index.ts'),
       handler: 'handler',
       bundling: {
@@ -78,7 +81,7 @@ export class AuthStack extends Stack {
         lambda.LayerVersion.fromLayerVersionArn(this, 'PowertoolsLayer',
           'arn:aws:lambda:eu-west-1:094274105915:layer:AWSLambdaPowertoolsTypeScriptV2:47'),
       ],
-      timeout: Duration.seconds(10),
+      timeout: Duration.seconds(60),
       memorySize: 128,
       environment: {
         DB_CLUSTER_ARN: props.dbClusterArn ?? '',

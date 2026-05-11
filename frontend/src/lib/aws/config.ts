@@ -1,22 +1,17 @@
 // AWS configuration — all values from VITE_ environment variables set at build time.
 
-export const AWS_REGION =
-  import.meta.env.VITE_AWS_REGION ?? 'eu-west-1';
+function required(key: string): string {
+  const value = import.meta.env[key];
+  if (!value) throw new Error(`Missing required env var: ${key}`);
+  return value;
+}
 
-export const IDENTITY_POOL_ID =
-  import.meta.env.VITE_IDENTITY_POOL_ID ?? '';
-
-export const DOCS_BUCKET_NAME =
-  import.meta.env.VITE_DOCS_BUCKET_NAME ?? '';
-
-export const API_URL =
-  import.meta.env.VITE_API_URL ?? 'http://localhost:3001';
-
-export const USER_POOL_ID =
-  import.meta.env.VITE_USER_POOL_ID ?? '';
-
-export const USER_POOL_CLIENT_ID =
-  import.meta.env.VITE_USER_POOL_CLIENT_ID ?? '';
+export const AWS_REGION = required('VITE_AWS_REGION');
+export const IDENTITY_POOL_ID = required('VITE_IDENTITY_POOL_ID');
+export const DOCS_BUCKET_NAME = required('VITE_DOCS_BUCKET_NAME');
+export const API_URL = required('VITE_API_URL').replace(/\/$/, '');
+export const USER_POOL_ID = required('VITE_USER_POOL_ID');
+export const USER_POOL_CLIENT_ID = required('VITE_USER_POOL_CLIENT_ID');
 
 // AgentCore runtime ARNs — used to build invocation URLs.
 // Format: https://bedrock-agentcore.{region}.amazonaws.com/runtimes/{escaped_arn}/invocations?qualifier=DEFAULT

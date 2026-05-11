@@ -89,7 +89,12 @@ export class StorageStack extends Stack {
       },
       defaultRootObject: 'index.html',
       errorResponses: [
-        // SPA fallback — all 404s serve index.html for client-side routing
+        // SPA fallback — S3+OAC returns 403 for missing keys, 404 for others
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: '/index.html',
+        },
         {
           httpStatus: 404,
           responseHttpStatus: 200,

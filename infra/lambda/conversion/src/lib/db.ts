@@ -13,12 +13,19 @@ import {
 
 const client = new RDSDataClient({ region: process.env.AWS_REGION ?? "eu-west-1" });
 
+const TEXT_ID_PARAMS = new Set(['userId', 'user_id', 'userEmail', 'email', 'sharedByUserId', 'shared_by_user_id']);
+const UUID_NAME_RE = /^(id$|.*Id$|.*_id$)/;
+const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function applyTypeHints(params: SqlParameter[]): SqlParameter[] {
-  return params.map((p) =>
-    p.value?.stringValue !== undefined && /^(id$|.*Id$|.*_id$)/.test(p.name ?? "")
-      ? { ...p, typeHint: "UUID" }
-      : p,
-  );
+  return params.map((p) => {
+    const name = p.name ?? '';
+    const val = p.value?.stringValue;
+    if (val !== undefined && !TEXT_ID_PARAMS.has(name) && UUID_NAME_RE.test(name) && UUID_VALUE_RE.test(val)) {
+      return { ...p, typeHint: 'UUID' };
+    }
+    return p;
+  });
 }
 
 function getConfig() {

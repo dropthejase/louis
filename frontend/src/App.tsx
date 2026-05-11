@@ -2,6 +2,7 @@ import { Amplify } from 'aws-amplify';
 import { Authenticator } from '@aws-amplify/ui-react';
 import '@aws-amplify/ui-react/styles.css';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { SiteLogo } from './components/site-logo';
 import { amplifyConfig } from './lib/aws/config';
 import { AuthProvider } from './contexts/AuthContext';
 import { UserProfileProvider } from './contexts/UserProfileContext';
@@ -28,42 +29,66 @@ export default function App() {
     <Authenticator
       loginMechanisms={['email']}
       signUpAttributes={['given_name', 'family_name', 'email']}
+      formFields={{
+        signUp: {
+          email: { order: 1 },
+          given_name: { order: 2 },
+          family_name: { order: 3 },
+          'custom:organisation': {
+            label: 'Organisation',
+            placeholder: 'Your organisation',
+            isRequired: false,
+            order: 4,
+          },
+          password: { order: 5 },
+          confirm_password: { order: 6 },
+        },
+      }}
+      components={{
+        Header() {
+          return (
+            <div className="flex justify-center pt-10 pb-8">
+              <SiteLogo size="lg" />
+            </div>
+          );
+        },
+      }}
     >
       {() => (
         <AwsProvider>
           <AuthProvider>
-          <UserProfileProvider>
-            <BrowserRouter>
-              <Routes>
-                <Route path="/" element={<Navigate to="/assistant" replace />} />
-                <Route element={<AppLayout />}>
-                  <Route path="/assistant" element={<AssistantPage />} />
-                  <Route
-                    path="/assistant/chat/:id"
-                    element={<AssistantChatPageWrapper />}
-                  />
-                  <Route path="/projects" element={<ProjectsPage />} />
-                  <Route path="/projects/:id" element={<ProjectPage />} />
-                  <Route
-                    path="/projects/:id/assistant/chat/:chatId"
-                    element={<ProjectChatPage />}
-                  />
-                  <Route
-                    path="/projects/:id/tabular-reviews/:reviewId"
-                    element={<ProjectTabularReviewPage />}
-                  />
-                  <Route path="/tabular-reviews" element={<TabularReviewsPage />} />
-                  <Route path="/tabular-reviews/:id" element={<TabularReviewPage />} />
-                  <Route path="/workflows" element={<WorkflowsPage />} />
-                  <Route path="/workflows/:id" element={<WorkflowPage />} />
-                  <Route path="/account" element={<AccountPage />}>
-                    <Route path="models" element={<AccountModelsPage />} />
+            <UserProfileProvider>
+              <BrowserRouter>
+                <Routes>
+                  <Route path="/" element={<Navigate to="/assistant" replace />} />
+                  <Route element={<AppLayout />}>
+                    <Route path="/assistant" element={<AssistantPage />} />
+                    <Route
+                      path="/assistant/chat/:id"
+                      element={<AssistantChatPageWrapper />}
+                    />
+                    <Route path="/projects" element={<ProjectsPage />} />
+                    <Route path="/projects/:id" element={<ProjectPage />} />
+                    <Route
+                      path="/projects/:id/assistant/chat/:chatId"
+                      element={<ProjectChatPage />}
+                    />
+                    <Route
+                      path="/projects/:id/tabular-reviews/:reviewId"
+                      element={<ProjectTabularReviewPage />}
+                    />
+                    <Route path="/tabular-reviews" element={<TabularReviewsPage />} />
+                    <Route path="/tabular-reviews/:id" element={<TabularReviewPage />} />
+                    <Route path="/workflows" element={<WorkflowsPage />} />
+                    <Route path="/workflows/:id" element={<WorkflowPage />} />
+                    <Route path="/account" element={<AccountPage />}>
+                      <Route path="models" element={<AccountModelsPage />} />
+                    </Route>
                   </Route>
-                </Route>
-                <Route path="*" element={<Navigate to="/assistant" replace />} />
-              </Routes>
-            </BrowserRouter>
-          </UserProfileProvider>
+                  <Route path="*" element={<Navigate to="/assistant" replace />} />
+                </Routes>
+              </BrowserRouter>
+            </UserProfileProvider>
           </AuthProvider>
         </AwsProvider>
       )}

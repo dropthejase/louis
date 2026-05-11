@@ -17,15 +17,46 @@ import {
 
 const client = new RDSDataClient({ region: process.env.AWS_REGION ?? "eu-west-1" });
 
-// Auto-apply typeHint UUID to any param whose name is "id" or ends in "Id" / "_id".
-// Aurora Data API sends stringValue as `text`; Postgres uuid columns require the hint
-// to avoid "operator does not exist: uuid = text".
+const AURORA_RESUME_RE = /resuming after being auto-paused/i;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  const delays = [5000, 10000, 20000];
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      if (AURORA_RESUME_RE.test(err?.message ?? '') && attempt < delays.length) {
+        await sleep(delays[attempt]);
+      } else {
+        throw err;
+      }
+    }
+  }
+  throw new Error('unreachable');
+}
+
+// Auto-apply typeHint UUID to params whose name ends in Id/_id and whose
+// value is a well-formed UUID. Params in TEXT_ID_PARAMS are Cognito subs or
+// other text fields that look like UUIDs but are stored as text — skip them.
+const TEXT_ID_PARAMS = new Set(['userId', 'user_id', 'userEmail', 'email', 'sharedByUserId', 'shared_by_user_id']);
+const UUID_NAME_RE = /^(id$|.*Id$|.*_id$)/;
+const UUID_VALUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function applyTypeHints(params: SqlParameter[]): SqlParameter[] {
-  return params.map((p) =>
-    p.value?.stringValue !== undefined && /^(id$|.*Id$|.*_id$)/.test(p.name ?? "")
-      ? { ...p, typeHint: "UUID" }
-      : p,
-  );
+  return params.map((p) => {
+    const name = p.name ?? '';
+    const val = p.value?.stringValue;
+    if (
+      val !== undefined &&
+      !TEXT_ID_PARAMS.has(name) &&
+      UUID_NAME_RE.test(name) &&
+      UUID_VALUE_RE.test(val)
+    ) {
+      return { ...p, typeHint: 'UUID' };
+    }
+    return p;
+  });
 }
 
 function getConfig() {
@@ -50,14 +81,14 @@ export async function query<T = Record<string, unknown>>(
   parameters: SqlParameter[] = [],
 ): Promise<T[]> {
   const config = getConfig();
-  const result = await client.send(
+  const result = await withRetry(() => client.send(
     new ExecuteStatementCommand({
       ...config,
       sql,
       parameters: applyTypeHints(parameters),
       formatRecordsAs: "JSON",
     }),
-  );
+  ));
   if (!result.formattedRecords) return [];
   return JSON.parse(result.formattedRecords) as T[];
 }
@@ -82,11 +113,11 @@ export async function execute(
   parameters: SqlParameter[] = [],
 ): Promise<void> {
   const config = getConfig();
-  await client.send(
+  await withRetry(() => client.send(
     new ExecuteStatementCommand({
       ...config,
       sql,
       parameters: applyTypeHints(parameters),
     }),
-  );
+  ));
 }

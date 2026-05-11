@@ -15,6 +15,7 @@ interface UseAssistantChatOptions {
     initialMessages?: MikeMessage[];
     chatId?: string;
     projectId?: string;
+    initialRuntimeSessionId?: string;
 }
 
 function findLastContentIndex(events: AssistantEvent[]): number {
@@ -28,6 +29,7 @@ export function useAssistantChat({
     initialMessages = [],
     chatId: initialChatId,
     projectId,
+    initialRuntimeSessionId,
 }: UseAssistantChatOptions = {}) {
     const navigate = useNavigate();
     const {
@@ -45,7 +47,7 @@ export function useAssistantChat({
     const [chatId, setChatId] = useState<string | undefined>(initialChatId);
 
     const abortControllerRef = useRef<AbortController | null>(null);
-    const runtimeSessionIdRef = useRef<string | undefined>(undefined);
+    const runtimeSessionIdRef = useRef<string | undefined>(initialRuntimeSessionId);
 
     const dripIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const dripTargetRef = useRef<string>("");
@@ -336,6 +338,12 @@ export function useAssistantChat({
         try {
             const controller = new AbortController();
             abortControllerRef.current = controller;
+
+            // Ensure session ID is set before the first stream call.
+            if (!runtimeSessionIdRef.current && chatId) {
+                const uid = await getCurrentUserId().catch(() => 'unknown');
+                runtimeSessionIdRef.current = `${uid}-${chatId}`;
+            }
 
             const model = message.model;
             const prompt = message.content;
