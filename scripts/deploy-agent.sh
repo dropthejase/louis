@@ -110,8 +110,16 @@ ARTIFACT=$(node -e "
   }));
 ")
 
+# Read sibling agent ARN from SSM (best-effort — may not exist yet on first deploy)
+TABULAR_AGENT_ARN=$(aws ssm get-parameter \
+  --name "/louis/agents/louisTabular/runtimeArn" --region "${REGION}" \
+  --query "Parameter.Value" --output text 2>/dev/null || echo "")
+MAIN_AGENT_ARN=$(aws ssm get-parameter \
+  --name "/louis/agents/louisMain/runtimeArn" --region "${REGION}" \
+  --query "Parameter.Value" --output text 2>/dev/null || echo "")
+
 ENV_VARS=$(node -e "
-  process.stdout.write(JSON.stringify({
+  const env = {
     DB_CLUSTER_ARN: '${DB_CLUSTER_ARN}',
     DB_SECRET_ARN: '${DB_SECRET_ARN}',
     DB_NAME: '${DB_NAME}',
@@ -120,7 +128,10 @@ ENV_VARS=$(node -e "
     CREDITS_TABLE_NAME: '${CREDITS_TABLE}',
     API_BASE_URL: '${API_URL}',
     AWS_REGION: '${REGION}',
-  }));
+  };
+  if ('${TABULAR_AGENT_ARN}') env.TABULAR_AGENT_ARN = '${TABULAR_AGENT_ARN}';
+  if ('${MAIN_AGENT_ARN}') env.MAIN_AGENT_ARN = '${MAIN_AGENT_ARN}';
+  process.stdout.write(JSON.stringify(env));
 ")
 
 RUNTIME_ID=$(aws ssm get-parameter \
@@ -167,6 +178,8 @@ else
     --agent-runtime-artifact "${ARTIFACT}" \
     --role-arn "${ROLE_ARN}" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
+    --authorizer-configuration "{\"customJWTAuthorizer\":{\"discoveryUrl\":\"${DISCOVERY_URL}\",\"allowedAudience\":[\"${USER_POOL_CLIENT_ID}\"],\"allowedClients\":[\"${USER_POOL_CLIENT_ID}\"]}}" \
+    --request-header-configuration '{"requestHeaderAllowlist":["Authorization"]}' \
     --environment-variables "${ENV_VARS}" \
     --region "${REGION}" > /dev/null
   echo "Updated runtime ID: ${RUNTIME_ID}"

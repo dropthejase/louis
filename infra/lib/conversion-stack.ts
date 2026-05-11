@@ -103,6 +103,18 @@ export class ConversionStack extends Stack {
     });
     docRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
 
+    const pdfRule = new events.Rule(this, 'PdfUploadRule', {
+      eventPattern: {
+        source: ['aws.s3'],
+        detailType: ['Object Created'],
+        detail: {
+          bucket: { name: [props.docsBucketName] },
+          object: { key: [{ prefix: 'documents/' }, { suffix: '.pdf' }] },
+        },
+      },
+    });
+    pdfRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
+
     new CfnOutput(this, 'ConversionLambdaArn', { value: this.conversionLambda.functionArn });
   }
 }

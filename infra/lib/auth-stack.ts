@@ -120,13 +120,15 @@ export class AuthStack extends Stack {
       ),
     });
 
-    // Per-user S3 prefix policy
+    // Per-user S3 prefix policy — ${cognito-identity.amazonaws.com:sub} resolves to the
+    // Cognito Identity ID at runtime (the identity pool identity, not the user pool sub).
     this.authenticatedRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
       resources: [
         `${props.docsBucket.bucketArn}/documents/\${cognito-identity.amazonaws.com:sub}/*`,
         `${props.docsBucket.bucketArn}/generated/\${cognito-identity.amazonaws.com:sub}/*`,
+        `${props.docsBucket.bucketArn}/converted-pdfs/\${cognito-identity.amazonaws.com:sub}/*`,
       ],
     }));
 
@@ -135,7 +137,13 @@ export class AuthStack extends Stack {
       actions: ['s3:ListBucket'],
       resources: [props.docsBucket.bucketArn],
       conditions: {
-        StringLike: { 's3:prefix': ['documents/${cognito-identity.amazonaws.com:sub}/*'] },
+        StringLike: {
+          's3:prefix': [
+            'documents/${cognito-identity.amazonaws.com:sub}/*',
+            'generated/${cognito-identity.amazonaws.com:sub}/*',
+            'converted-pdfs/${cognito-identity.amazonaws.com:sub}/*',
+          ],
+        },
       },
     }));
 

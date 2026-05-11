@@ -49,15 +49,16 @@ export class ApiStack extends Stack {
     });
 
     props.docsBucket.grantReadWrite(lambdaRole);
-    props.sessionsBucket.grantRead(lambdaRole);
+    props.sessionsBucket.grantReadWrite(lambdaRole);
 
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: [
-        'arn:aws:bedrock:eu-west-1::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0',
-        'arn:aws:bedrock:eu-west-1::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0',
-        'arn:aws:bedrock:eu-west-1::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0',
+        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0',
+        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
       ],
     }));
 
@@ -198,9 +199,10 @@ export class ApiStack extends Stack {
       effect: iam.Effect.ALLOW,
       actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
       resources: [
-        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0`,
-        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0`,
-        `arn:aws:bedrock:${this.region}::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0`,
+        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-opus-4-7-20251101-v1:0',
+        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-sonnet-4-6-20250922-v1:0',
+        'arn:aws:bedrock:*::foundation-model/eu.anthropic.claude-haiku-4-5-20251001-v1:0',
+        `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
       ],
     }));
 
@@ -243,6 +245,13 @@ export class ApiStack extends Stack {
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
       resources: [`${props.sessionsBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3SessionsList',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket'],
+      resources: [props.sessionsBucket.bucketArn],
     }));
 
     agentCoreRole.addToPolicy(new iam.PolicyStatement({
