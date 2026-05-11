@@ -20,7 +20,6 @@ import {
   uploadFile,
   storageKey,
 } from "../lib/storage";
-import { docxToPdf } from "../lib/convert";
 import {
   extractTrackedChangeIds,
   resolveTrackedChange,
@@ -601,31 +600,9 @@ documentsRouter.post(
         .json({ detail: "Failed to upload new version." });
     }
 
-    // Render this version's bytes to PDF up front so /display can show
-    // historical versions without on-demand conversion. Same logic as the
-    // initial-upload pipeline; failures don't block the version row.
+    // PDF rendition is handled by the conversion Lambda (EventBridge-triggered).
     let pdfStoragePath: string | null = null;
-    if (suffix === "docx" || suffix === "doc") {
-      try {
-        const pdfBuf = await docxToPdf(file.buffer);
-        const pdfKey = `converted-pdfs/${userId}/${documentId}/${versionSlug}.pdf`;
-        await uploadFile(
-          pdfKey,
-          pdfBuf.buffer.slice(
-            pdfBuf.byteOffset,
-            pdfBuf.byteOffset + pdfBuf.byteLength,
-          ) as ArrayBuffer,
-          "application/pdf",
-        );
-        pdfStoragePath = pdfKey;
-      } catch (err) {
-        console.error(
-          `[versions/upload] DOCX→PDF conversion failed for ${file.originalname}:`,
-          err,
-        );
-      }
-    } else if (suffix === "pdf") {
-      // For PDF uploads, the uploaded bytes are themselves the PDF rendition.
+    if (suffix === "pdf") {
       pdfStoragePath = key;
     }
 

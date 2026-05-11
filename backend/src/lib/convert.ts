@@ -1,24 +1,4 @@
-/**
- * LibreOffice-based DOCX→PDF conversion utilities used by the backend Lambda.
- *
- * Requires LibreOffice to be installed in the Lambda container image.
- * The convert function is lazily initialised so cold-start cost is paid only
- * when conversion is first needed.
- */
-import { promisify } from "util";
 import JSZip from "jszip";
-
-let _convert:
-  | ((buf: Buffer, ext: string, filter: undefined) => Promise<Buffer>)
-  | null = null;
-
-async function getConvert() {
-  if (!_convert) {
-    const libre = await import("libreoffice-convert");
-    _convert = promisify(libre.default.convert.bind(libre.default));
-  }
-  return _convert;
-}
 
 /**
  * Some older Windows/Word archives store .docx entries with backslash
@@ -51,20 +31,6 @@ export async function normalizeDocxZipPaths(buffer: Buffer): Promise<Buffer> {
   return zip.generateAsync({ type: "nodebuffer" });
 }
 
-/**
- * Convert a DOCX/DOC buffer to PDF using LibreOffice.
- * Throws if LibreOffice is not installed or conversion fails.
- */
-export async function docxToPdf(buffer: Buffer): Promise<Buffer> {
-  const convert = await getConvert();
-  const normalized = await normalizeDocxZipPaths(buffer);
-  return convert(normalized, ".pdf", undefined);
-}
-
-/**
- * Derive the S3 key where the converted PDF is stored for a given (userId, docId) pair.
- * Pattern: `converted-pdfs/{userId}/{docId}.pdf`
- */
 export function convertedPdfKey(userId: string, docId: string): string {
   return `converted-pdfs/${userId}/${docId}.pdf`;
 }

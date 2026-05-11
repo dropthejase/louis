@@ -112,7 +112,6 @@ export class ApiStack extends Stack {
         target: 'node20',
         nodeModules: [
           'pdfjs-dist',
-          'libreoffice-convert',
           'mammoth',
           'docx',
           'jszip',
