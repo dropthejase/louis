@@ -32,7 +32,7 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | Method | Path | Original | Migrated | Notes |
 |--------|------|----------|----------|-------|
 | GET | `/` | List user documents | ✅ | |
-| POST | `/` | Upload document (multipart) | ⚠️ | Original: multipart through Lambda + inline LibreOffice conversion. Migration: multipart through Lambda, conversion offloaded to Conversion Lambda via EventBridge S3 trigger. **Pending refactor**: replace with direct Amplify `uploadData` to S3 + separate `/prepare` + `/register` endpoints |
+| POST | `/prepare` + `/:documentId/register` | Upload document | ✅ | Frontend calls `/prepare` (creates DB row, returns S3 key), uploads directly to S3 via Amplify `uploadData` (Identity Pool creds), then calls `/register` to create version row. Conversion Lambda handles DOCX→PDF via EventBridge. |
 | DELETE | `/:documentId` | Delete document + S3 objects | ✅ | |
 | GET | `/:documentId/display` | Fetch display metadata | ✅ | |
 | POST | `/download-zip` | Download multiple docs as ZIP | ✅ | |
@@ -58,7 +58,7 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | PATCH | `/:projectId` | Update project metadata | ✅ | |
 | DELETE | `/:projectId` | Delete project | ✅ | |
 | GET | `/:projectId/documents` | List project documents | ✅ | |
-| POST | `/:projectId/documents` | Upload doc to project (multipart) | ⚠️ | Same pending refactor as standalone upload |
+| POST | `/:projectId/documents/prepare` + `/documents/:documentId/register` | Upload doc to project | ✅ | Same direct S3 flow as standalone upload |
 | POST | `/:projectId/documents/:documentId` | Add existing doc to project | ✅ | |
 | GET | `/:projectId/chats` | List project chats | ✅ | |
 | POST | `/:projectId/folders` | Create folder | ✅ | |
@@ -140,7 +140,7 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | Feature | Original | Migrated | Notes |
 |---------|----------|----------|-------|
 | Authentication | Supabase Auth (JWT) | ✅ | AWS Cognito User Pool; Amplify Auth v6 on frontend |
-| S3 direct upload | No — all uploads proxied through backend | ⚠️ | **Pending**: refactor to Amplify `uploadData` with Cognito Identity Pool temp credentials |
+| S3 direct upload | No — all uploads proxied through backend | ✅ | Frontend uploads directly via Amplify `uploadData` with Cognito Identity Pool temp credentials; Lambda no longer buffers file bytes |
 | Document storage | Supabase Storage | ✅ | AWS S3 with per-user IAM prefix enforcement |
 | DOCX→PDF conversion | Inline LibreOffice in backend Lambda | ✅ | Offloaded to dedicated Conversion Lambda (x86_64) triggered by EventBridge S3 rule |
 | PDF upload passthrough | No — only DOCX/DOC supported | ✅ | Added: Conversion Lambda detects `.pdf`, copies to `converted-pdfs/` prefix, updates DB |
@@ -155,5 +155,4 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 
 ## Pending / Open Items
 
-- [ ] **Upload refactor**: replace multipart-through-Lambda with Amplify `uploadData` direct to S3. Backend needs `POST /single-documents/prepare` (returns `{ docId, uploadKey }`) and a register/finalize call. Same for project document upload. Confirm whether one shared endpoint or separate routes for standalone vs project.
 - [ ] **Phase 7 scripts**: `scripts/deploy-agent.sh` and supporting scripts should read CFN outputs dynamically; add `destroy-agent.sh`.
