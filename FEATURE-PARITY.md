@@ -155,4 +155,4 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 
 ## Pending / Open Items
 
-- [ ] **Phase 7 scripts**: `scripts/deploy-agent.sh` and supporting scripts should read CFN outputs dynamically; add `destroy-agent.sh`.
+None — all features migrated.
