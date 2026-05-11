@@ -1,6 +1,8 @@
 import type { PostConfirmationTriggerEvent } from 'aws-lambda';
 import { RDSDataClient, ExecuteStatementCommand } from '@aws-sdk/client-rds-data';
+import { Logger } from '@aws-lambda-powertools/logger';
 
+const logger = new Logger({ serviceName: 'louis-post-confirmation' });
 const client = new RDSDataClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
 function getConfig() {
@@ -19,6 +21,8 @@ export const handler = async (
   const userId = event.userName;
   const email = event.request.userAttributes['email'] ?? null;
 
+  logger.info('Creating user profile', { userId, email });
+
   await client.send(new ExecuteStatementCommand({
     ...getConfig(),
     sql: `INSERT INTO user_profiles (user_id, email, updated_at)
@@ -29,6 +33,8 @@ export const handler = async (
       { name: 'email', value: email ? { stringValue: email } : { isNull: true } },
     ],
   }));
+
+  logger.info('User profile created', { userId });
 
   return event;
 };
