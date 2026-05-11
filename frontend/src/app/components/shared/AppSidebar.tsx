@@ -1,4 +1,3 @@
-"use client";
 
 import { useState, useEffect } from "react";
 import {
@@ -14,8 +13,7 @@ import {
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserProfile } from "@/contexts/UserProfileContext";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
-import { useRouter, usePathname } from "next/navigation";
-import Link from "next/link";
+import { useNavigate, useLocation, Link } from "react-router-dom";
 import { MikeIcon } from "@/components/chat/mike-icon";
 import { SidebarChatItem } from "@/app/components/shared/SidebarChatItem";
 import { listProjects } from "@/app/lib/mikeApi";
@@ -36,8 +34,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
     const { user } = useAuth();
     const { profile } = useUserProfile();
     const { chats, currentChatId, setCurrentChatId } = useChatHistoryContext();
-    const router = useRouter();
-    const pathname = usePathname();
+    const navigate = useNavigate();
+    const { pathname } = useLocation();
     const [shouldAnimate, setShouldAnimate] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [historyCollapsed, setHistoryCollapsed] = useState(false);
@@ -119,7 +117,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 {isOpen && (
                     <div className="px-2.5">
                         <Link
-                            href="/assistant"
+                            to="/assistant"
                             className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
                         >
                             <MikeIcon size={22} />
@@ -149,7 +147,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 return (
                     <div key={href} className="py-1 px-2.5">
                         <button
-                            onClick={() => router.push(href)}
+                            onClick={() => navigate(href)}
                             title={!isOpen ? label : ""}
                             className={`w-full h-9 flex items-center gap-3 px-2.5 py-2 rounded-md transition-colors text-left ${
                                 isActive
@@ -233,7 +231,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                         }
                                         onSelect={() => {
                                             setCurrentChatId(chat.id);
-                                            router.push(
+                                            navigate(
                                                 chat.project_id
                                                     ? `/projects/${chat.project_id}/assistant/chat/${chat.id}`
                                                     : `/assistant/chat/${chat.id}`,
@@ -288,7 +286,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                             <div className="absolute bottom-full left-0 m-1 bg-white rounded-lg shadow-lg border border-gray-200 p-1 z-50 w-62 whitespace-nowrap">
                                 <button
                                     onClick={() => {
-                                        router.push("/account");
+                                        navigate("/account");
                                         setIsDropdownOpen(false);
                                     }}
                                     className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100 flex items-center gap-2 rounded-md"

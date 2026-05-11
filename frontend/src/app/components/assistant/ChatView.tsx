@@ -1,4 +1,3 @@
-"use client";
 
 import { useCallback, useState, useRef, useEffect } from "react";
 import { ArrowDown } from "lucide-react";

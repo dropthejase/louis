@@ -1,16 +1,14 @@
-"use client";
-
 import React, {
   createContext,
   useContext,
   useEffect,
   useState,
   useCallback,
-  ReactNode,
-} from "react";
-import { fetchAuthSession, signOut as amplifySignOut } from "aws-amplify/auth";
-import { ensureAmplifyConfigured } from "@/lib/aws/amplify-auth";
-import { API_URL } from "@/lib/aws/config";
+} from 'react';
+import type { ReactNode } from 'react';
+import { fetchAuthSession, signOut as amplifySignOut } from 'aws-amplify/auth';
+import { useAuthenticator } from '@aws-amplify/ui-react';
+import { API_URL } from '@/lib/aws/config';
 
 interface User {
   id: string;
@@ -27,19 +25,19 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { authStatus } = useAuthenticator((context) => [context.authStatus]);
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
   const ensureProfile = useCallback(async (idToken: string) => {
     await fetch(`${API_URL}/user/profile`, {
-      method: "POST",
+      method: 'POST',
       headers: { Authorization: `Bearer ${idToken}` },
-    }).catch((e) => console.log("[AuthContext] ensureProfile error:", e));
+    }).catch((e) => console.log('[AuthContext] ensureProfile error:', e));
   }, []);
 
   const loadUser = useCallback(async () => {
     try {
-      ensureAmplifyConfigured();
       const session = await fetchAuthSession();
       const idToken = session.tokens?.idToken;
       if (!idToken) {
@@ -49,7 +47,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const payload = idToken.payload;
       const id = payload.sub as string;
-      const email = (payload.email as string) ?? "";
+      const email = (payload.email as string) ?? '';
       setUser({ id, email });
       void ensureProfile(idToken.toString());
     } catch {
@@ -60,11 +58,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [ensureProfile]);
 
   useEffect(() => {
-    loadUser();
-    const onFocus = () => void loadUser();
-    window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [loadUser]);
+    if (authStatus === 'authenticated') {
+      void loadUser();
+    } else if (authStatus === 'unauthenticated') {
+      setUser(null);
+      setAuthLoading(false);
+    }
+  }, [authStatus, loadUser]);
 
   const signOut = async () => {
     await amplifySignOut();
@@ -72,9 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider
-      value={{ user, isAuthenticated: !!user, authLoading, signOut }}
-    >
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, authLoading, signOut }}>
       {children}
     </AuthContext.Provider>
   );
@@ -83,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 export function useAuth() {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
 }

@@ -1,6 +1,6 @@
-"use client";
 
 import { useEffect, useState } from "react";
+import { API_URL } from "@/lib/aws/config";
 import { getIdToken } from "@/lib/aws/amplify-auth";
 
 export interface DocumentVersionRow {
@@ -54,8 +54,7 @@ export function useDocumentVersions(
             try {
                 const token = await getIdToken();
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    API_URL;
                 const resp = await fetch(
                     `${apiBase}/single-documents/${documentId}/versions`,
                     {

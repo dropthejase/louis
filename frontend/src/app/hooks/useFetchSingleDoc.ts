@@ -1,6 +1,6 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
+import { API_URL } from "@/lib/aws/config";
 import { getIdToken } from "@/lib/aws/amplify-auth";
 
 /**
@@ -41,8 +41,7 @@ export function useFetchSingleDoc(
                 if (cancelled) return;
 
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    API_URL;
                 const qs = versionId
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";

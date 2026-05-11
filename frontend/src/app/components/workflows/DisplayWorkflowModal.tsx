@@ -1,4 +1,3 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -14,7 +13,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { MikeDocument, MikeWorkflow } from "../shared/types";
 import { createTabularReview } from "@/app/lib/mikeApi";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { formatIcon, formatLabel } from "../tabular/columnFormat";
 import { useDirectoryData } from "../shared/useDirectoryData";
 import { FileDirectory } from "../shared/FileDirectory";
@@ -299,7 +298,7 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
     const [assistantPrompt, setAssistantPrompt] = useState("");
     const [saving, setSaving] = useState(false);
 
-    const router = useRouter();
+    const navigate = useNavigate();
     const { saveChat, setNewChatMessages } = useChatHistoryContext();
     const {
         loading: dirLoading,
@@ -370,7 +369,7 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
                 },
             ]);
             handleClose();
-            router.push(
+            navigate(
                 projectId
                     ? `/projects/${projectId}/assistant/chat/${chatId}`
                     : `/assistant/chat/${chatId}`,
@@ -400,7 +399,7 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
                 project_id: projectId,
             });
             handleClose();
-            router.push(
+            navigate(
                 projectId
                     ? `/projects/${projectId}/tabular-reviews/${review.id}`
                     : `/tabular-reviews/${review.id}`,
@@ -548,7 +547,7 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
                             {wf.is_system ? (
                                 <button
                                     onClick={() => {
-                                        router.push(`/workflows/${wf.id}`);
+                                        navigate(`/workflows/${wf.id}`);
                                         handleClose();
                                     }}
                                     className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
@@ -558,7 +557,7 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
                             ) : (
                                 <button
                                     onClick={() => {
-                                        router.push(`/workflows/${wf.id}`);
+                                        navigate(`/workflows/${wf.id}`);
                                         handleClose();
                                     }}
                                     className="rounded-lg border border-gray-200 px-3 py-1.5 text-sm text-gray-500 hover:bg-gray-50 transition-colors"

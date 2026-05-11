@@ -1,7 +1,6 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { Plus, FolderOpen, ChevronDown } from "lucide-react";
 import { HeaderSearchBtn } from "@/app/components/shared/HeaderSearchBtn";
 import { listProjects, updateProject, deleteProject } from "@/app/lib/mikeApi";
@@ -39,7 +38,7 @@ export function ProjectsOverview() {
     const [search, setSearch] = useState("");
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
-    const router = useRouter();
+    const navigate = useNavigate();
     const { user } = useAuth();
 
     useEffect(() => {
@@ -300,7 +299,7 @@ export function ProjectsOverview() {
                                 key={project.id}
                                 onClick={() => {
                                     if (renamingId === project.id) return;
-                                    router.push(`/projects/${project.id}`);
+                                    navigate(`/projects/${project.id}`);
                                 }}
                                 className="group flex items-center h-10 pr-8 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors"
                             >
@@ -434,7 +433,7 @@ export function ProjectsOverview() {
                 onClose={() => setModalOpen(false)}
                 onCreated={(p) => {
                     setProjects((prev) => [p, ...prev]);
-                    router.push(`/projects/${p.id}`);
+                    navigate(`/projects/${p.id}`);
                 }}
             />
 

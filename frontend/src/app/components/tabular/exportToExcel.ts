@@ -1,4 +1,3 @@
-"use client";
 
 import ExcelJS from "exceljs";
 import type { ColumnConfig, MikeDocument, TabularCell } from "../shared/types";

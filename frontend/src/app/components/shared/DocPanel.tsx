@@ -1,6 +1,6 @@
-"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { API_URL } from "@/lib/aws/config";
 import { Download, Loader2 } from "lucide-react";
 import { getIdToken } from "@/lib/aws/amplify-auth";
 import { applyOptimisticResolution } from "../assistant/EditCard";
@@ -357,8 +357,7 @@ function EditResolveButtons({
             try {
                 const token = await getIdToken();
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    API_URL;
                 const resp = await fetch(
                     `${apiBase}/single-documents/${edit.document_id}/edits/${edit.edit_id}/${verb}`,
                     {
@@ -454,7 +453,7 @@ function DownloadButton({
         try {
             const token = await getIdToken();
             const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                API_URL;
             const qs = versionId
                 ? `?version_id=${encodeURIComponent(versionId)}`
                 : "";

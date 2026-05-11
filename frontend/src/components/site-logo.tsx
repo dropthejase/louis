@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { MikeIcon } from "@/components/chat/mike-icon";
 
 interface SiteLogoProps {
@@ -14,10 +14,7 @@ export function SiteLogo({
     animate = false,
     asLink = false,
 }: SiteLogoProps) {
-    const landingHref =
-        process.env.NODE_ENV === "production"
-            ? "https://mikeoss.com"
-            : "http://localhost:3000";
+    const landingHref = "/assistant";
     const sizeClasses = {
         sm: "text-xl",
         md: "text-2xl",
@@ -46,7 +43,7 @@ export function SiteLogo({
     if (asLink) {
         return (
             <Link
-                href={landingHref}
+                to={landingHref}
                 className="cursor-pointer hover:opacity-80 transition-opacity"
             >
                 {logo}

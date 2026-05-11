@@ -1,6 +1,6 @@
-"use client";
 
 import { useState } from "react";
+import { API_URL } from "@/lib/aws/config";
 import { getIdToken } from "@/lib/aws/amplify-auth";
 import type { MikeEditAnnotation } from "../shared/types";
 
@@ -242,7 +242,7 @@ export function EditCard({
         try {
             const token = await getIdToken();
             const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                API_URL;
             const resp = await fetch(
                 `${apiBase}/single-documents/${annotation.document_id}/edits/${annotation.edit_id}/${verb}`,
                 {

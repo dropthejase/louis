@@ -1,7 +1,6 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Loader2, Play, ChevronDown, MessageSquare, Download, Users } from "lucide-react";
 import { HeaderSearchBtn } from "../shared/HeaderSearchBtn";
 
@@ -63,7 +62,7 @@ export function TRView({ reviewId, projectId }: Props) {
     const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
-    const searchParams = useSearchParams();
+    const [searchParams] = useSearchParams();
     const initialChatParamRef = useRef<string | null>(
         searchParams.get("chat"),
     );
@@ -76,7 +75,7 @@ export function TRView({ reviewId, projectId }: Props) {
     const [highlightedCell, setHighlightedCell] = useState<{ colIdx: number; rowIdx: number } | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
-    const router = useRouter();
+    const navigate = useNavigate();
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -455,7 +454,7 @@ export function TRView({ reviewId, projectId }: Props) {
                         {projectId && (
                             <>
                                 <button
-                                    onClick={() => router.push("/projects")}
+                                    onClick={() => navigate("/projects")}
                                     className="text-gray-500 hover:text-gray-700 transition-colors"
                                 >
                                     Projects
@@ -463,7 +462,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                 <span className="text-gray-300">›</span>
                                 <button
                                     onClick={() =>
-                                        router.push(`/projects/${projectId}`)
+                                        navigate(`/projects/${projectId}`)
                                     }
                                     className="text-gray-500 hover:text-gray-700 transition-colors"
                                 >
@@ -483,7 +482,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                 <span className="text-gray-300">›</span>
                                 <button
                                     onClick={() =>
-                                        router.push(
+                                        navigate(
                                             `/projects/${projectId}?tab=reviews`,
                                         )
                                     }
@@ -495,7 +494,7 @@ export function TRView({ reviewId, projectId }: Props) {
                         )}
                         {!projectId && (
                             <button
-                                onClick={() => router.push("/tabular-reviews")}
+                                onClick={() => navigate("/tabular-reviews")}
                                 className="text-gray-500 hover:text-gray-700 transition-colors"
                             >
                                 Tabular Reviews

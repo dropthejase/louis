@@ -1,6 +1,6 @@
-"use client";
 
 import { useId, useRef, useEffect, useState } from "react";
+import { API_URL } from "@/lib/aws/config";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
@@ -77,7 +77,7 @@ function BulkEditActions({
         try {
             const token = await getIdToken();
             const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+                API_URL;
 
             // Sequential so the per-document version counter advances in a
             // predictable order and the viewer doesn't race between bumps.
@@ -603,7 +603,7 @@ function DocDownloadBlock({
     // the user's bearer token, so any absolute URL from tool output is
     // refused to keep the token from leaking off-origin.
     const API_BASE =
-        process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+        API_URL;
     const isSafeHref = download_url.startsWith("/");
     const href = isSafeHref ? `${API_BASE}${download_url}` : null;
     const [busy, setBusy] = useState(false);

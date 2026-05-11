@@ -1,6 +1,6 @@
-"use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import { API_URL } from "@/lib/aws/config";
 import { MikeIcon } from "@/components/chat/mike-icon";
 import { useFetchDocxBytes } from "@/app/hooks/useFetchDocxBytes";
 import { getIdToken } from "@/lib/aws/amplify-auth";
@@ -146,7 +146,7 @@ async function tagWIdsOnRenderedDom(
     try {
         const token = await getIdToken();
         const apiBase =
-            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+            API_URL;
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";

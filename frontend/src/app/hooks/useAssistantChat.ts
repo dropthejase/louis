@@ -1,7 +1,6 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { streamChat, apiRequest } from "@/app/lib/mikeApi";
 import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
@@ -30,7 +29,7 @@ export function useAssistantChat({
     chatId: initialChatId,
     projectId,
 }: UseAssistantChatOptions = {}) {
-    const router = useRouter();
+    const navigate = useNavigate();
     const {
         replaceChatId,
         loadChats,
@@ -832,7 +831,7 @@ export function useAssistantChat({
                 const chatBasePath = projectId
                     ? `/projects/${projectId}/assistant/chat`
                     : `/assistant/chat`;
-                router.replace(`${chatBasePath}/${finalChatId}`);
+                navigate(`${chatBasePath}/${finalChatId}`);
             }
 
             await loadChats();

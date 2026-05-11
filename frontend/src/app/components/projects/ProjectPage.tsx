@@ -1,7 +1,6 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
     Upload,
     Plus,
@@ -277,7 +276,7 @@ export function ProjectPage({ projectId }: Props) {
     const [chats, setChats] = useState<MikeChat[]>([]);
     const [projectReviews, setProjectReviews] = useState<TabularReview[]>([]);
     const [loading, setLoading] = useState(true);
-    const searchParams = useSearchParams();
+    const [searchParams] = useSearchParams();
     const tabParam = searchParams.get("tab");
     const tab: Tab =
         tabParam === "assistant" || tabParam === "reviews"
@@ -460,13 +459,13 @@ export function ProjectPage({ projectId }: Props) {
     const actionsRef = useRef<HTMLDivElement>(null);
     const [search, setSearch] = useState("");
 
-    const router = useRouter();
+    const navigate = useNavigate();
     const { saveChat } = useChatHistoryContext();
 
     function handleTabChange(newTab: Tab) {
         const base = `/projects/${projectId}`;
         const url = newTab === "documents" ? base : `${base}?tab=${newTab}`;
-        router.push(url);
+        navigate(url);
     }
 
     useEffect(() => {
@@ -645,7 +644,7 @@ export function ProjectPage({ projectId }: Props) {
         setCreatingChat(true);
         try {
             const id = await saveChat(projectId);
-            if (id) router.push(`/projects/${projectId}/assistant/chat/${id}`);
+            if (id) navigate(`/projects/${projectId}/assistant/chat/${id}`);
         } finally {
             setCreatingChat(false);
         }
@@ -672,7 +671,7 @@ export function ProjectPage({ projectId }: Props) {
                 columns_config: columnsConfig ?? [],
                 project_id: projectId,
             });
-            router.push(`/projects/${projectId}/tabular-reviews/${review.id}`);
+            navigate(`/projects/${projectId}/tabular-reviews/${review.id}`);
         } finally {
             setCreatingReview(false);
         }
@@ -1245,7 +1244,7 @@ export function ProjectPage({ projectId }: Props) {
                 <div>
                     <div className="flex items-center gap-1.5 text-2xl font-medium font-serif">
                         <button
-                            onClick={() => router.push("/projects")}
+                            onClick={() => navigate("/projects")}
                             className="text-gray-400 hover:text-gray-600 transition-colors"
                         >
                             Projects
@@ -1253,7 +1252,7 @@ export function ProjectPage({ projectId }: Props) {
                         <span className="text-gray-300">›</span>
                         {tab !== "documents" ? (
                             <button
-                                onClick={() => router.push(`/projects/${projectId}`)}
+                                onClick={() => navigate(`/projects/${projectId}`)}
                                 className="text-gray-500 hover:text-gray-700 transition-colors"
                             >
                                 {project.name}
@@ -1588,7 +1587,7 @@ export function ProjectPage({ projectId }: Props) {
                                 {filteredChats.map((chat) => (
                                     <div
                                         key={chat.id}
-                                        onClick={() => { if (renamingChatId === chat.id) return; router.push(`/projects/${projectId}/assistant/chat/${chat.id}`); }}
+                                        onClick={() => { if (renamingChatId === chat.id) return; navigate(`/projects/${projectId}/assistant/chat/${chat.id}`); }}
                                         className="group flex items-center h-10 pr-8 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors"
                                     >
                                         <div className={`sticky left-0 z-[60] ${CHECK_W} p-2 flex items-center justify-center ${selectedChatIds.includes(chat.id) ? "bg-gray-50" : "bg-white"} group-hover:bg-gray-50`} onClick={(e) => e.stopPropagation()}>
@@ -1667,7 +1666,7 @@ export function ProjectPage({ projectId }: Props) {
                                 {filteredReviews.map((review) => (
                                     <div
                                         key={review.id}
-                                        onClick={() => { if (renamingReviewId === review.id) return; router.push(`/projects/${projectId}/tabular-reviews/${review.id}`); }}
+                                        onClick={() => { if (renamingReviewId === review.id) return; navigate(`/projects/${projectId}/tabular-reviews/${review.id}`); }}
                                         className="group flex items-center h-10 pr-8 border-b border-gray-50 hover:bg-gray-50 cursor-pointer transition-colors"
                                     >
                                         <div className={`sticky left-0 z-[60] ${CHECK_W} p-2 flex items-center justify-center ${selectedReviewIds.includes(review.id) ? "bg-gray-50" : "bg-white"} group-hover:bg-gray-50`} onClick={(e) => e.stopPropagation()}>

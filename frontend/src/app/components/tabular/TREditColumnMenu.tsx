@@ -1,4 +1,3 @@
-"use client";
 
 import { useEffect, useState } from "react";
 import { ChevronDown, Loader2, MoreHorizontal, Plus, Trash2, X } from "lucide-react";

@@ -1,13 +1,12 @@
-"use client";
 
 import React, {
     createContext,
     useContext,
     useEffect,
     useState,
-    ReactNode,
     useCallback,
 } from "react";
+import type { ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest } from "@/app/lib/mikeApi";
 

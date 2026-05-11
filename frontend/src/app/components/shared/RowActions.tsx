@@ -1,4 +1,3 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { Download, Eye, EyeOff, FolderMinus, Hash, History, Pencil, Trash2, Upload } from "lucide-react";
