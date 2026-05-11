@@ -33,6 +33,7 @@ export function createAgent(
   const model = new BedrockModel({
     modelId: resolveBedrockModelId(modelId),
     region: process.env.AWS_REGION ?? 'eu-west-1',
+    cacheConfig: { strategy: 'auto' },
   });
 
   const agent = new Agent({
