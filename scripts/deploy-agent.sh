@@ -149,7 +149,7 @@ if [[ -z "${RUNTIME_ID}" || "${RUNTIME_ID}" == "None" ]]; then
     --agent-runtime-artifact "${ARTIFACT}" \
     --role-arn "${ROLE_ARN}" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
-    --authorizer-configuration "{\"customJWTAuthorizer\":{\"discoveryUrl\":\"${DISCOVERY_URL}\",\"allowedAudience\":[\"${USER_POOL_CLIENT_ID}\"],\"allowedClients\":[\"${USER_POOL_CLIENT_ID}\"]}}" \
+    --authorizer-configuration "{\"customJWTAuthorizer\":{\"discoveryUrl\":\"${DISCOVERY_URL}\",\"allowedClients\":[\"${USER_POOL_CLIENT_ID}\"]}}" \
     --request-header-configuration '{"requestHeaderAllowlist":["Authorization"]}' \
     --environment-variables "${ENV_VARS}" \
     --region "${REGION}" \
@@ -192,7 +192,7 @@ else
     --agent-runtime-artifact "${ARTIFACT}" \
     --role-arn "${ROLE_ARN}" \
     --network-configuration '{"networkMode":"PUBLIC"}' \
-    --authorizer-configuration "{\"customJWTAuthorizer\":{\"discoveryUrl\":\"${DISCOVERY_URL}\",\"allowedAudience\":[\"${USER_POOL_CLIENT_ID}\"],\"allowedClients\":[\"${USER_POOL_CLIENT_ID}\"]}}" \
+    --authorizer-configuration "{\"customJWTAuthorizer\":{\"discoveryUrl\":\"${DISCOVERY_URL}\",\"allowedClients\":[\"${USER_POOL_CLIENT_ID}\"]}}" \
     --request-header-configuration '{"requestHeaderAllowlist":["Authorization"]}' \
     --environment-variables "${ENV_VARS}" \
     --region "${REGION}" > /dev/null
