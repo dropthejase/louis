@@ -1,5 +1,6 @@
 
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { MoreHorizontal, Pencil, Trash2, Check, X } from "lucide-react";
 import {
     DropdownMenu,
@@ -22,6 +23,7 @@ interface Props {
 export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props) {
     const { renameChat, deleteChat } = useChatHistoryContext();
     const { user } = useAuth();
+    const navigate = useNavigate();
     const [isRenaming, setIsRenaming] = useState(false);
     const [editTitle, setEditTitle] = useState(chat.title ?? "");
     const [ownerOnlyAction, setOwnerOnlyAction] = useState<string | null>(null);
@@ -132,7 +134,9 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                                         setOwnerOnlyAction("delete this chat");
                                         return;
                                     }
-                                    void deleteChat(chat.id);
+                                    void deleteChat(chat.id).then(() => {
+                                        if (isActive) navigate('/assistant');
+                                    });
                                 }}
                                 className="text-red-600 focus:text-red-600"
                             >
