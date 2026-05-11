@@ -18,6 +18,7 @@ import {
     S3Client,
     ListObjectsV2Command,
     GetObjectCommand,
+    DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import type { SqlParameter } from "@aws-sdk/client-rds-data";
 
@@ -657,6 +658,16 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
+
+    // Fetch agentcore_session_id before deleting so we can clean up S3.
+    const chat = await queryOne<{ agentcore_session_id: string | null; user_id: string }>(
+        `SELECT agentcore_session_id, user_id FROM chats WHERE id = :id`,
+        [{ name: "id", value: { stringValue: chatId } }],
+    );
+    if (!chat || chat.user_id !== userId) {
+        return void res.status(204).send();
+    }
+
     await execute(
         `DELETE FROM chats WHERE id = :id AND user_id = :userId`,
         [
@@ -664,6 +675,36 @@ chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
             { name: "userId", value: { stringValue: userId } },
         ],
     );
+
+    // Best-effort S3 session cleanup — don't fail the delete if S3 errors.
+    const sessionId = chat.agentcore_session_id;
+    const bucket = process.env.SESSIONS_BUCKET_NAME;
+    if (sessionId && bucket) {
+        try {
+            const s3 = getSessionS3();
+            const prefix = `sessions/${sessionId}/`;
+            let continuationToken: string | undefined;
+            do {
+                const list = await s3.send(new ListObjectsV2Command({
+                    Bucket: bucket,
+                    Prefix: prefix,
+                    MaxKeys: 1000,
+                    ContinuationToken: continuationToken,
+                }));
+                const objects = (list.Contents ?? []).map((o) => ({ Key: o.Key! }));
+                if (objects.length > 0) {
+                    await s3.send(new DeleteObjectsCommand({
+                        Bucket: bucket,
+                        Delete: { Objects: objects, Quiet: true },
+                    }));
+                }
+                continuationToken = list.IsTruncated ? list.NextContinuationToken : undefined;
+            } while (continuationToken);
+        } catch (err) {
+            console.error('[chat/delete] S3 session cleanup failed:', err);
+        }
+    }
+
     res.status(204).send();
 });
 
