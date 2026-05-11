@@ -5,7 +5,7 @@
  * File uploads go via multipart POST to API Gateway Lambda.
  */
 
-import { getIdToken } from "@/lib/aws/amplify-auth";
+import { getIdToken, getAccessToken } from "@/lib/aws/amplify-auth";
 import { uploadFileToS3 } from "@/lib/aws/storage";
 import { API_URL, AGENTCORE_URL, AGENTCORE_TABULAR_URL } from "@/lib/aws/config";
 import { getCurrentUserId } from "@/lib/aws/amplify-auth";
@@ -442,7 +442,7 @@ export async function streamChat(payload: {
     signal?: AbortSignal;
 }): Promise<Response> {
     const { signal, ...rest } = payload;
-    const [token, userId] = await Promise.all([getIdToken(), getCurrentUserId()]);
+    const [token, userId] = await Promise.all([getAccessToken(), getCurrentUserId()]);
     return fetch(AGENTCORE_URL, {
         method: "POST",
         headers: {
@@ -579,7 +579,7 @@ export async function streamTabularChat(
     model?: string,
     signal?: AbortSignal,
 ): Promise<Response> {
-    const [token, userId] = await Promise.all([getIdToken(), getCurrentUserId()]);
+    const [token, userId] = await Promise.all([getAccessToken(), getCurrentUserId()]);
     return fetch(AGENTCORE_TABULAR_URL, {
         method: "POST",
         headers: {

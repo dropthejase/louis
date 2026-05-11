@@ -12,6 +12,13 @@ export async function getIdToken(): Promise<string> {
   return token;
 }
 
+export async function getAccessToken(): Promise<string> {
+  const session = await fetchAuthSession();
+  const token = session.tokens?.accessToken?.toString();
+  if (!token) throw new Error('Not authenticated — no Cognito access token');
+  return token;
+}
+
 export async function signOut() {
   return amplifySignOut();
 }
