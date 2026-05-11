@@ -110,6 +110,7 @@ export class ApiStack extends Stack {
         minify: true,
         sourceMap: false,
         target: 'node20',
+        nodeModules: ['pdfjs-dist'],
       },
       role: lambdaRole,
       timeout: cdk.Duration.seconds(29),
