@@ -224,6 +224,8 @@ Per-user monthly credit tracking via DynamoDB:
 
 ## Models
 
+> **Prerequisites:** Before deploying, request model access in the AWS Console (Bedrock → Model access, eu-west-1) for each model below. Claude 4.x models additionally require submitting a use case to Anthropic — follow the in-console prompts after selecting the model.
+
 Three Claude tiers via Bedrock (eu-west-1 cross-region inference):
 
 | UI label | Logical model ID | Bedrock inference profile |
