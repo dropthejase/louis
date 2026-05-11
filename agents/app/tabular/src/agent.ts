@@ -15,13 +15,13 @@ function resolveBedrockModelId(logicalModel?: string): string {
 
 const dynamo = new DynamoDBClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
-async function incrementCredits(userId: string): Promise<void> {
+async function addCredits(userId: string, tokens: number): Promise<void> {
   const month = new Date().toISOString().slice(0, 7);
   await dynamo.send(new UpdateItemCommand({
     TableName: process.env.CREDITS_TABLE_NAME!,
     Key: { userId: { S: userId }, month: { S: month } },
-    UpdateExpression: 'ADD credits_used :one',
-    ExpressionAttributeValues: { ':one': { N: '1' } },
+    UpdateExpression: 'ADD credits_used :tokens',
+    ExpressionAttributeValues: { ':tokens': { N: String(tokens) } },
   }));
 }
 
@@ -41,11 +41,13 @@ export function createAgent(
     tools: [makeReadTableCellsTool(userId)],
   });
 
-  agent.addHook(AfterModelCallEvent, async () => {
+  agent.addHook(AfterModelCallEvent, async (event) => {
+    const tokens = event.stopData?.message?.metadata?.usage?.totalTokens;
+    if (!tokens) return;
     try {
-      await incrementCredits(userId);
+      await addCredits(userId, tokens);
     } catch (err) {
-      console.error('[credits] failed to increment:', err);
+      console.error('[credits] failed to add:', err);
     }
   });
 
