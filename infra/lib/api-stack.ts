@@ -13,6 +13,7 @@ import { Construct } from 'constructs';
 import * as path from 'path';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -100,10 +101,10 @@ export class ApiStack extends Stack {
     this.creditsTableName = creditsTable.tableName;
     this.creditsTableArn = creditsTable.tableArn;
 
-    this.apiLambda = new lambda.Function(this, 'ApiLambda', {
+    this.apiLambda = new NodejsFunction(this, 'ApiLambda', {
+      entry: path.join(__dirname, '../../backend/src/lambda.ts'),
+      handler: 'handler',
       runtime: lambda.Runtime.NODEJS_20_X,
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/lambda-pkg')),
-      handler: 'dist/lambda.handler',
       architecture: lambda.Architecture.ARM_64,
       role: lambdaRole,
       timeout: cdk.Duration.seconds(29),
