@@ -122,7 +122,8 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
           }
           case 'generate_docx': {
             const title = (input as { title?: string }).title ?? '';
-            sse(res, { type: 'doc_created_start', filename: title });
+            const previewFilename = `${title.replace(/[^a-z0-9]/gi, '_')}.docx`;
+            sse(res, { type: 'doc_created_start', filename: previewFilename });
             break;
           }
           case 'edit_document': {
@@ -182,7 +183,19 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     }
 
     // --- End of stream ---
-    const annotations = extractAnnotations(fullText);
+    const parsed = extractAnnotations(fullText);
+    const idx = docIndex as DocIndex;
+    const annotations = parsed.map((a) => ({
+      type: 'citation_data' as const,
+      ref: a.ref,
+      doc_id: a.doc_id,
+      document_id: idx[a.doc_id]?.document_id ?? '',
+      version_id: idx[a.doc_id]?.version_id ?? null,
+      version_number: idx[a.doc_id]?.version_number ?? null,
+      filename: idx[a.doc_id]?.filename ?? a.doc_id,
+      page: a.page,
+      quote: a.quote,
+    }));
     sse(res, { type: 'content_done' });
     sse(res, { type: 'citations', citations: annotations });
 

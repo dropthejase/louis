@@ -113,7 +113,7 @@ export function makeGenerateDocxTool(
 
       const versionRows = await query<{ id: string }>(
         `INSERT INTO document_versions (document_id, storage_path, source, version_number, display_name)
-         VALUES (:documentId, :storagePath, 'assistant_generated', 1, 'Generated')
+         VALUES (:documentId, :storagePath, 'generated', 1, 'Generated')
          RETURNING id`,
         [
           { name: 'documentId', value: { stringValue: docId } },
@@ -142,7 +142,7 @@ export function makeGenerateDocxTool(
       return JSON.stringify({ doc_id: label, filename, download_url: url, document_id: docId, version_id: versionId });
       } catch (err) {
         logError('generate_docx', 'Failed to generate document', err, { title });
-        return `Error: failed to generate document.`;
+        return `Error: failed to generate ${title} document: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
   });

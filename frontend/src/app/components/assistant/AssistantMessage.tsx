@@ -619,6 +619,7 @@ function DocDownloadBlock({
     // refused to keep the token from leaking off-origin.
     const API_BASE =
         API_URL;
+    const isPresigned = download_url.startsWith("https://");
     const isSafeHref = download_url.startsWith("/");
     const href = isSafeHref ? `${API_BASE}${download_url}` : null;
     const [busy, setBusy] = useState(false);
@@ -629,7 +630,18 @@ function DocDownloadBlock({
     }) => {
         e?.stopPropagation?.();
         e?.preventDefault?.();
-        if (busy || isReloading || !href) return;
+        if (busy || isReloading) return;
+        // Presigned S3 URL (generate_docx) — open directly, no auth fetch needed
+        if (isPresigned) {
+            const a = document.createElement("a");
+            a.href = download_url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            return;
+        }
+        if (!href) return;
         setBusy(true);
         try {
             const token = await getIdToken();
