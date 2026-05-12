@@ -88,10 +88,15 @@ export function useFetchDocxBytes(
             inFlight.get(key) ??
             (async () => {
                 const token = await getIdToken();
-                const bin = await fetch(url, {
+                // Step 1: get presigned URL from API
+                const metaResp = await fetch(url, {
                     headers: { Authorization: `Bearer ${token}` },
                 });
-                if (!bin.ok) throw new Error(`HTTP ${bin.status}`);
+                if (!metaResp.ok) throw new Error(`HTTP ${metaResp.status}`);
+                const { url: s3Url } = await metaResp.json() as { url: string; filename: string; version_id: string };
+                // Step 2: fetch DOCX bytes directly from S3 (presigned URL is self-authenticating)
+                const bin = await fetch(s3Url);
+                if (!bin.ok) throw new Error(`S3 fetch HTTP ${bin.status}`);
                 const buf = await bin.arrayBuffer();
                 bytesCache.set(key, buf);
                 return buf;
