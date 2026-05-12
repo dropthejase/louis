@@ -153,6 +153,30 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 
 ---
 
+## To Test
+
+| Area | Test |
+|------|------|
+| Document upload | Upload a `.docx` file — verify conversion Lambda fires, PDF available |
+| Document upload | Upload a `.pdf` file — verify passthrough to `converted-pdfs/`, available in UI |
+| AI chat | Chat against uploaded documents — verify agent reads doc context |
+| AI edit | Ask agent to make a tracked change edit to a Word doc — verify edit appears |
+| Projects | Create project, add documents, navigate project page |
+| Tabular Review | Create review, add documents/columns, generate cells |
+| Workflows | Create workflow, run it |
+| Project chat | Chat within a project — verify project context passed to agent |
+| Workflow chat | Invoke workflow from chat — verify workflow runs correctly |
+
+---
+
+## Intentionally Skipped (POC Scope)
+
+| Area | Notes |
+|------|-------|
+| Sync `organisation` to Cognito on profile update | `custom:organisation` Cognito attribute is set at signup only. When user updates org in Account Settings, only `user_profiles.organisation` is updated — Cognito attribute is not synced. DB is the app's source of truth; Cognito attribute is never read back. Not worth the extra Cognito API call for a POC. |
+
+---
+
 ## Pending / Open Items
 
 | Area | Gap | Notes |
