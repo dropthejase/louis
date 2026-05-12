@@ -89,7 +89,7 @@ export async function attachActiveVersionPaths<T extends DocRow>(
     for (const d of docs) { d.storage_path = null; d.pdf_storage_path = null; }
     return docs;
   }
-  const placeholders = versionIds.map((_, i) => `:id${i}`).join(", ");
+  const placeholders = versionIds.map((_, i) => `:id${i}::uuid`).join(", ");
   const rows = await query<{
     id: string;
     storage_path: string | null;
@@ -120,7 +120,7 @@ export async function attachLatestVersionNumbers<T extends DocRow>(
   docs: T[],
 ): Promise<T[]> {
   if (docs.length === 0) return docs;
-  const placeholders = docs.map((_, i) => `:id${i}`).join(", ");
+  const placeholders = docs.map((_, i) => `:id${i}::uuid`).join(", ");
   const rows = await query<{ document_id: string; version_number: number | null }>(
     `SELECT document_id, version_number FROM document_versions
      WHERE document_id IN (${placeholders})
