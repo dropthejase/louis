@@ -112,7 +112,7 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
   let sharedWorkflows: Record<string, unknown>[] = [];
   if (shares.length > 0) {
     const sharedIds = shares.map((s) => s.workflow_id);
-    const placeholders = sharedIds.map((_, i) => `:wid${i}`).join(", ");
+    const placeholders = sharedIds.map((_, i) => `:wid${i}::uuid`).join(", ");
     const params: SqlParameter[] = sharedIds.map((id, i) => ({
       name: `wid${i}`,
       value: { stringValue: id },

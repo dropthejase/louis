@@ -292,7 +292,7 @@ chatRouter.get("/", requireAuth, async (req, res) => {
 
     let chats: ChatRow[];
     if (ownProjectIds.length > 0) {
-        const placeholders = ownProjectIds.map((_, i) => `:pid${i}`).join(", ");
+        const placeholders = ownProjectIds.map((_, i) => `:pid${i}::uuid`).join(", ");
         const params: SqlParameter[] = [
             { name: "userId", value: { stringValue: userId } },
             ...ownProjectIds.map((id, i) => ({
@@ -405,7 +405,7 @@ async function hydrateEditStatuses(
     const statusById = new Map<string, "pending" | "accepted" | "rejected">();
     if (editIds.size > 0) {
         const idArr = Array.from(editIds);
-        const placeholders = idArr.map((_, i) => `:eid${i}`).join(", ");
+        const placeholders = idArr.map((_, i) => `:eid${i}::uuid`).join(", ");
         const rows = await query<{ id: string; status: string }>(
             `SELECT id, status FROM document_edits WHERE id IN (${placeholders})`,
             idArr.map((id, i) => ({
@@ -430,7 +430,7 @@ async function hydrateEditStatuses(
     const versionNumberById = new Map<string, number | null>();
     if (versionIds.size > 0) {
         const idArr = Array.from(versionIds);
-        const placeholders = idArr.map((_, i) => `:vid${i}`).join(", ");
+        const placeholders = idArr.map((_, i) => `:vid${i}::uuid`).join(", ");
         const vrows = await query<{
             id: string;
             version_number: number | null;

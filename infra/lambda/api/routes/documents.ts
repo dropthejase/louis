@@ -273,7 +273,7 @@ documentsRouter.post("/download-zip", requireAuth, async (req, res) => {
   if (!Array.isArray(document_ids) || document_ids.length === 0)
     return void res.status(400).json({ detail: "document_ids is required" });
 
-  const placeholders = document_ids.map((_, i) => `:id${i}`).join(", ");
+  const placeholders = document_ids.map((_, i) => `:id${i}::uuid`).join(", ");
   const rawDocs = await query<{
     id: string;
     filename: string;
@@ -1030,7 +1030,7 @@ documentsRouter.post(
     const access = await ensureDocAccess(doc, userId, userEmail);
     if (!access.ok) return void res.status(404).json({ detail: "Document not found" });
 
-    const placeholders = editIds.map((_, i) => `:editId${i}::uuid`).join(", ");
+    const placeholders = editIds.map((_, i) => `:id${i}::uuid`).join(", ");
     const edits = await query<{
       id: string;
       del_w_id: string | null;
@@ -1040,7 +1040,7 @@ documentsRouter.post(
       `SELECT id, del_w_id, ins_w_id, status FROM document_edits
        WHERE id IN (${placeholders}) AND document_id = :documentId AND status = 'pending'`,
       [
-        ...editIds.map((id, i) => ({ name: `editId${i}`, value: { stringValue: id } })),
+        ...editIds.map((id, i) => ({ name: `id${i}`, value: { stringValue: id } })),
         { name: "documentId", value: { stringValue: documentId } },
       ],
     );
@@ -1071,13 +1071,13 @@ documentsRouter.post(
 
     const newStatus = mode === "accept" ? "accepted" : "rejected";
     if (edits.length > 0) {
-      const updatePlaceholders = edits.map((_, i) => `:editId${i}::uuid`).join(", ");
+      const updatePlaceholders = edits.map((_, i) => `:id${i}::uuid`).join(", ");
       await execute(
         `UPDATE document_edits SET status = :status, resolved_at = NOW()
          WHERE id IN (${updatePlaceholders})`,
         [
           { name: "status", value: { stringValue: newStatus } },
-          ...edits.map((e, i) => ({ name: `editId${i}`, value: { stringValue: e.id } })),
+          ...edits.map((e, i) => ({ name: `id${i}`, value: { stringValue: e.id } })),
         ],
       );
     }

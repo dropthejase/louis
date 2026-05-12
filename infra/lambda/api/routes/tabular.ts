@@ -212,7 +212,7 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
     const reviewIds = reviews.map((r) => r.id);
     const docCounts: Record<string, number> = {};
     if (reviewIds.length > 0) {
-        const placeholders = reviewIds.map((_, i) => `:rid${i}`).join(", ");
+        const placeholders = reviewIds.map((_, i) => `:rid${i}::uuid`).join(", ");
         const cells = await query<{
             review_id: string;
             document_id: string;
@@ -410,7 +410,7 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
     const docIds = [...new Set(cells.map((c) => c.document_id))];
     let documents: Record<string, unknown>[] = [];
     if (docIds.length > 0) {
-        const placeholders = docIds.map((_, i) => `:did${i}`).join(", ");
+        const placeholders = docIds.map((_, i) => `:did${i}::uuid`).join(", ");
         documents = await query(
             `SELECT * FROM documents WHERE id IN (${placeholders})`,
             docIds.map((id, i) => ({
@@ -602,7 +602,7 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
 
             if (removedDocIds.length > 0) {
                 const placeholders = removedDocIds
-                    .map((_, i) => `:rid${i}`)
+                    .map((_, i) => `:rid${i}::uuid`)
                     .join(", ");
                 await execute(
                     `DELETE FROM tabular_cells
@@ -712,7 +712,7 @@ tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
-    const placeholders = document_ids.map((_, i) => `:did${i}`).join(", ");
+    const placeholders = document_ids.map((_, i) => `:did${i}::uuid`).join(", ");
     await execute(
         `UPDATE tabular_cells SET content = NULL, status = 'pending'
          WHERE review_id = :reviewId
@@ -877,7 +877,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     const docIds = [...new Set(cells.map((c) => c.document_id))];
     let docs: DocumentLite[] = [];
     if (docIds.length > 0) {
-        const placeholders = docIds.map((_, i) => `:did${i}`).join(", ");
+        const placeholders = docIds.map((_, i) => `:did${i}::uuid`).join(", ");
         docs = await query<DocumentLite>(
             `SELECT id, filename, file_type, page_count FROM documents
              WHERE id IN (${placeholders})`,
