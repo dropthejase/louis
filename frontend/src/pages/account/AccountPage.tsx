@@ -156,7 +156,7 @@ export default function AccountPage() {
 
                 <div className="py-6">
                   <h2 className="text-2xl font-medium font-serif mb-4">Usage Plan</h2>
-                  <p className="text-base font-medium text-gray-500 capitalize">Free</p>
+                  <p className="text-base font-medium text-gray-500 capitalize">{profile?.tier ? `${profile.tier} Tier` : "Free Tier"}</p>
                 </div>
 
                 <div className="py-6">

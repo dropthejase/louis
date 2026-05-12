@@ -14,6 +14,7 @@ interface UserProfile {
     displayName: string | null;
     organisation: string | null;
     tabularModel: string;
+    tier: string;
 }
 
 interface UserProfileContextType {
@@ -42,17 +43,20 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 display_name: string | null;
                 organisation: string | null;
                 tabular_model: string | null;
+                tier: string | null;
             }>("/user/profile");
             setProfile({
                 displayName: data?.display_name ?? null,
                 organisation: data?.organisation ?? null,
                 tabularModel: data?.tabular_model ?? DEFAULT_TABULAR_MODEL,
+                tier: data?.tier ?? "Free",
             });
         } catch {
             setProfile({
                 displayName: null,
                 organisation: null,
                 tabularModel: DEFAULT_TABULAR_MODEL,
+                tier: "Free",
             });
         } finally {
             setLoading(false);

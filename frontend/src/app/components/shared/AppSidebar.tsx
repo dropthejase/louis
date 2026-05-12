@@ -274,7 +274,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                                             {getDisplayName()}
                                         </div>
                                         <div className="text-[12px] text-gray-500 leading-none">
-                                            Free
+                                            {profile ? `${profile.tier} Tier` : "Free Tier"}
                                         </div>
                                     </div>
                                     <ChevronsUpDown className="h-4 w-4 flex-shrink-0 text-gray-400" />

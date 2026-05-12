@@ -16,6 +16,7 @@ create table if not exists public.user_profiles (
   display_name text,
   organisation text,
   tabular_model text,
+  tier text not null default 'Free',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

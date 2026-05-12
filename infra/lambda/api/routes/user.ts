@@ -22,8 +22,9 @@ userRouter.get("/profile", requireAuth, async (_req, res) => {
     display_name: string | null;
     organisation: string | null;
     tabular_model: string | null;
+    tier: string | null;
   }>(
-    `SELECT display_name, organisation, tabular_model
+    `SELECT display_name, organisation, tabular_model, tier
      FROM user_profiles WHERE user_id = :userId`,
     [{ name: "userId", value: { stringValue: userId } }],
   );
