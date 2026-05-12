@@ -34,12 +34,16 @@ export function createAgent(
     modelId: resolveBedrockModelId(modelId),
     region: process.env.AWS_REGION ?? 'eu-west-1',
     cacheConfig: { strategy: 'auto' },
+    additionalRequestFields: {
+      thinking: { type: 'enabled', budget_tokens: 4096 },
+    },
   });
 
   const agent = new Agent({
     model,
     systemPrompt,
     tools: [makeReadTableCellsTool(userId)],
+    printer: false,
   });
 
   agent.addHook(AfterModelCallEvent, async (event) => {

@@ -74,6 +74,9 @@ export function createAgent(
     modelId: resolveBedrockModelId(modelId),
     region: process.env.AWS_REGION ?? 'eu-west-1',
     cacheConfig: { strategy: 'auto' },
+    additionalRequestFields: {
+      thinking: { type: 'enabled', budget_tokens: 4096 },
+    },
   });
 
   const tools = [
@@ -102,7 +105,7 @@ export function createAgent(
     });
   }
 
-  const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, sessionManager });
+  const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, sessionManager, printer: false });
 
   agent.addHook(AfterModelCallEvent, async (event) => {
     const tokens = event.stopData?.message?.metadata?.usage?.totalTokens;

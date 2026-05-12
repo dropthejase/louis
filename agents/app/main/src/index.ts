@@ -77,6 +77,19 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     let fullText = '';
 
     for await (const event of agent.stream(prompt)) {
+      console.log('streamingEvent', JSON.stringify(event));
+      // --- Reasoning deltas (extended thinking) ---
+      if (
+        event.type === 'modelStreamUpdateEvent' &&
+        event.event.type === 'modelContentBlockDeltaEvent' &&
+        event.event.delta.type === 'reasoningContentDelta'
+      ) {
+        const delta = event.event.delta as { type: string; text?: string; signature?: string };
+        if (delta.text) sse(res, { type: 'reasoning_delta', text: delta.text });
+        if (delta.signature) sse(res, { type: 'reasoning_block_end' });
+        continue;
+      }
+
       // --- Text deltas ---
       if (
         event.type === 'modelStreamUpdateEvent' &&
