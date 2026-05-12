@@ -26,6 +26,11 @@ app.use(
 
 app.use(express.json({ limit: "50mb" }));
 
+app.use((req, _res, next) => {
+  console.log(`[API] ${req.method} ${req.path}`, Object.keys(req.body ?? {}).length ? JSON.stringify(req.body) : '');
+  next();
+});
+
 app.use("/chat", chatRouter);
 app.use("/projects", projectsRouter);
 app.use("/single-documents", documentsRouter);
@@ -36,3 +41,8 @@ app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
+
+app.use((err: unknown, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(`[API ERROR] ${req.method} ${req.path}`, err);
+  res.status(500).json({ detail: err instanceof Error ? err.message : 'Internal server error' });
+});

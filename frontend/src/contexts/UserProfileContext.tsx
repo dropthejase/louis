@@ -78,6 +78,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             try {
                 await apiRequest("/user/profile", {
                     method: "PUT",
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ display_name: displayName }),
                 });
                 setProfile((prev) => (prev ? { ...prev, displayName } : null));
@@ -94,6 +95,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             try {
                 await apiRequest("/user/profile", {
                     method: "PUT",
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ organisation }),
                 });
                 setProfile((prev) =>
@@ -112,6 +114,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
             try {
                 await apiRequest("/user/profile", {
                     method: "PUT",
+                    headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ tabular_model: tabularModel }),
                 });
                 setProfile((prev) =>

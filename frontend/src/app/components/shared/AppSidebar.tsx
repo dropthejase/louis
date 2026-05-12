@@ -250,7 +250,7 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                 {user && (
                     <div className="relative">
                         <button
-                            onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                            onClick={(e) => { e.stopPropagation(); setIsDropdownOpen(!isDropdownOpen); }}
                             className={`flex items-center transition-colors w-full px-3.5 py-4 border-t border-gray-200 ${
                                 !isOpen ? "hidden md:flex" : ""
                             } ${
@@ -285,7 +285,8 @@ export function AppSidebar({ isOpen, onToggle }: AppSidebarProps) {
                         {isDropdownOpen && (
                             <div className="absolute bottom-full left-0 m-1 bg-white rounded-lg shadow-lg border border-gray-200 p-1 z-50 w-62 whitespace-nowrap">
                                 <button
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                        e.stopPropagation();
                                         navigate("/account");
                                         setIsDropdownOpen(false);
                                     }}
