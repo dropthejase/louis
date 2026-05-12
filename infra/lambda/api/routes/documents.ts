@@ -16,6 +16,7 @@ import {
   downloadFile,
   deleteFile,
   getSignedUrl,
+  getPutSignedUrl,
   versionStorageKey,
   uploadFile,
   storageKey,
@@ -88,7 +89,8 @@ documentsRouter.post("/prepare", requireAuth, async (req, res) => {
     return void res.status(500).json({ detail: "Failed to create document record" });
 
   const uploadKey = storageKey(userId, doc.id, filename.trim());
-  res.status(201).json({ docId: doc.id, uploadKey });
+  const uploadUrl = await getPutSignedUrl(uploadKey, suffix === "pdf" ? "application/pdf" : "application/octet-stream");
+  res.status(201).json({ docId: doc.id, uploadKey, uploadUrl });
 });
 
 // POST /single-documents/:documentId/register

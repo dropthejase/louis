@@ -6,7 +6,6 @@
  */
 
 import { getIdToken, getAccessToken } from "@/lib/aws/amplify-auth";
-import { uploadFileToS3 } from "@/lib/aws/storage";
 import { API_URL, AGENTCORE_URL, AGENTCORE_TABULAR_URL } from "@/lib/aws/config";
 import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import type {
@@ -44,6 +43,26 @@ const API_BASE = API_URL;
 async function getAuthHeader(): Promise<string> {
     const token = await getIdToken();
     return `Bearer ${token}`;
+}
+
+async function uploadViaPresignedUrl(
+    url: string,
+    file: File,
+    onProgress?: (percent: number) => void,
+): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", url);
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        if (onProgress) {
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+            };
+        }
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`S3 upload failed: ${xhr.status}`)));
+        xhr.onerror = () => reject(new Error("S3 upload network error"));
+        xhr.send(file);
+    });
 }
 
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
@@ -285,9 +304,9 @@ export async function uploadProjectDocument(
         body: JSON.stringify({ filename: file.name, size_bytes: file.size }),
     });
     if (!prepareRes.ok) throw new Error(await prepareRes.text());
-    const { docId, uploadKey } = await prepareRes.json() as { docId: string; uploadKey: string };
+    const { docId, uploadKey, uploadUrl } = await prepareRes.json() as { docId: string; uploadKey: string; uploadUrl: string };
 
-    await uploadFileToS3(uploadKey, file, onProgress);
+    await uploadViaPresignedUrl(uploadUrl, file, onProgress);
 
     const registerRes = await fetch(`${API_BASE}/projects/${projectId}/documents/${docId}/register`, {
         method: "POST",
@@ -310,9 +329,9 @@ export async function uploadStandaloneDocument(
         body: JSON.stringify({ filename: file.name, size_bytes: file.size }),
     });
     if (!prepareRes.ok) throw new Error(await prepareRes.text());
-    const { docId, uploadKey } = await prepareRes.json() as { docId: string; uploadKey: string };
+    const { docId, uploadKey, uploadUrl } = await prepareRes.json() as { docId: string; uploadKey: string; uploadUrl: string };
 
-    await uploadFileToS3(uploadKey, file, onProgress);
+    await uploadViaPresignedUrl(uploadUrl, file, onProgress);
 
     const registerRes = await fetch(`${API_BASE}/single-documents/${docId}/register`, {
         method: "POST",

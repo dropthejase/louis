@@ -13,7 +13,7 @@ import {
   attachActiveVersionPaths,
   attachLatestVersionNumbers,
 } from "../lib/documentVersions";
-import { downloadFile, uploadFile, storageKey } from "../lib/storage";
+import { downloadFile, uploadFile, storageKey, getPutSignedUrl } from "../lib/storage";
 import { convertedPdfKey } from "../lib/convert";
 import { checkProjectAccess } from "../lib/access";
 
@@ -555,7 +555,8 @@ projectsRouter.post("/:projectId/documents/prepare", requireAuth, async (req, re
     return void res.status(500).json({ detail: "Failed to create document record" });
 
   const uploadKey = storageKey(userId, doc.id, filename.trim());
-  res.status(201).json({ docId: doc.id, uploadKey });
+  const uploadUrl = await getPutSignedUrl(uploadKey, suffix === "pdf" ? "application/pdf" : "application/octet-stream");
+  res.status(201).json({ docId: doc.id, uploadKey, uploadUrl });
 });
 
 // POST /projects/:projectId/documents/:documentId/register

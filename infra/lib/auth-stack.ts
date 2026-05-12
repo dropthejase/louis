@@ -131,9 +131,11 @@ export class AuthStack extends Stack {
 
     // Per-user S3 prefix policy — ${cognito-identity.amazonaws.com:sub} resolves to the
     // Cognito Identity ID at runtime (the identity pool identity, not the user pool sub).
+    // Uploads no longer use Identity Pool credentials (presigned URLs via backend instead),
+    // but reads/deletes from the frontend still use these credentials.
     this.authenticatedRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
+      actions: ['s3:GetObject', 's3:DeleteObject'],
       resources: [
         `${props.docsBucket.bucketArn}/documents/\${cognito-identity.amazonaws.com:sub}/*`,
         `${props.docsBucket.bucketArn}/generated/\${cognito-identity.amazonaws.com:sub}/*`,

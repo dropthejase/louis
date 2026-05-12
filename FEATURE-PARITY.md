@@ -140,7 +140,7 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | Feature | Original | Migrated | Notes |
 |---------|----------|----------|-------|
 | Authentication | Supabase Auth (JWT) | ✅ | AWS Cognito User Pool; Amplify Auth v6 on frontend |
-| S3 direct upload | No — all uploads proxied through backend | ✅ | Frontend uploads directly via Amplify `uploadData` with Cognito Identity Pool temp credentials; Lambda no longer buffers file bytes |
+| S3 direct upload | No — all uploads proxied through backend | ✅ | `/prepare` returns presigned S3 `PutObject` URL; frontend PUTs directly via XHR with no AWS credentials; Lambda generates URL but never buffers file bytes |
 | Document storage | Supabase Storage | ✅ | AWS S3 with per-user IAM prefix enforcement |
 | DOCX→PDF conversion | Inline LibreOffice in backend Lambda | ✅ | Offloaded to dedicated Conversion Lambda (x86_64) triggered by EventBridge S3 rule |
 | PDF upload passthrough | No — only DOCX/DOC supported | ✅ | Added: Conversion Lambda detects `.pdf`, copies to `converted-pdfs/` prefix, updates DB |
@@ -160,7 +160,8 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | Document upload | Upload a `.docx` file — verify conversion Lambda fires, PDF available |
 | Document upload | Upload a `.pdf` file — verify passthrough to `converted-pdfs/`, available in UI |
 | AI chat | Chat against uploaded documents — verify agent reads doc context |
-| AI edit | Ask agent to make a tracked change edit to a Word doc — verify edit appears |
+| AI edit | Ask agent to make a tracked change edit to a Word doc — verify edit appears in UI |
+| Document preview | Open a document — verify PDF renders in the preview panel |
 | Projects | Create project, add documents, navigate project page |
 | Tabular Review | Create review, add documents/columns, generate cells |
 | Workflows | Create workflow, run it |
