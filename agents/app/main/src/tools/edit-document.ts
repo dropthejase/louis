@@ -58,7 +58,7 @@ export function makeEditDocumentTool(
         reason: e.reason,
       }));
 
-      const { bytes: editedBuf } = await applyTrackedEdits(Buffer.from(buf), editInputs, { author: 'Mike' });
+      const { bytes: editedBuf, changes: appliedChanges } = await applyTrackedEdits(Buffer.from(buf), editInputs, { author: 'Mike' });
 
       await uploadFile(newKey, editedBuf, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 
@@ -89,16 +89,26 @@ export function makeEditDocumentTool(
           ],
         );
 
-        for (const edit of edits) {
+        for (let i = 0; i < edits.length; i++) {
+          const edit = edits[i];
+          const applied = appliedChanges[i];
+          const changeId = applied?.id ?? `edit-${i}`;
+          const delWId = applied?.delId ?? null;
+          const insWId = applied?.insId ?? null;
           const editRows = await query<{ id: string }>(
-            `INSERT INTO document_edits (document_id, version_id, deleted_text, inserted_text, status)
-             VALUES (:documentId, :versionId, :deletedText, :insertedText, 'pending')
+            `INSERT INTO document_edits (document_id, version_id, change_id, del_w_id, ins_w_id, deleted_text, inserted_text, context_before, context_after, status)
+             VALUES (:documentId, :versionId, :changeId, :delWId, :insWId, :deletedText, :insertedText, :contextBefore, :contextAfter, 'pending')
              RETURNING id`,
             [
               { name: 'documentId', value: { stringValue: docId } },
               { name: 'versionId', value: { stringValue: versionId } },
+              { name: 'changeId', value: { stringValue: changeId } },
+              { name: 'delWId', value: delWId ? { stringValue: delWId } : { isNull: true } },
+              { name: 'insWId', value: insWId ? { stringValue: insWId } : { isNull: true } },
               { name: 'deletedText', value: { stringValue: edit.find } },
               { name: 'insertedText', value: { stringValue: edit.replace } },
+              { name: 'contextBefore', value: { stringValue: edit.context_before } },
+              { name: 'contextAfter', value: { stringValue: edit.context_after } },
             ],
           );
           if (editRows.length > 0) {
@@ -107,8 +117,13 @@ export function makeEditDocumentTool(
               id: editRows[0].id,
               document_id: docId,
               version_id: versionId,
+              change_id: changeId,
+              del_id: delWId,
+              ins_id: insWId,
               deleted_text: edit.find,
               inserted_text: edit.replace,
+              context_before: edit.context_before,
+              context_after: edit.context_after,
             });
           }
         }
