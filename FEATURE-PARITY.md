@@ -160,6 +160,7 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | Document upload | Upload a `.docx` file — verify conversion Lambda fires, PDF available |
 | Document upload | Upload a `.pdf` file — verify passthrough to `converted-pdfs/`, available in UI |
 | AI chat | Chat against uploaded documents — verify agent reads doc context |
+| AI chat — tool spinner | While agent runs tools, spinner should show tool name (not infinite "Working…") |
 | AI edit | Ask agent to make a tracked change edit to a Word doc — verify edit appears in UI |
 | Document preview | Open a document — verify PDF renders in the preview panel |
 | Projects | Create project, add documents, navigate project page |

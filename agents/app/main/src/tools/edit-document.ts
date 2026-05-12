@@ -3,13 +3,13 @@
  *
  * Applies a list of find/replace substitutions as `w:ins`/`w:del` tracked
  * changes, uploads the result as a new document_versions row, and returns a
- * presigned download URL plus per-edit annotation metadata for the frontend
- * EditCard UI. Ownership is verified via the userId arg injected at factory time.
+ * backend-relative download path plus per-edit annotation metadata for the
+ * frontend EditCard UI. Ownership is verified via the userId arg injected at factory time.
  * Only .docx and .doc files are supported; PDF edits are not possible.
  */
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
-import { downloadFile, uploadFile, getPresignedUrl } from '../lib/storage';
+import { downloadFile, uploadFile } from '../lib/storage';
 import { query, execute } from '../lib/db';
 import { DocStore, DocIndex } from '../lib/doc-context';
 import { applyTrackedEdits, type EditInput } from '../lib/docx-tracked-changes';
@@ -126,6 +126,7 @@ export function makeEditDocumentTool(
               inserted_text: edit.replace,
               context_before: edit.context_before,
               context_after: edit.context_after,
+              status: 'pending',
             });
           }
         }
@@ -135,7 +136,9 @@ export function makeEditDocumentTool(
         meta.version_number = newVersionNumber;
       }
 
-      const url = await getPresignedUrl(newKey, 900, entry.filename);
+      const downloadUrl = versionId
+        ? `/single-documents/${docId}/docx?version_id=${encodeURIComponent(versionId)}`
+        : `/single-documents/${docId}/docx`;
       return JSON.stringify({
         doc_id,
         filename: entry.filename,
@@ -143,7 +146,7 @@ export function makeEditDocumentTool(
         version_id: versionId,
         version: newVersionNumber,
         edits_applied: edits.length,
-        download_url: url,
+        download_url: downloadUrl,
         annotations,
       });
       } catch (err) {
