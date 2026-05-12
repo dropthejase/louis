@@ -746,10 +746,13 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         const { title_model } = await getUserModelSettings();
         const titleText = await completeText({
             model: title_model,
-            user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
+            user: `Generate a concise title (3–6 words) for a chat in an AI Legal Platform that starts with this message. The title should describe the topic or document — do NOT include words like "Legal Assistant", "AI", "Chat", or any similar prefix. If the message is too short or unclear to generate a meaningful title, return exactly: "New Chat". Return only the title, no quotes or punctuation.\n\nMessage: ${message.slice(0, 500)}`,
             maxTokens: 64,
         });
-        const title = titleText.trim() || message.slice(0, 60);
+        const raw = titleText.trim();
+        const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+        // Reject long responses (LLM ignored constraint) or explicit fallback signal
+        const title = raw && raw.length <= 80 && raw !== 'New Chat' ? raw : `Chat — ${today}`;
 
         await execute(
             `UPDATE chats SET title = :title
