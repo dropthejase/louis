@@ -74,80 +74,76 @@ function BulkEditActions({
         if (busy) return;
         setBusy(verb);
         setProgress({ done: 0, total: pending.length });
+
+        // Optimistically update all cards immediately.
+        const reverts: Array<() => void> = [];
+        for (const { annotation } of pending) {
+            onResolveStart?.({ editId: annotation.edit_id, documentId: annotation.document_id, verb });
+            try {
+                const revert = applyOptimisticResolution(annotation, verb);
+                if (revert) reverts.push(revert);
+            } catch (e) {
+                console.error("[BulkEditActions] optimistic update threw", e);
+            }
+        }
+
         try {
             const token = await getIdToken();
-            const apiBase =
-                API_URL;
+            // Group by documentId (all pending edits may span multiple docs).
+            const byDoc = new Map<string, typeof pending>();
+            for (const item of pending) {
+                const docId = item.annotation.document_id;
+                if (!byDoc.has(docId)) byDoc.set(docId, []);
+                byDoc.get(docId)!.push(item);
+            }
 
-            // Sequential so the per-document version counter advances in a
-            // predictable order and the viewer doesn't race between bumps.
             let done = 0;
-            for (const { annotation } of pending) {
-                onResolveStart?.({
-                    editId: annotation.edit_id,
-                    documentId: annotation.document_id,
-                    verb,
-                });
-                // Optimistically mutate the DOM so the viewer reflects the
-                // resolution immediately. Revert if the backend call fails.
-                let revert: (() => void) | null = null;
-                try {
-                    revert = applyOptimisticResolution(annotation, verb);
-                } catch (e) {
-                    console.error(
-                        "[BulkEditActions] optimistic update threw",
-                        e,
-                    );
-                }
+            for (const [documentId, items] of byDoc) {
+                const editIds = items.map((i) => i.annotation.edit_id);
                 try {
                     const resp = await fetch(
-                        `${apiBase}/single-documents/${annotation.document_id}/edits/${annotation.edit_id}/${verb}`,
+                        `${API_URL}/single-documents/${documentId}/edits/resolve-batch`,
                         {
                             method: "POST",
-                            headers: token
-                                ? { Authorization: `Bearer ${token}` }
-                                : undefined,
+                            headers: {
+                                "Content-Type": "application/json",
+                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                            },
+                            body: JSON.stringify({ editIds, mode: verb }),
                         },
                     );
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const data = (await resp.json()) as {
                         ok: boolean;
-                        status?: "accepted" | "rejected";
                         version_id: string | null;
                         download_url: string | null;
                     };
-                    const nextStatus =
-                        data.status ??
-                        (verb === "accept" ? "accepted" : "rejected");
-                    onResolved?.({
-                        editId: annotation.edit_id,
-                        documentId: annotation.document_id,
-                        status: nextStatus,
-                        versionId: data.version_id,
-                        downloadUrl: data.download_url,
-                    });
-                } catch (e) {
-                    console.error("[BulkEditActions] resolve failed", e);
-                    try {
-                        revert?.();
-                    } catch (revertErr) {
-                        console.error(
-                            "[BulkEditActions] revert threw",
-                            revertErr,
-                        );
+                    const nextStatus = verb === "accept" ? "accepted" : "rejected";
+                    for (const { annotation } of items) {
+                        onResolved?.({
+                            editId: annotation.edit_id,
+                            documentId,
+                            status: nextStatus,
+                            versionId: data.version_id,
+                            downloadUrl: data.download_url,
+                        });
+                        done++;
+                        setProgress({ done, total: pending.length });
                     }
-                    onError?.({
-                        editId: annotation.edit_id,
-                        documentId: annotation.document_id,
-                        versionId: annotation.version_id ?? null,
-                        message:
-                            verb === "accept"
+                } catch (e) {
+                    console.error("[BulkEditActions] resolve-batch failed", e);
+                    for (const revert of reverts) { try { revert(); } catch {} }
+                    for (const { annotation } of items) {
+                        onError?.({
+                            editId: annotation.edit_id,
+                            documentId,
+                            versionId: annotation.version_id ?? null,
+                            message: verb === "accept"
                                 ? "Couldn't save one or more accepts."
                                 : "Couldn't save one or more rejects.",
-                    });
+                        });
+                    }
                 }
-                done++;
-                setProgress({ done, total: pending.length });
             }
         } finally {
             setBusy(null);

@@ -42,8 +42,8 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | POST | `/:documentId/versions` | Create new version | ✅ | |
 | PATCH | `/:documentId/versions/:versionId` | Update version metadata | ✅ | |
 | GET | `/:documentId/tracked-change-ids` | Fetch tracked change IDs | ✅ | |
-| POST | `/:documentId/edits/:editId/accept` | Accept tracked change | ✅ | |
-| POST | `/:documentId/edits/:editId/reject` | Reject tracked change | ✅ | |
+| POST | `/:documentId/edits/:editId/accept` | Accept tracked change | ✅ | Insertions and single-paragraph deletions work. Cross-paragraph deletions silently fail (see Known Limitations). |
+| POST | `/:documentId/edits/:editId/reject` | Reject tracked change | ✅ | Same limitation as accept for cross-paragraph deletions. |
 
 ---
 
@@ -187,3 +187,4 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | Account Settings page | `main` has a dropdown on the sidebar user widget → "Account Settings" page. Dev sidebar has the same dropdown but the Account Settings page content needs parity review. | To be worked next. |
 | Credit enforcement | `main` has pre-flight credit check — requests blocked with 429 when credits exhausted. Dev tracks credits (DynamoDB) but no enforcement gate. | See project TODO. |
 | Schema cleanup TBD on implementation — `chat_messages` | `chat_messages` table and `document_edits.chat_message_id` column are dead in dev — messages live in S3 snapshots only. `chat_message_id` was never written to in either branch. | Remove from `000_one_shot_schema.sql`: `chat_messages` table + index, `document_edits.chat_message_id` column + `document_edits_message_id_idx` + FK constraint block. Also strip the `chat_messages` query from `GET /chat/:chatId` backend (returns metadata only). `hydrateEditStatuses` already moved to `/messages` endpoint. |
+| Tracked change — cross-paragraph deletion | Agent cannot propose a deletion that spans two `<w:p>` elements. `applyTrackedEdits` searches per-paragraph; a `find` string containing `\n` across paragraphs never matches. Edit is silently skipped — DOCX unmodified, `del_w_id = null`, fake pending card shown. | Workaround: agent should delete within a single paragraph at a time. Full fix requires multi-paragraph span support in `applyTrackedEdits`. |

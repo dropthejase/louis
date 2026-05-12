@@ -994,3 +994,100 @@ documentsRouter.post(
   requireAuth,
   (req, res) => void handleEditResolution(req, res, "reject"),
 );
+
+// POST /single-documents/:documentId/edits/resolve-batch
+// Accepts or rejects all specified edits in a single S3 read-modify-write
+// cycle, eliminating the race condition that occurs when per-edit requests
+// overlap on the same document bytes.
+documentsRouter.post(
+  "/:documentId/edits/resolve-batch",
+  requireAuth,
+  async (req, res) => {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { documentId } = req.params;
+    const { editIds, mode } = req.body as {
+      editIds: string[];
+      mode: "accept" | "reject";
+    };
+
+    if (!Array.isArray(editIds) || editIds.length === 0)
+      return void res.status(400).json({ detail: "editIds must be a non-empty array" });
+    if (mode !== "accept" && mode !== "reject")
+      return void res.status(400).json({ detail: "mode must be accept or reject" });
+
+    const doc = await queryOne<{
+      id: string;
+      current_version_id: string | null;
+      user_id: string;
+      project_id: string | null;
+      filename: string;
+    }>(
+      `SELECT id, current_version_id, user_id, project_id, filename FROM documents WHERE id = :id`,
+      [{ name: "id", value: { stringValue: documentId } }],
+    );
+    if (!doc) return void res.status(404).json({ detail: "Document not found" });
+    const access = await ensureDocAccess(doc, userId, userEmail);
+    if (!access.ok) return void res.status(404).json({ detail: "Document not found" });
+
+    const placeholders = editIds.map((_, i) => `:editId${i}::uuid`).join(", ");
+    const edits = await query<{
+      id: string;
+      del_w_id: string | null;
+      ins_w_id: string | null;
+      status: string;
+    }>(
+      `SELECT id, del_w_id, ins_w_id, status FROM document_edits
+       WHERE id IN (${placeholders}) AND document_id = :documentId AND status = 'pending'`,
+      [
+        ...editIds.map((id, i) => ({ name: `editId${i}`, value: { stringValue: id } })),
+        { name: "documentId", value: { stringValue: documentId } },
+      ],
+    );
+
+    const active = await loadActiveVersion(documentId);
+    const latestPath = active?.storage_path ?? null;
+    if (!latestPath) return void res.status(404).json({ detail: "No file to edit" });
+
+    const raw = await downloadFile(latestPath);
+    if (!raw) return void res.status(404).json({ detail: "Document bytes not available" });
+
+    // Apply all resolutions sequentially in memory — one S3 read, one write.
+    let currentBytes = Buffer.from(raw);
+    for (const edit of edits) {
+      const wIds = [edit.del_w_id, edit.ins_w_id].filter(
+        (v): v is string => typeof v === "string" && v.length > 0,
+      );
+      if (wIds.length === 0) continue;
+      const { bytes } = await resolveTrackedChange(currentBytes, wIds, mode);
+      currentBytes = bytes;
+    }
+
+    const ab = currentBytes.buffer.slice(
+      currentBytes.byteOffset,
+      currentBytes.byteOffset + currentBytes.byteLength,
+    ) as ArrayBuffer;
+    await uploadFile(latestPath, ab, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+
+    const newStatus = mode === "accept" ? "accepted" : "rejected";
+    if (edits.length > 0) {
+      const updatePlaceholders = edits.map((_, i) => `:editId${i}::uuid`).join(", ");
+      await execute(
+        `UPDATE document_edits SET status = :status, resolved_at = NOW()
+         WHERE id IN (${updatePlaceholders})`,
+        [
+          { name: "status", value: { stringValue: newStatus } },
+          ...edits.map((e, i) => ({ name: `editId${i}`, value: { stringValue: e.id } })),
+        ],
+      );
+    }
+
+    res.json({
+      ok: true,
+      version_id: doc.current_version_id,
+      download_url: buildDownloadUrl(latestPath, doc.filename ?? "document.docx"),
+      resolved_count: edits.length,
+      remaining_pending: 0,
+    });
+  },
+);
