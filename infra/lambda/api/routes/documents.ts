@@ -402,10 +402,8 @@ documentsRouter.get("/:documentId/url", requireAuth, async (req, res) => {
 });
 
 // GET /single-documents/:documentId/docx
-// Streams the raw .docx bytes for the given document, optionally at a
-// specific tracked-changes version. Unlike /url, this bypasses S3 (avoids
-// the browser CORS problem on signed URLs) so the frontend docx-preview
-// viewer can load tracked-change documents directly.
+// Returns a presigned S3 URL for the raw .docx bytes, optionally at a
+// specific tracked-changes version. Browser fetches directly from S3.
 documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
@@ -431,26 +429,16 @@ documentsRouter.get("/:documentId/docx", requireAuth, async (req, res) => {
   if (!active)
     return void res.status(404).json({ detail: "No file available" });
 
-  const raw = await downloadFile(active.storage_path);
-  if (!raw)
-    return void res.status(404).json({ detail: "Document bytes not available" });
+  const downloadFilename = resolveDownloadFilename(
+    doc.filename,
+    active.display_name,
+    active.version_number,
+  );
+  const url = await getSignedUrl(active.storage_path, 900, downloadFilename);
+  if (!url)
+    return void res.status(503).json({ detail: "Storage not configured" });
 
-  res.setHeader(
-    "Content-Type",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  );
-  res.setHeader(
-    "Content-Disposition",
-    buildContentDisposition(
-      "inline",
-      resolveDownloadFilename(
-        doc.filename,
-        active.display_name,
-        active.version_number,
-      ),
-    ),
-  );
-  res.send(Buffer.from(raw));
+  res.json({ url, filename: downloadFilename, version_id: active.id });
 });
 
 // Compose a download-friendly filename that carries the edit version
