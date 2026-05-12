@@ -222,8 +222,8 @@ documentsRouter.delete("/:documentId", requireAuth, async (req, res) => {
 });
 
 // GET /single-documents/:documentId/display
-// Optional ?version_id= renders a historical version. Defaults to the
-// document's current_version_id.
+// Returns a presigned S3 URL and file type so the frontend can choose the
+// right viewer (PDF.js vs docx-preview) and fetch bytes directly from S3.
 documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string;
@@ -254,37 +254,14 @@ documentsRouter.get("/:documentId/display", requireAuth, async (req, res) => {
 
   const fileType = doc.file_type ?? "";
   const isDocx = fileType === "docx" || fileType === "doc";
+  const hasPdf = isDocx && !!active.pdf_storage_path;
+  const servePath = hasPdf ? active.pdf_storage_path! : active.storage_path;
 
-  // For DOCX, prefer the per-version PDF rendition if one exists.
-  const servePath =
-    isDocx && active.pdf_storage_path
-      ? active.pdf_storage_path
-      : active.storage_path;
-  const raw = await downloadFile(servePath);
-  if (!raw)
-    return void res
-      .status(404)
-      .json({ detail: "Document not found in storage" });
+  const url = await getSignedUrl(servePath, 900, doc.filename);
+  if (!url)
+    return void res.status(503).json({ detail: "Storage not configured" });
 
-  if (fileType === "pdf" || (isDocx && active.pdf_storage_path)) {
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader(
-      "Content-Disposition",
-      buildContentDisposition("inline", doc.filename),
-    );
-    res.send(Buffer.from(raw));
-  } else {
-    // Fallback: serve raw DOCX (mammoth will handle it client-side)
-    res.setHeader(
-      "Content-Type",
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    );
-    res.setHeader(
-      "Content-Disposition",
-      buildContentDisposition("inline", doc.filename),
-    );
-    res.send(Buffer.from(raw));
-  }
+  res.json({ url, type: hasPdf ? "pdf" : fileType, filename: doc.filename });
 });
 
 // POST /single-documents/download-zip
