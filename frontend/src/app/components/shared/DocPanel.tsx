@@ -452,27 +452,22 @@ function DownloadButton({
         setBusy(true);
         try {
             const token = await getIdToken();
-            const apiBase =
-                API_URL;
+            const apiBase = API_URL;
             const qs = versionId
                 ? `?version_id=${encodeURIComponent(versionId)}`
                 : "";
             const resp = await fetch(
                 `${apiBase}/single-documents/${documentId}/docx${qs}`,
-                {
-                    headers: { Authorization: `Bearer ${token}` },
-                },
+                { headers: { Authorization: `Bearer ${token}` } },
             );
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
-            const blobUrl = URL.createObjectURL(blob);
+            const { url } = await resp.json() as { url: string };
             const a = document.createElement("a");
-            a.href = blobUrl;
+            a.href = url;
             a.download = filename;
             document.body.appendChild(a);
             a.click();
             a.remove();
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
         } finally {
             setBusy(false);
         }
