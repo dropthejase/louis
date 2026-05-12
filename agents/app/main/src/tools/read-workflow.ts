@@ -8,6 +8,7 @@
 import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { queryOne } from '../lib/db';
+import { logError } from '../lib/logger';
 
 export function makeReadWorkflowTool(userId: string) {
   return tool({
@@ -17,16 +18,21 @@ export function makeReadWorkflowTool(userId: string) {
       workflow_id: z.string().describe('Workflow ID'),
     }),
     callback: async ({ workflow_id }): Promise<string> => {
-      const row = await queryOne<{ title: string; prompt_md: string }>(
-        `SELECT title, prompt_md FROM workflows
-         WHERE id = :workflowId AND (user_id = :userId OR is_system = true)`,
-        [
-          { name: 'workflowId', value: { stringValue: workflow_id } },
-          { name: 'userId', value: { stringValue: userId } },
-        ],
-      );
-      if (!row) return `Error: workflow ${workflow_id} not found.`;
-      return `# ${row.title}\n\n${row.prompt_md}`;
+      try {
+        const row = await queryOne<{ title: string; prompt_md: string }>(
+          `SELECT title, prompt_md FROM workflows
+           WHERE id = :workflowId AND (user_id = :userId OR is_system = true)`,
+          [
+            { name: 'workflowId', value: { stringValue: workflow_id } },
+            { name: 'userId', value: { stringValue: userId } },
+          ],
+        );
+        if (!row) return `Error: workflow ${workflow_id} not found.`;
+        return `# ${row.title}\n\n${row.prompt_md}`;
+      } catch (err) {
+        logError('read_workflow', 'Failed to read workflow', err, { workflow_id });
+        return `Error: failed to read workflow ${workflow_id}.`;
+      }
     },
   });
 }

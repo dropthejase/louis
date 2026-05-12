@@ -13,6 +13,7 @@ import { downloadFile, uploadFile, getPresignedUrl } from '../lib/storage';
 import { query, execute } from '../lib/db';
 import { DocStore, DocIndex } from '../lib/doc-context';
 import { applyTrackedEdits, type EditInput } from '../lib/docx-tracked-changes';
+import { logError } from '../lib/logger';
 
 const EditSchema = z.object({
   find: z.string(),
@@ -44,6 +45,7 @@ export function makeEditDocumentTool(
       const meta = docIndex[doc_id];
       if (!meta) return `Error: no index entry for ${doc_id}.`;
 
+      try {
       const buf = await downloadFile(entry.storage_path);
       const docId = meta.document_id;
       const newVersionNumber = (meta.version_number ?? 1) + 1;
@@ -144,6 +146,10 @@ export function makeEditDocumentTool(
         download_url: url,
         annotations,
       });
+      } catch (err) {
+        logError('edit_document', 'Failed to apply edits', err, { doc_id, edit_count: edits.length });
+        return `Error: failed to edit document ${doc_id}.`;
+      }
     },
   });
 }

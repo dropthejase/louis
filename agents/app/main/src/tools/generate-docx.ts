@@ -16,6 +16,7 @@ import {
 import { uploadFile, getPresignedUrl } from '../lib/storage';
 import { query, execute } from '../lib/db';
 import { DocStore, DocIndex } from '../lib/doc-context';
+import { logError } from '../lib/logger';
 
 const SectionSchema = z.object({
   heading: z.string().optional(),
@@ -42,6 +43,7 @@ export function makeGenerateDocxTool(
       sections: z.array(SectionSchema).describe('Document sections'),
     }),
     callback: async ({ title, landscape, sections }): Promise<string> => {
+      try {
       const children: (Paragraph | Table)[] = [];
 
       // Title paragraph
@@ -138,6 +140,10 @@ export function makeGenerateDocxTool(
 
       const url = await getPresignedUrl(storageKey, 900, filename);
       return JSON.stringify({ doc_id: label, filename, download_url: url, document_id: docId, version_id: versionId });
+      } catch (err) {
+        logError('generate_docx', 'Failed to generate document', err, { title });
+        return `Error: failed to generate document.`;
+      }
     },
   });
 }

@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { downloadFile, uploadFile } from '../lib/storage';
 import { query, execute } from '../lib/db';
 import { DocStore, DocIndex } from '../lib/doc-context';
+import { logError } from '../lib/logger';
 
 export function makeReplicateDocumentTool(
   userId: string,
@@ -31,6 +32,7 @@ export function makeReplicateDocumentTool(
       const meta = docIndex[doc_id];
       if (!meta) return `Error: no index entry for ${doc_id}.`;
 
+      try {
       // Ownership check on source document
       const owned = await query<{ id: string }>(
         `SELECT id FROM documents WHERE id = :documentId AND user_id = :userId`,
@@ -79,6 +81,10 @@ export function makeReplicateDocumentTool(
       docIndex[label] = { document_id: newDocId, filename, version_number: 1 };
 
       return JSON.stringify({ new_doc_id: label, filename });
+      } catch (err) {
+        logError('replicate_document', 'Failed to replicate document', err, { doc_id });
+        return `Error: failed to replicate document ${doc_id}.`;
+      }
     },
   });
 }

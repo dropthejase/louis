@@ -9,6 +9,7 @@ import { tool } from '@strands-agents/sdk';
 import { z } from 'zod';
 import { downloadFile } from '../lib/storage';
 import { DocStore } from '../lib/doc-context';
+import { logError } from '../lib/logger';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
@@ -33,6 +34,7 @@ export function makeFindInDocumentTool(docStore: DocStore) {
       const entry = docStore.get(doc_id);
       if (!entry) return `Error: document ${doc_id} not found.`;
 
+      try {
       const buf = await downloadFile(entry.storage_path);
       let text = '';
 
@@ -70,6 +72,10 @@ export function makeFindInDocumentTool(docStore: DocStore) {
 
       if (results.length === 0) return `No matches found for "${query}" in ${doc_id}.`;
       return results.join('\n---\n');
+      } catch (err) {
+        logError('find_in_document', 'Failed to search document', err, { doc_id, query });
+        return `Error: failed to search document ${doc_id}.`;
+      }
     },
   });
 }
