@@ -10,23 +10,10 @@ import { Router } from "express";
 import { requireAuth } from "../middleware/auth";
 import { queryOne } from "../lib/db";
 import { ensureDocAccess } from "../lib/access";
-import {
-    downloadFile,
-    getSignedUrl,
-    buildContentDisposition,
-} from "../lib/storage";
+import { getSignedUrl } from "../lib/storage";
 
 export const downloadsRouter = Router();
 
-function contentTypeFor(filename: string): string {
-    const lower = filename.toLowerCase();
-    if (lower.endsWith(".docx"))
-        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    if (lower.endsWith(".pdf")) return "application/pdf";
-    if (lower.endsWith(".xlsx"))
-        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    return "application/octet-stream";
-}
 
 async function resolveDocAccess(
     storagePath: string,
@@ -50,7 +37,7 @@ async function resolveDocAccess(
 }
 
 // GET /download?path=<storage_path>&filename=<filename>
-// Streams the file directly
+// Returns a presigned S3 URL — browser downloads directly from S3.
 downloadsRouter.get("/", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
@@ -64,12 +51,10 @@ downloadsRouter.get("/", requireAuth, async (req, res) => {
     const allowed = await resolveDocAccess(storagePath, userId, userEmail);
     if (!allowed) return void res.status(404).json({ detail: "File not found" });
 
-    const raw = await downloadFile(storagePath);
-    if (!raw) return void res.status(404).json({ detail: "File not found" });
+    const url = await getSignedUrl(storagePath, 900, filename);
+    if (!url) return void res.status(404).json({ detail: "File not found" });
 
-    res.setHeader("Content-Type", contentTypeFor(filename));
-    res.setHeader("Content-Disposition", buildContentDisposition("attachment", filename));
-    res.send(Buffer.from(raw));
+    res.json({ url });
 });
 
 // GET /download/presigned?path=<storage_path>&filename=<filename>
