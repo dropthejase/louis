@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useLocation } from 'react-router-dom';
 import { useAssistantChat } from '@/app/hooks/useAssistantChat';
 import { useChatHistoryContext } from '@/app/contexts/ChatHistoryContext';
 import { ChatView } from '@/app/components/assistant/ChatView';
@@ -12,7 +12,6 @@ export default function AssistantChatPageWrapper() {
 }
 
 function AssistantChatPage({ id }: { id: string }) {
-  const navigate = useNavigate();
   const location = useLocation();
   const routeState = location.state as { runtimeSessionId?: string; pendingMessage?: MikeMessage } | null;
   const { setCurrentChatId, newChatMessages, setNewChatMessages } = useChatHistoryContext();
@@ -47,17 +46,6 @@ function AssistantChatPage({ id }: { id: string }) {
     autoSubmittedRef.current = true;
     void handleChat(pending);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // If messages loaded empty (deleted/invalid chat), go back to /assistant
-  useEffect(() => {
-    // Give the hook time to load; only redirect if still empty after load settles
-    const t = setTimeout(() => {
-      if (messages.length === 0 && !isResponseLoading && initialMessages.length === 0) {
-        navigate('/assistant', { replace: true });
-      }
-    }, 2000);
-    return () => clearTimeout(t);
-  }, [messages.length, isResponseLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <ChatView
