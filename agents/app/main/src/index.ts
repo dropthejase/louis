@@ -145,9 +145,12 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
         })();
 
         switch (name) {
-          case 'read_document':
-            sse(res, { type: 'doc_read', filename: result.filename ?? '' });
+          case 'read_document': {
+            const docId = (event.toolUse.input as { doc_id?: string }).doc_id ?? '';
+            const filename = (docIndex as DocIndex)[docId]?.filename ?? docId;
+            sse(res, { type: 'doc_read', filename });
             break;
+          }
           case 'find_in_document':
             sse(res, { type: 'doc_find', filename: result.filename ?? '', query: result.query ?? '', total_matches: result.total_matches ?? 0 });
             break;
