@@ -116,12 +116,12 @@ export function makeEditDocumentTool(
           if (editRows.length > 0) {
             annotations.push({
               type: 'edit_data',
-              id: editRows[0].id,
+              edit_id: editRows[0].id,
               document_id: docId,
               version_id: versionId,
               change_id: changeId,
-              del_id: delWId,
-              ins_id: insWId,
+              del_w_id: delWId,
+              ins_w_id: insWId,
               deleted_text: edit.find,
               inserted_text: edit.replace,
               context_before: edit.context_before,
