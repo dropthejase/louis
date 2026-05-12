@@ -135,7 +135,7 @@ export function SidebarChatItem({ chat, isActive, onSelect, projectName }: Props
                                         return;
                                     }
                                     void deleteChat(chat.id).then(() => {
-                                        if (isActive) navigate('/assistant');
+                                        navigate('/assistant');
                                     });
                                 }}
                                 className="text-red-600 focus:text-red-600"
