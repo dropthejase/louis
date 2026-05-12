@@ -618,19 +618,19 @@ function DocDownloadBlock({
         setBusy(true);
         try {
             const token = await getIdToken();
+            // Fetch presigned S3 URL from API
             const resp = await fetch(href, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
-            const blobUrl = URL.createObjectURL(blob);
+            const { url } = await resp.json() as { url: string };
+            // Open presigned URL directly — browser downloads from S3, bypassing APIGW
             const a = document.createElement("a");
-            a.href = blobUrl;
+            a.href = url;
             a.download = filename;
             document.body.appendChild(a);
             a.click();
             a.remove();
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
         } finally {
             setBusy(false);
         }
