@@ -360,7 +360,7 @@ function ReasoningBlock({
     useEffect(() => {
         if (!isStreaming) return;
         const interval = setInterval(() => {
-            setThinkingIndex((i) => (i + 1) % THINKING_PHRASES.length);
+            setThinkingIndex(() => Math.floor(Math.random() * THINKING_PHRASES.length));
         }, 2000);
         return () => clearInterval(interval);
     }, [isStreaming]);
@@ -410,6 +410,25 @@ function ReasoningBlock({
                     </ReactMarkdown>
                 </div>
             )}
+        </div>
+    );
+}
+
+function ThinkingBlock({ showConnector }: { showConnector?: boolean }) {
+    const [idx, setIdx] = useState(() => Math.floor(Math.random() * THINKING_PHRASES.length));
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setIdx(() => Math.floor(Math.random() * THINKING_PHRASES.length));
+        }, 2000);
+        return () => clearInterval(interval);
+    }, []);
+    return (
+        <div className="flex items-center text-sm font-serif text-gray-500 relative">
+            {showConnector && (
+                <div className="absolute bottom-0 w-[1px] bg-gray-300 top-[13px] left-[2.5px] h-[calc(100%+11px)]" />
+            )}
+            <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
+            <span className="ml-2">{THINKING_PHRASES[idx]}</span>
         </div>
     );
 }
@@ -1235,18 +1254,7 @@ export function AssistantMessage({
             );
         }
         if (event.type === "thinking") {
-            return (
-                <div
-                    key={globalIdx}
-                    className="flex items-center text-sm font-serif text-gray-500 relative"
-                >
-                    {showConnector && (
-                        <div className="absolute bottom-0 w-[1px] bg-gray-300 top-[13px] left-[2.5px] h-[calc(100%+11px)]" />
-                    )}
-                    <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-                    <span className="ml-2">Thinking...</span>
-                </div>
-            );
+            return <ThinkingBlock key={globalIdx} showConnector={showConnector} />;
         }
         if (event.type === "doc_read") {
             const ann = annotations.find((a) => a.filename === event.filename);
