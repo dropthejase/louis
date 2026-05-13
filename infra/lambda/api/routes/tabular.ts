@@ -238,6 +238,12 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
     res.json(
         reviews.map((r) => ({
             ...r,
+            columns_config: typeof r.columns_config === "string"
+                ? JSON.parse(r.columns_config)
+                : (r.columns_config ?? []),
+            shared_with: typeof r.shared_with === "string"
+                ? JSON.parse(r.shared_with)
+                : (r.shared_with ?? []),
             document_count: docCounts[r.id] ?? 0,
         })),
     );
@@ -427,7 +433,16 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
     }
 
     res.json({
-        review: { ...review, is_owner: access.isOwner },
+        review: {
+            ...review,
+            is_owner: access.isOwner,
+            columns_config: typeof review.columns_config === "string"
+                ? JSON.parse(review.columns_config)
+                : (review.columns_config ?? []),
+            shared_with: typeof review.shared_with === "string"
+                ? JSON.parse(review.shared_with)
+                : (review.shared_with ?? []),
+        },
         cells: cells.map((cell) => ({
             ...cell,
             content: parseCellContent(cell.content),
