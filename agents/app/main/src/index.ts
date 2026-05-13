@@ -200,9 +200,12 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
           case 'edit_document':
             sse(res, { type: 'doc_edited', filename: result.filename ?? '', document_id: result.document_id ?? '', version_id: result.version_id ?? '', download_url: result.download_url ?? '', annotations: result.annotations ?? [] });
             break;
-          case 'replicate_document':
-            sse(res, { type: 'doc_replicated', filename: result.filename ?? '', count: result.count ?? 0, copies: result.copies });
+          case 'replicate_document': {
+            const docId = (event.toolUse.input as { doc_id?: string }).doc_id ?? '';
+            const sourceFilename = (docIndex as DocIndex)[docId]?.filename ?? docId;
+            sse(res, { type: 'doc_replicated', filename: sourceFilename, count: result.count ?? 0, copies: result.copies });
             break;
+          }
         }
         continue;
       }
