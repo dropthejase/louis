@@ -289,6 +289,8 @@ export function EditCard({
         }
     };
 
+    if (resolved) return null;
+
     return (
         <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
             {annotation.reason && (

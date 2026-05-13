@@ -280,10 +280,17 @@ function ProjectChatPage({ projectId, chatId }: { projectId: string; chatId: str
     ].join('|');
   }, [messages]);
 
+  // Refetch project only when a response finishes (isResponseLoading flips
+  // false), not mid-stream. Avoids concurrent setProject re-renders that
+  // pop tool cards back open while text is still streaming.
+  const prevIsResponseLoadingRef = useRef(false);
   useEffect(() => {
-    if (!projectMutationSignature) return;
-    getProject(projectId!).then(setProject).catch(() => {});
-  }, [projectMutationSignature, projectId]);
+    const wasLoading = prevIsResponseLoadingRef.current;
+    prevIsResponseLoadingRef.current = isResponseLoading;
+    if (wasLoading && !isResponseLoading && projectMutationSignature) {
+      getProject(projectId!).then(setProject).catch(() => {});
+    }
+  }, [isResponseLoading, projectMutationSignature, projectId]);
 
   useEffect(() => {
     setCurrentChatId(chatId!);

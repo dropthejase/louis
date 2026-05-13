@@ -242,6 +242,11 @@ function EditCardsSection({
     const [isOpen, setIsOpen] = useState(true);
     if (cards.length === 0) return null;
 
+    // Auto-collapse when all edits are resolved.
+    useEffect(() => {
+        if (pending.length === 0) setIsOpen(false);
+    }, [pending.length]);
+
     const docCount = filenameByDocId.size;
     const summary =
         pending.length > 0
