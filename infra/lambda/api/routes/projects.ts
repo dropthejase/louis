@@ -406,7 +406,7 @@ projectsRouter.post(
         `INSERT INTO documents
            (project_id, user_id, filename, file_type, size_bytes, page_count, structure_tree, status)
          VALUES
-           (:projectId, :userId, :filename, :fileType, :sizeBytes, :pageCount, :structureTree::jsonb, :status)
+           (:projectId::uuid, :userId, :filename, :fileType, :sizeBytes, :pageCount, :structureTree::jsonb, :status)
          RETURNING *`,
         [
           { name: "projectId", value: { stringValue: projectId } },
@@ -541,7 +541,7 @@ projectsRouter.post("/:projectId/documents/prepare", requireAuth, async (req, re
 
   const doc = await queryOne<{ id: string; filename: string }>(
     `INSERT INTO documents (project_id, user_id, filename, file_type, size_bytes, status)
-     VALUES (:projectId, :userId, :filename, :fileType, :sizeBytes, 'processing')
+     VALUES (:projectId::uuid, :userId, :filename, :fileType, :sizeBytes, 'processing')
      RETURNING id, filename`,
     [
       { name: "projectId", value: { stringValue: projectId } },
@@ -695,7 +695,7 @@ projectsRouter.post("/:projectId/folders", requireAuth, async (req, res) => {
 
   const data = await queryOne<FolderRow>(
     `INSERT INTO project_subfolders (project_id, user_id, name, parent_folder_id)
-     VALUES (:projectId, :userId, :name, :parentFolderId)
+     VALUES (:projectId::uuid, :userId, :name, :parentFolderId)
      RETURNING *`,
     [
       { name: "projectId", value: { stringValue: projectId } },

@@ -102,7 +102,7 @@ export function createAgent(
     makeReadTableCellsTool(userId),
     makeListWorkflowsTool(userId),
     makeReadWorkflowTool(userId),
-    ...(projectId ? [makeReplicateDocumentTool(userId, docStore, docIndex)] : []),
+    ...(projectId ? [makeReplicateDocumentTool(userId, projectId, docStore, docIndex)] : []),
   ];
 
   const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, messages: previousMessages, printer: false });
