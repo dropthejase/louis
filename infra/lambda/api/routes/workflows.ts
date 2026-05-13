@@ -79,6 +79,7 @@ async function resolveWorkflowAccess(
 
 // GET /workflows
 workflowsRouter.get("/", requireAuth, async (req, res) => {
+  try {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string;
   const { type } = req.query as { type?: string };
@@ -155,59 +156,69 @@ workflowsRouter.get("/", requireAuth, async (req, res) => {
     withWorkflowAccess(wf, { allowEdit: true, isOwner: true }),
   );
   res.json([...ownWithFlag, ...sharedWorkflows]);
+  } catch (err) {
+    console.error("[workflows] GET / error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // POST /workflows
 workflowsRouter.post("/", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { title, type, prompt_md, columns_config, practice } = req.body as {
-    title: string;
-    type: string;
-    prompt_md?: string;
-    columns_config?: unknown;
-    practice?: string | null;
-  };
-  if (!title?.trim())
-    return void res.status(400).json({ detail: "title is required" });
-  if (!["assistant", "tabular"].includes(type))
-    return void res
-      .status(400)
-      .json({ detail: "type must be 'assistant' or 'tabular'" });
+  try {
+    const userId = res.locals.userId as string;
+    const { title, type, prompt_md, columns_config, practice } = req.body as {
+      title: string;
+      type: string;
+      prompt_md?: string;
+      columns_config?: unknown;
+      practice?: string | null;
+    };
+    if (!title?.trim())
+      return void res.status(400).json({ detail: "title is required" });
+    if (!["assistant", "tabular"].includes(type))
+      return void res
+        .status(400)
+        .json({ detail: "type must be 'assistant' or 'tabular'" });
 
-  const data = await queryOne<WorkflowRecord>(
-    `INSERT INTO workflows
-       (user_id, title, type, prompt_md, columns_config, practice, is_system)
-     VALUES
-       (:userId, :title, :type, :promptMd, :columnsConfig::jsonb, :practice, false)
-     RETURNING *`,
-    [
-      { name: "userId", value: { stringValue: userId } },
-      { name: "title", value: { stringValue: title.trim() } },
-      { name: "type", value: { stringValue: type } },
-      {
-        name: "promptMd",
-        value: prompt_md != null ? { stringValue: prompt_md } : { isNull: true },
-      },
-      {
-        name: "columnsConfig",
-        value: columns_config != null
-          ? { stringValue: JSON.stringify(columns_config) }
-          : { isNull: true },
-      },
-      {
-        name: "practice",
-        value: practice != null ? { stringValue: practice } : { isNull: true },
-      },
-    ],
-  );
-  if (!data) return void res.status(500).json({ detail: "Failed to create workflow" });
-  res.status(201).json(data);
+    const data = await queryOne<WorkflowRecord>(
+      `INSERT INTO workflows
+         (user_id, title, type, prompt_md, columns_config, practice, is_system)
+       VALUES
+         (:userId, :title, :type, :promptMd, :columnsConfig::jsonb, :practice, false)
+       RETURNING *`,
+      [
+        { name: "userId", value: { stringValue: userId } },
+        { name: "title", value: { stringValue: title.trim() } },
+        { name: "type", value: { stringValue: type } },
+        {
+          name: "promptMd",
+          value: prompt_md != null ? { stringValue: prompt_md } : { isNull: true },
+        },
+        {
+          name: "columnsConfig",
+          value: columns_config != null
+            ? { stringValue: JSON.stringify(columns_config) }
+            : { isNull: true },
+        },
+        {
+          name: "practice",
+          value: practice != null ? { stringValue: practice } : { isNull: true },
+        },
+      ],
+    );
+    if (!data) return void res.status(500).json({ detail: "Failed to create workflow" });
+    res.status(201).json(data);
+  } catch (err) {
+    console.error("[workflows] POST / error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 async function handleWorkflowUpdate(
   req: import("express").Request,
   res: import("express").Response,
 ) {
+  try {
   const userId = res.locals.userId as string;
   const userEmail = res.locals.userEmail as string | undefined;
   const { workflowId } = req.params;
@@ -277,6 +288,10 @@ async function handleWorkflowUpdate(
       isOwner: access.isOwner,
     }),
   );
+  } catch (err) {
+    console.error("[workflows] PUT/PATCH /:workflowId error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 }
 
 // PUT /workflows/:workflowId
@@ -287,168 +302,208 @@ workflowsRouter.patch("/:workflowId", requireAuth, handleWorkflowUpdate);
 
 // DELETE /workflows/:workflowId
 workflowsRouter.delete("/:workflowId", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
-  await execute(
-    `DELETE FROM workflows
-     WHERE id = :id AND user_id = :userId AND is_system = false`,
-    [
-      { name: "id", value: { stringValue: workflowId } },
-      { name: "userId", value: { stringValue: userId } },
-    ],
-  );
-  res.status(204).send();
+  try {
+    const userId = res.locals.userId as string;
+    const { workflowId } = req.params;
+    await execute(
+      `DELETE FROM workflows
+       WHERE id = :id AND user_id = :userId AND is_system = false`,
+      [
+        { name: "id", value: { stringValue: workflowId } },
+        { name: "userId", value: { stringValue: userId } },
+      ],
+    );
+    res.status(204).send();
+  } catch (err) {
+    console.error("[workflows] DELETE /:workflowId error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // GET /workflows/hidden
 workflowsRouter.get("/hidden", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const data = await query<{ workflow_id: string }>(
-    `SELECT workflow_id FROM hidden_workflows WHERE user_id = :userId`,
-    [{ name: "userId", value: { stringValue: userId } }],
-  );
-  res.json(data.map((r) => r.workflow_id));
+  try {
+    const userId = res.locals.userId as string;
+    const data = await query<{ workflow_id: string }>(
+      `SELECT workflow_id FROM hidden_workflows WHERE user_id = :userId`,
+      [{ name: "userId", value: { stringValue: userId } }],
+    );
+    res.json(data.map((r) => r.workflow_id));
+  } catch (err) {
+    console.error("[workflows] GET /hidden error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // POST /workflows/hidden
 workflowsRouter.post("/hidden", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflow_id } = req.body as { workflow_id: string };
-  if (!workflow_id?.trim())
-    return void res.status(400).json({ detail: "workflow_id is required" });
-  await execute(
-    `INSERT INTO hidden_workflows (user_id, workflow_id)
-     VALUES (:userId, :workflowId)
-     ON CONFLICT (user_id, workflow_id) DO NOTHING`,
-    [
-      { name: "userId", value: { stringValue: userId } },
-      { name: "workflowId", value: { stringValue: workflow_id } },
-    ],
-  );
-  res.status(204).send();
+  try {
+    const userId = res.locals.userId as string;
+    const { workflow_id } = req.body as { workflow_id: string };
+    if (!workflow_id?.trim())
+      return void res.status(400).json({ detail: "workflow_id is required" });
+    await execute(
+      `INSERT INTO hidden_workflows (user_id, workflow_id)
+       VALUES (:userId, :workflowId)
+       ON CONFLICT (user_id, workflow_id) DO NOTHING`,
+      [
+        { name: "userId", value: { stringValue: userId } },
+        { name: "workflowId", value: { stringValue: workflow_id } },
+      ],
+    );
+    res.status(204).send();
+  } catch (err) {
+    console.error("[workflows] POST /hidden error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // DELETE /workflows/hidden/:workflowId
 workflowsRouter.delete("/hidden/:workflowId", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
-  await execute(
-    `DELETE FROM hidden_workflows
-     WHERE user_id = :userId AND workflow_id = :workflowId`,
-    [
-      { name: "userId", value: { stringValue: userId } },
-      { name: "workflowId", value: { stringValue: workflowId } },
-    ],
-  );
-  res.status(204).send();
+  try {
+    const userId = res.locals.userId as string;
+    const { workflowId } = req.params;
+    await execute(
+      `DELETE FROM hidden_workflows
+       WHERE user_id = :userId AND workflow_id = :workflowId`,
+      [
+        { name: "userId", value: { stringValue: userId } },
+        { name: "workflowId", value: { stringValue: workflowId } },
+      ],
+    );
+    res.status(204).send();
+  } catch (err) {
+    console.error("[workflows] DELETE /hidden/:workflowId error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // GET /workflows/:workflowId
 workflowsRouter.get("/:workflowId", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const userEmail = res.locals.userEmail as string | undefined;
-  const { workflowId } = req.params;
-  const access = await resolveWorkflowAccess(workflowId, userId, userEmail);
-  if (!access)
-    return void res.status(404).json({ detail: "Workflow not found" });
-  res.json(
-    withWorkflowAccess(access.workflow, {
-      allowEdit: access.allowEdit,
-      isOwner: access.isOwner,
-    }),
-  );
+  try {
+    const userId = res.locals.userId as string;
+    const userEmail = res.locals.userEmail as string | undefined;
+    const { workflowId } = req.params;
+    const access = await resolveWorkflowAccess(workflowId, userId, userEmail);
+    if (!access)
+      return void res.status(404).json({ detail: "Workflow not found" });
+    res.json(
+      withWorkflowAccess(access.workflow, {
+        allowEdit: access.allowEdit,
+        isOwner: access.isOwner,
+      }),
+    );
+  } catch (err) {
+    console.error("[workflows] GET /:workflowId error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // GET /workflows/:workflowId/shares
 workflowsRouter.get("/:workflowId/shares", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
+  try {
+    const userId = res.locals.userId as string;
+    const { workflowId } = req.params;
 
-  const wf = await queryOne<{ id: string }>(
-    `SELECT id FROM workflows
-     WHERE id = :id AND user_id = :userId AND is_system = false`,
-    [
-      { name: "id", value: { stringValue: workflowId } },
-      { name: "userId", value: { stringValue: userId } },
-    ],
-  );
-  if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
+    const wf = await queryOne<{ id: string }>(
+      `SELECT id FROM workflows
+       WHERE id = :id AND user_id = :userId AND is_system = false`,
+      [
+        { name: "id", value: { stringValue: workflowId } },
+        { name: "userId", value: { stringValue: userId } },
+      ],
+    );
+    if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
 
-  const shares = await query(
-    `SELECT id, shared_with_email, allow_edit, created_at
-     FROM workflow_shares
-     WHERE workflow_id = :workflowId
-     ORDER BY created_at ASC`,
-    [{ name: "workflowId", value: { stringValue: workflowId } }],
-  );
+    const shares = await query(
+      `SELECT id, shared_with_email, allow_edit, created_at
+       FROM workflow_shares
+       WHERE workflow_id = :workflowId
+       ORDER BY created_at ASC`,
+      [{ name: "workflowId", value: { stringValue: workflowId } }],
+    );
 
-  res.json(shares);
+    res.json(shares);
+  } catch (err) {
+    console.error("[workflows] GET /:workflowId/shares error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // DELETE /workflows/:workflowId/shares/:shareId
 workflowsRouter.delete("/:workflowId/shares/:shareId", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId, shareId } = req.params;
+  try {
+    const userId = res.locals.userId as string;
+    const { workflowId, shareId } = req.params;
 
-  const wf = await queryOne<{ id: string }>(
-    `SELECT id FROM workflows WHERE id = :id AND user_id = :userId`,
-    [
-      { name: "id", value: { stringValue: workflowId } },
-      { name: "userId", value: { stringValue: userId } },
-    ],
-  );
-  if (!wf) return void res.status(404).json({ detail: "Workflow not found" });
+    const wf = await queryOne<{ id: string }>(
+      `SELECT id FROM workflows WHERE id = :id AND user_id = :userId`,
+      [
+        { name: "id", value: { stringValue: workflowId } },
+        { name: "userId", value: { stringValue: userId } },
+      ],
+    );
+    if (!wf) return void res.status(404).json({ detail: "Workflow not found" });
 
-  await execute(
-    `DELETE FROM workflow_shares
-     WHERE id = :shareId AND workflow_id = :workflowId`,
-    [
-      { name: "shareId", value: { stringValue: shareId } },
-      { name: "workflowId", value: { stringValue: workflowId } },
-    ],
-  );
-  res.status(204).send();
+    await execute(
+      `DELETE FROM workflow_shares
+       WHERE id = :shareId AND workflow_id = :workflowId`,
+      [
+        { name: "shareId", value: { stringValue: shareId } },
+        { name: "workflowId", value: { stringValue: workflowId } },
+      ],
+    );
+    res.status(204).send();
+  } catch (err) {
+    console.error("[workflows] DELETE /:workflowId/shares/:shareId error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // POST /workflows/:workflowId/share
 workflowsRouter.post("/:workflowId/share", requireAuth, async (req, res) => {
-  const userId = res.locals.userId as string;
-  const { workflowId } = req.params;
-  const { emails, allow_edit } = req.body as { emails: string[]; allow_edit: boolean };
+  try {
+    const userId = res.locals.userId as string;
+    const { workflowId } = req.params;
+    const { emails, allow_edit } = req.body as { emails: string[]; allow_edit: boolean };
 
-  if (!emails?.length) return void res.status(400).json({ detail: "emails is required" });
+    if (!emails?.length) return void res.status(400).json({ detail: "emails is required" });
 
-  // Verify ownership
-  const wf = await queryOne<{ id: string }>(
-    `SELECT id FROM workflows
-     WHERE id = :id AND user_id = :userId AND is_system = false`,
-    [
-      { name: "id", value: { stringValue: workflowId } },
-      { name: "userId", value: { stringValue: userId } },
-    ],
-  );
-  if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
-
-  // Upsert on (workflow_id, shared_with_email) so re-sharing to the same
-  // person updates the existing row instead of stacking duplicates.
-  for (const rawEmail of emails) {
-    if (typeof rawEmail !== "string") continue;
-    const email = rawEmail.trim().toLowerCase();
-    if (!email) continue;
-    await execute(
-      `INSERT INTO workflow_shares
-         (workflow_id, shared_by_user_id, shared_with_email, allow_edit)
-       VALUES (:workflowId, :sharedBy, :email, :allowEdit)
-       ON CONFLICT (workflow_id, shared_with_email)
-       DO UPDATE SET allow_edit = EXCLUDED.allow_edit`,
+    // Verify ownership
+    const wf = await queryOne<{ id: string }>(
+      `SELECT id FROM workflows
+       WHERE id = :id AND user_id = :userId AND is_system = false`,
       [
-        { name: "workflowId", value: { stringValue: workflowId } },
-        { name: "sharedBy", value: { stringValue: userId } },
-        { name: "email", value: { stringValue: email } },
-        { name: "allowEdit", value: { booleanValue: allow_edit ?? false } },
+        { name: "id", value: { stringValue: workflowId } },
+        { name: "userId", value: { stringValue: userId } },
       ],
     );
-  }
+    if (!wf) return void res.status(404).json({ detail: "Workflow not found or not editable" });
 
-  res.status(204).send();
+    // Upsert on (workflow_id, shared_with_email) so re-sharing to the same
+    // person updates the existing row instead of stacking duplicates.
+    for (const rawEmail of emails) {
+      if (typeof rawEmail !== "string") continue;
+      const email = rawEmail.trim().toLowerCase();
+      if (!email) continue;
+      await execute(
+        `INSERT INTO workflow_shares
+           (workflow_id, shared_by_user_id, shared_with_email, allow_edit)
+         VALUES (:workflowId, :sharedBy, :email, :allowEdit)
+         ON CONFLICT (workflow_id, shared_with_email)
+         DO UPDATE SET allow_edit = EXCLUDED.allow_edit`,
+        [
+          { name: "workflowId", value: { stringValue: workflowId } },
+          { name: "sharedBy", value: { stringValue: userId } },
+          { name: "email", value: { stringValue: email } },
+          { name: "allowEdit", value: { booleanValue: allow_edit ?? false } },
+        ],
+      );
+    }
+
+    res.status(204).send();
+  } catch (err) {
+    console.error("[workflows] POST /:workflowId/share error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });

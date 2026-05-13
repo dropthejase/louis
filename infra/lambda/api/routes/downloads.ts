@@ -39,41 +39,51 @@ async function resolveDocAccess(
 // GET /download?path=<storage_path>&filename=<filename>
 // Returns a presigned S3 URL — browser downloads directly from S3.
 downloadsRouter.get("/", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const storagePath = req.query.path as string | undefined;
-    const filename = req.query.filename as string | undefined;
+    try {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const storagePath = req.query.path as string | undefined;
+        const filename = req.query.filename as string | undefined;
 
-    if (!storagePath || !filename) {
-        return void res.status(400).json({ detail: "path and filename are required" });
+        if (!storagePath || !filename) {
+            return void res.status(400).json({ detail: "path and filename are required" });
+        }
+
+        const allowed = await resolveDocAccess(storagePath, userId, userEmail);
+        if (!allowed) return void res.status(404).json({ detail: "File not found" });
+
+        const url = await getSignedUrl(storagePath, 900, filename);
+        if (!url) return void res.status(404).json({ detail: "File not found" });
+
+        res.json({ url });
+    } catch (err) {
+        console.error("[downloads] GET / error:", err);
+        res.status(500).json({ detail: "Internal server error" });
     }
-
-    const allowed = await resolveDocAccess(storagePath, userId, userEmail);
-    if (!allowed) return void res.status(404).json({ detail: "File not found" });
-
-    const url = await getSignedUrl(storagePath, 900, filename);
-    if (!url) return void res.status(404).json({ detail: "File not found" });
-
-    res.json({ url });
 });
 
 // GET /download/presigned?path=<storage_path>&filename=<filename>
 // Returns a 15-min presigned S3 URL
 downloadsRouter.get("/presigned", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const storagePath = req.query.path as string | undefined;
-    const filename = req.query.filename as string | undefined;
+    try {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const storagePath = req.query.path as string | undefined;
+        const filename = req.query.filename as string | undefined;
 
-    if (!storagePath || !filename) {
-        return void res.status(400).json({ detail: "path and filename are required" });
+        if (!storagePath || !filename) {
+            return void res.status(400).json({ detail: "path and filename are required" });
+        }
+
+        const allowed = await resolveDocAccess(storagePath, userId, userEmail);
+        if (!allowed) return void res.status(404).json({ detail: "File not found" });
+
+        const url = await getSignedUrl(storagePath, 900, filename);
+        if (!url) return void res.status(404).json({ detail: "File not found" });
+
+        res.json({ url });
+    } catch (err) {
+        console.error("[downloads] GET /presigned error:", err);
+        res.status(500).json({ detail: "Internal server error" });
     }
-
-    const allowed = await resolveDocAccess(storagePath, userId, userEmail);
-    if (!allowed) return void res.status(404).json({ detail: "File not found" });
-
-    const url = await getSignedUrl(storagePath, 900, filename);
-    if (!url) return void res.status(404).json({ detail: "File not found" });
-
-    res.json({ url });
 });
