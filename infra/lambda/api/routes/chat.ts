@@ -324,37 +324,42 @@ interface ChatRow {
 // are merely *shared with* the user are NOT included here — those are
 // listed per-project via GET /projects/:projectId/chats.
 chatRouter.get("/", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
+    try {
+        const userId = res.locals.userId as string;
 
-    const ownProjects = await query<{ id: string }>(
-        `SELECT id FROM projects WHERE user_id = :userId`,
-        [{ name: "userId", value: { stringValue: userId } }],
-    );
-    const ownProjectIds = ownProjects.map((p) => p.id);
-
-    let chats: ChatRow[];
-    if (ownProjectIds.length > 0) {
-        const placeholders = ownProjectIds.map((_, i) => `:pid${i}::uuid`).join(", ");
-        const params: SqlParameter[] = [
-            { name: "userId", value: { stringValue: userId } },
-            ...ownProjectIds.map((id, i) => ({
-                name: `pid${i}`,
-                value: { stringValue: id },
-            })),
-        ];
-        chats = await query<ChatRow>(
-            `SELECT * FROM chats
-             WHERE user_id = :userId OR project_id IN (${placeholders})
-             ORDER BY created_at DESC`,
-            params,
-        );
-    } else {
-        chats = await query<ChatRow>(
-            `SELECT * FROM chats WHERE user_id = :userId ORDER BY created_at DESC`,
+        const ownProjects = await query<{ id: string }>(
+            `SELECT id FROM projects WHERE user_id = :userId`,
             [{ name: "userId", value: { stringValue: userId } }],
         );
+        const ownProjectIds = ownProjects.map((p) => p.id);
+
+        let chats: ChatRow[];
+        if (ownProjectIds.length > 0) {
+            const placeholders = ownProjectIds.map((_, i) => `:pid${i}::uuid`).join(", ");
+            const params: SqlParameter[] = [
+                { name: "userId", value: { stringValue: userId } },
+                ...ownProjectIds.map((id, i) => ({
+                    name: `pid${i}`,
+                    value: { stringValue: id },
+                })),
+            ];
+            chats = await query<ChatRow>(
+                `SELECT * FROM chats
+                 WHERE user_id = :userId OR project_id IN (${placeholders})
+                 ORDER BY created_at DESC`,
+                params,
+            );
+        } else {
+            chats = await query<ChatRow>(
+                `SELECT * FROM chats WHERE user_id = :userId ORDER BY created_at DESC`,
+                [{ name: "userId", value: { stringValue: userId } }],
+            );
+        }
+        res.json(chats);
+    } catch (err) {
+        console.error("[chat] GET / error:", err);
+        res.status(500).json({ detail: "Failed to fetch chats" });
     }
-    res.json(chats);
 });
 
 // POST /chat/create
