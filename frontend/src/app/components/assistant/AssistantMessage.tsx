@@ -1209,7 +1209,7 @@ export function AssistantMessage({
     const hasContentAfter = (groupIdx: number): boolean => {
         for (let i = groupIdx + 1; i < groups.length; i++) {
             const g = groups[i];
-            if (g.kind === "content" && g.event.text.length > 0) return true;
+            if (g.kind === "content" && (g.event.text.length > 0 || !!g.event.isStreaming)) return true;
         }
         return false;
     };
