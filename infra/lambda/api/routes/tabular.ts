@@ -251,6 +251,7 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
 
 // POST /tabular-review
 tabularRouter.post("/", requireAuth, async (req, res) => {
+    try {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { title, document_ids, columns_config, workflow_id, project_id } =
@@ -322,6 +323,10 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
     }
 
     res.status(201).json(review);
+    } catch (err) {
+        console.error("[tabular] POST / error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // POST /tabular-review/prompt (must come before /:reviewId routes)
@@ -395,6 +400,7 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
 
 // GET /tabular-review/:reviewId
 tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
+    try {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
@@ -449,6 +455,10 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
         })),
         documents,
     });
+    } catch (err) {
+        console.error("[tabular] GET /:reviewId error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // GET /tabular-review/:reviewId/people
@@ -460,51 +470,57 @@ tabularRouter.get("/:reviewId", requireAuth, async (req, res) => {
 // info comes from user_profiles, and shared members are addressed by email
 // only with display_name: null.
 tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { reviewId } = req.params;
+    try {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId } = req.params;
 
-    const review = await queryOne<{
-        id: string;
-        user_id: string;
-        project_id: string | null;
-        shared_with: string[] | null;
-    }>(
-        `SELECT id, user_id, project_id, shared_with
-         FROM tabular_reviews WHERE id = :id`,
-        [{ name: "id", value: { stringValue: reviewId } }],
-    );
-    if (!review)
-        return void res.status(404).json({ detail: "Review not found" });
-    const access = await ensureReviewAccess(review, userId, userEmail);
-    if (!access.ok)
-        return void res.status(404).json({ detail: "Review not found" });
+        const review = await queryOne<{
+            id: string;
+            user_id: string;
+            project_id: string | null;
+            shared_with: string[] | null;
+        }>(
+            `SELECT id, user_id, project_id, shared_with
+             FROM tabular_reviews WHERE id = :id`,
+            [{ name: "id", value: { stringValue: reviewId } }],
+        );
+        if (!review)
+            return void res.status(404).json({ detail: "Review not found" });
+        const access = await ensureReviewAccess(review, userId, userEmail);
+        if (!access.ok)
+            return void res.status(404).json({ detail: "Review not found" });
 
-    const sharedWith: string[] = (
-        Array.isArray(review.shared_with) ? review.shared_with : []
-    ).map((e) => (e ?? "").toLowerCase());
+        const sharedWith: string[] = (
+            Array.isArray(review.shared_with) ? review.shared_with : []
+        ).map((e) => (e ?? "").toLowerCase());
 
-    const ownerProfile = await queryOne<{ display_name: string | null }>(
-        `SELECT display_name FROM user_profiles WHERE user_id = :userId`,
-        [{ name: "userId", value: { stringValue: review.user_id } }],
-    );
+        const ownerProfile = await queryOne<{ display_name: string | null }>(
+            `SELECT display_name FROM user_profiles WHERE user_id = :userId`,
+            [{ name: "userId", value: { stringValue: review.user_id } }],
+        );
 
-    const isOwner = review.user_id === userId;
-    res.json({
-        owner: {
-            user_id: review.user_id,
-            email: isOwner ? (userEmail ?? null) : null,
-            display_name: ownerProfile?.display_name ?? null,
-        },
-        members: sharedWith.map((email) => ({
-            email,
-            display_name: null as string | null,
-        })),
-    });
+        const isOwner = review.user_id === userId;
+        res.json({
+            owner: {
+                user_id: review.user_id,
+                email: isOwner ? (userEmail ?? null) : null,
+                display_name: ownerProfile?.display_name ?? null,
+            },
+            members: sharedWith.map((email) => ({
+                email,
+                display_name: null as string | null,
+            })),
+        });
+    } catch (err) {
+        console.error("[tabular] GET /:reviewId/people error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // PATCH /tabular-review/:reviewId
 tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
+    try {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
@@ -681,66 +697,88 @@ tabularRouter.patch("/:reviewId", requireAuth, async (req, res) => {
         }
     }
 
-    res.json(updatedReview);
+    res.json({
+        ...updatedReview,
+        columns_config: typeof updatedReview.columns_config === "string"
+            ? JSON.parse(updatedReview.columns_config)
+            : (updatedReview.columns_config ?? []),
+        shared_with: typeof updatedReview.shared_with === "string"
+            ? JSON.parse(updatedReview.shared_with)
+            : (updatedReview.shared_with ?? []),
+    });
+    } catch (err) {
+        console.error("[tabular] PATCH /:reviewId error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // DELETE /tabular-review/:reviewId
 tabularRouter.delete("/:reviewId", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const { reviewId } = req.params;
-    await execute(
-        `DELETE FROM tabular_reviews WHERE id = :id AND user_id = :userId`,
-        [
-            { name: "id", value: { stringValue: reviewId } },
-            { name: "userId", value: { stringValue: userId } },
-        ],
-    );
-    res.status(204).send();
+    try {
+        const userId = res.locals.userId as string;
+        const { reviewId } = req.params;
+        await execute(
+            `DELETE FROM tabular_reviews WHERE id = :id AND user_id = :userId`,
+            [
+                { name: "id", value: { stringValue: reviewId } },
+                { name: "userId", value: { stringValue: userId } },
+            ],
+        );
+        res.status(204).send();
+    } catch (err) {
+        console.error("[tabular] DELETE /:reviewId error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // POST /tabular-review/:reviewId/clear-cells
 // Reset cells to an empty/pending state for the given document_ids. Does not
 // delete the rows — it blanks `content` and sets `status` back to "pending".
 tabularRouter.post("/:reviewId/clear-cells", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { reviewId } = req.params;
-    const { document_ids } = req.body as { document_ids?: string[] };
+    try {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId } = req.params;
+        const { document_ids } = req.body as { document_ids?: string[] };
 
-    if (!Array.isArray(document_ids) || document_ids.length === 0)
-        return void res
-            .status(400)
-            .json({ detail: "document_ids is required" });
+        if (!Array.isArray(document_ids) || document_ids.length === 0)
+            return void res
+                .status(400)
+                .json({ detail: "document_ids is required" });
 
-    const review = await queryOne<{
-        id: string;
-        user_id: string;
-        project_id: string | null;
-        shared_with?: string[] | null;
-    }>(
-        `SELECT id, user_id, project_id FROM tabular_reviews WHERE id = :id`,
-        [{ name: "id", value: { stringValue: reviewId } }],
-    );
-    if (!review)
-        return void res.status(404).json({ detail: "Review not found" });
-    const access = await ensureReviewAccess(review, userId, userEmail);
-    if (!access.ok)
-        return void res.status(404).json({ detail: "Review not found" });
+        const review = await queryOne<{
+            id: string;
+            user_id: string;
+            project_id: string | null;
+            shared_with?: string[] | null;
+        }>(
+            `SELECT id, user_id, project_id FROM tabular_reviews WHERE id = :id`,
+            [{ name: "id", value: { stringValue: reviewId } }],
+        );
+        if (!review)
+            return void res.status(404).json({ detail: "Review not found" });
+        const access = await ensureReviewAccess(review, userId, userEmail);
+        if (!access.ok)
+            return void res.status(404).json({ detail: "Review not found" });
 
-    const placeholders = document_ids.map((_, i) => `:did${i}::uuid`).join(", ");
-    await execute(
-        `UPDATE tabular_cells SET content = NULL, status = 'pending'
-         WHERE review_id = :reviewId
-           AND document_id IN (${placeholders})`,
-        [
-            { name: "reviewId", value: { stringValue: reviewId } },
-            ...document_ids.map((id, i) => ({
-                name: `did${i}`,
-                value: { stringValue: id },
-            })),
-        ],
-    );
-    res.status(204).send();
+        const placeholders = document_ids.map((_, i) => `:did${i}::uuid`).join(", ");
+        await execute(
+            `UPDATE tabular_cells SET content = NULL, status = 'pending'
+             WHERE review_id = :reviewId
+               AND document_id IN (${placeholders})`,
+            [
+                { name: "reviewId", value: { stringValue: reviewId } },
+                ...document_ids.map((id, i) => ({
+                    name: `did${i}`,
+                    value: { stringValue: id },
+                })),
+            ],
+        );
+        res.status(204).send();
+    } catch (err) {
+        console.error("[tabular] POST /:reviewId/clear-cells error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // POST /tabular-review/:reviewId/regenerate-cell
@@ -748,6 +786,7 @@ tabularRouter.post(
     "/:reviewId/regenerate-cell",
     requireAuth,
     async (req, res) => {
+        try {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { reviewId } = req.params;
@@ -858,6 +897,10 @@ tabularRouter.post(
         );
 
         res.json(result);
+        } catch (err) {
+            console.error("[tabular] POST /:reviewId/regenerate-cell error:", err);
+            res.status(500).json({ detail: "Internal server error" });
+        }
     },
 );
 
@@ -1049,36 +1092,41 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
 
 // GET /tabular-review/:reviewId/chats — list chats (metadata only, no messages)
 tabularRouter.get("/:reviewId/chats", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { reviewId } = req.params;
+    try {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { reviewId } = req.params;
 
-    // Verify access (owner or shared-project member).
-    const review = await queryOne<{
-        id: string;
-        user_id: string;
-        project_id: string | null;
-    }>(
-        `SELECT id, user_id, project_id FROM tabular_reviews WHERE id = :id`,
-        [{ name: "id", value: { stringValue: reviewId } }],
-    );
-    if (!review)
-        return void res.status(404).json({ detail: "Review not found" });
-    const access = await ensureReviewAccess(review, userId, userEmail);
-    if (!access.ok)
-        return void res.status(404).json({ detail: "Review not found" });
+        // Verify access (owner or shared-project member).
+        const review = await queryOne<{
+            id: string;
+            user_id: string;
+            project_id: string | null;
+        }>(
+            `SELECT id, user_id, project_id FROM tabular_reviews WHERE id = :id`,
+            [{ name: "id", value: { stringValue: reviewId } }],
+        );
+        if (!review)
+            return void res.status(404).json({ detail: "Review not found" });
+        const access = await ensureReviewAccess(review, userId, userEmail);
+        if (!access.ok)
+            return void res.status(404).json({ detail: "Review not found" });
 
-    // Show every member's chats for the review (collaborative), not just
-    // the requester's. Per-chat access is gated above by review access.
-    const chats = await query(
-        `SELECT id, title, created_at, updated_at, user_id
-         FROM tabular_review_chats
-         WHERE review_id = :reviewId
-         ORDER BY updated_at DESC`,
-        [{ name: "reviewId", value: { stringValue: reviewId } }],
-    );
+        // Show every member's chats for the review (collaborative), not just
+        // the requester's. Per-chat access is gated above by review access.
+        const chats = await query(
+            `SELECT id, title, created_at, updated_at, user_id
+             FROM tabular_review_chats
+             WHERE review_id = :reviewId
+             ORDER BY updated_at DESC`,
+            [{ name: "reviewId", value: { stringValue: reviewId } }],
+        );
 
-    res.json(chats);
+        res.json(chats);
+    } catch (err) {
+        console.error("[tabular] GET /:reviewId/chats error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // DELETE /tabular-review/:reviewId/chats/:chatId — delete a single chat
@@ -1086,19 +1134,24 @@ tabularRouter.delete(
     "/:reviewId/chats/:chatId",
     requireAuth,
     async (req, res) => {
-        const userId = res.locals.userId as string;
-        const { chatId } = req.params;
-        // Owner-only delete — sibling collaborators shouldn't be able to wipe
-        // each other's threads.
-        await execute(
-            `DELETE FROM tabular_review_chats
-             WHERE id = :id AND user_id = :userId`,
-            [
-                { name: "id", value: { stringValue: chatId } },
-                { name: "userId", value: { stringValue: userId } },
-            ],
-        );
-        res.status(204).send();
+        try {
+            const userId = res.locals.userId as string;
+            const { chatId } = req.params;
+            // Owner-only delete — sibling collaborators shouldn't be able to wipe
+            // each other's threads.
+            await execute(
+                `DELETE FROM tabular_review_chats
+                 WHERE id = :id AND user_id = :userId`,
+                [
+                    { name: "id", value: { stringValue: chatId } },
+                    { name: "userId", value: { stringValue: userId } },
+                ],
+            );
+            res.status(204).send();
+        } catch (err) {
+            console.error("[tabular] DELETE /:reviewId/chats/:chatId error:", err);
+            res.status(500).json({ detail: "Internal server error" });
+        }
     },
 );
 
@@ -1107,9 +1160,57 @@ tabularRouter.get(
     "/:reviewId/chats/:chatId/messages",
     requireAuth,
     async (req, res) => {
+        try {
+            const userId = res.locals.userId as string;
+            const userEmail = res.locals.userEmail as string | undefined;
+            const { reviewId, chatId } = req.params;
+
+            const review = await queryOne<{
+                id: string;
+                user_id: string;
+                project_id: string | null;
+            }>(
+                `SELECT id, user_id, project_id FROM tabular_reviews WHERE id = :id`,
+                [{ name: "id", value: { stringValue: reviewId } }],
+            );
+            if (!review)
+                return void res.status(404).json({ detail: "Review not found" });
+            const access = await ensureReviewAccess(review, userId, userEmail);
+            if (!access.ok)
+                return void res.status(404).json({ detail: "Review not found" });
+
+            const chat = await queryOne<{ id: string; review_id: string }>(
+                `SELECT id, review_id FROM tabular_review_chats WHERE id = :id`,
+                [{ name: "id", value: { stringValue: chatId } }],
+            );
+            if (!chat || chat.review_id !== reviewId)
+                return void res.status(404).json({ detail: "Chat not found" });
+
+            const messages = await query(
+                `SELECT id, role, content, annotations, created_at
+                 FROM tabular_review_chat_messages
+                 WHERE chat_id = :chatId
+                 ORDER BY created_at ASC`,
+                [{ name: "chatId", value: { stringValue: chatId } }],
+            );
+
+            res.json(messages);
+        } catch (err) {
+            console.error("[tabular] GET /:reviewId/chats/:chatId/messages error:", err);
+            res.status(500).json({ detail: "Internal server error" });
+        }
+    },
+);
+
+// ---------------------------------------------------------------------------
+// POST /tabular-review/:reviewId/chats — create a chat record
+// ---------------------------------------------------------------------------
+
+tabularRouter.post("/:reviewId/chats", requireAuth, async (req, res) => {
+    try {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
-        const { reviewId, chatId } = req.params;
+        const { reviewId } = req.params;
 
         const review = await queryOne<{
             id: string;
@@ -1125,59 +1226,21 @@ tabularRouter.get(
         if (!access.ok)
             return void res.status(404).json({ detail: "Review not found" });
 
-        const chat = await queryOne<{ id: string; review_id: string }>(
-            `SELECT id, review_id FROM tabular_review_chats WHERE id = :id`,
-            [{ name: "id", value: { stringValue: chatId } }],
-        );
-        if (!chat || chat.review_id !== reviewId)
-            return void res.status(404).json({ detail: "Chat not found" });
-
-        const messages = await query(
-            `SELECT id, role, content, annotations, created_at
-             FROM tabular_review_chat_messages
-             WHERE chat_id = :chatId
-             ORDER BY created_at ASC`,
-            [{ name: "chatId", value: { stringValue: chatId } }],
+        const chat = await queryOne<{ id: string }>(
+            `INSERT INTO tabular_review_chats (review_id, user_id)
+             VALUES (:reviewId, :userId)
+             RETURNING id`,
+            [
+                { name: "reviewId", value: { stringValue: reviewId } },
+                { name: "userId", value: { stringValue: userId } },
+            ],
         );
 
-        res.json(messages);
-    },
-);
-
-// ---------------------------------------------------------------------------
-// POST /tabular-review/:reviewId/chats — create a chat record
-// ---------------------------------------------------------------------------
-
-tabularRouter.post("/:reviewId/chats", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { reviewId } = req.params;
-
-    const review = await queryOne<{
-        id: string;
-        user_id: string;
-        project_id: string | null;
-    }>(
-        `SELECT id, user_id, project_id FROM tabular_reviews WHERE id = :id`,
-        [{ name: "id", value: { stringValue: reviewId } }],
-    );
-    if (!review)
-        return void res.status(404).json({ detail: "Review not found" });
-    const access = await ensureReviewAccess(review, userId, userEmail);
-    if (!access.ok)
-        return void res.status(404).json({ detail: "Review not found" });
-
-    const chat = await queryOne<{ id: string }>(
-        `INSERT INTO tabular_review_chats (review_id, user_id)
-         VALUES (:reviewId, :userId)
-         RETURNING id`,
-        [
-            { name: "reviewId", value: { stringValue: reviewId } },
-            { name: "userId", value: { stringValue: userId } },
-        ],
-    );
-
-    res.status(201).json({ chatId: chat!.id });
+        res.status(201).json({ chatId: chat!.id });
+    } catch (err) {
+        console.error("[tabular] POST /:reviewId/chats error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // ---------------------------------------------------------------------------
@@ -1188,6 +1251,7 @@ tabularRouter.post(
     "/:reviewId/chats/:chatId/messages",
     requireAuth,
     async (req, res) => {
+        try {
         const userId = res.locals.userId as string;
         const userEmail = res.locals.userEmail as string | undefined;
         const { reviewId, chatId } = req.params;
@@ -1293,6 +1357,10 @@ tabularRouter.post(
         }
 
         res.json({ title: title ?? null });
+        } catch (err) {
+            console.error("[tabular] POST /:reviewId/chats/:chatId/messages error:", err);
+            res.status(500).json({ detail: "Internal server error" });
+        }
     },
 );
 
