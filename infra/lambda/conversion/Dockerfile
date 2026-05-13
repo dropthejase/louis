@@ -1,4 +1,4 @@
-FROM --platform=linux/amd64 public.ecr.aws/lambda/nodejs:20 AS builder
+FROM --platform=linux/amd64 public.ecr.aws/lambda/nodejs:22 AS builder
 
 WORKDIR /build
 
@@ -9,7 +9,7 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npx tsc
 
-FROM --platform=linux/amd64 public.ecr.aws/shelf/lambda-libreoffice-base:26.2-node20-x86_64
+FROM --platform=linux/amd64 public.ecr.aws/shelf/lambda-libreoffice-base:26.2-node22-x86_64
 
 WORKDIR ${LAMBDA_TASK_ROOT}
 

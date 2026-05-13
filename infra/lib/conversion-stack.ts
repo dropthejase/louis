@@ -77,43 +77,21 @@ export class ConversionStack extends Stack {
       },
     });
 
-    // EventBridge rule: trigger on .docx and .doc uploads to documents/ prefix.
+    // Single EventBridge rule: trigger on any object created under documents/ prefix.
+    // The Lambda handler routes internally by extension (.pdf passthrough, .docx/.doc convert).
+    // Scoping to documents/ prefix prevents converted-pdfs/ writes from re-triggering the Lambda.
     // Requires eventBridgeEnabled: true on the S3 bucket (set in StorageStack).
-    const docxRule = new events.Rule(this, 'DocxUploadRule', {
+    const documentsRule = new events.Rule(this, 'DocumentsUploadRule', {
       eventPattern: {
         source: ['aws.s3'],
         detailType: ['Object Created'],
         detail: {
           bucket: { name: [props.docsBucketName] },
-          object: { key: [{ prefix: 'documents/' }, { suffix: '.docx' }] },
+          object: { key: [{ prefix: 'documents/' }] },
         },
       },
     });
-    docxRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
-
-    const docRule = new events.Rule(this, 'DocUploadRule', {
-      eventPattern: {
-        source: ['aws.s3'],
-        detailType: ['Object Created'],
-        detail: {
-          bucket: { name: [props.docsBucketName] },
-          object: { key: [{ prefix: 'documents/' }, { suffix: '.doc' }] },
-        },
-      },
-    });
-    docRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
-
-    const pdfRule = new events.Rule(this, 'PdfUploadRule', {
-      eventPattern: {
-        source: ['aws.s3'],
-        detailType: ['Object Created'],
-        detail: {
-          bucket: { name: [props.docsBucketName] },
-          object: { key: [{ prefix: 'documents/' }, { suffix: '.pdf' }] },
-        },
-      },
-    });
-    pdfRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
+    documentsRule.addTarget(new targets.LambdaFunction(this.conversionLambda));
 
     new CfnOutput(this, 'ConversionLambdaArn', { value: this.conversionLambda.functionArn });
   }

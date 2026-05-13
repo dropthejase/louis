@@ -39,6 +39,13 @@ export const handler = async (event: EventBridgeS3Event): Promise<void> => {
   // EventBridge URL-encodes the key with + for spaces; decode it.
   const sourceKey = decodeURIComponent(event.detail.object.key.replace(/\+/g, ' '));
 
+  // Guard: only process files under documents/ — prevents infinite loop if EventBridge
+  // rule misconfiguration causes converted-pdfs/ writes to trigger this Lambda again.
+  if (!sourceKey.startsWith('documents/')) {
+    logger.warn('Ignoring key outside documents/ prefix — possible rule misconfiguration', { sourceKey });
+    return;
+  }
+
   logger.info('Processing conversion', { bucket, sourceKey });
   try {
     await convertDocument(bucket, sourceKey);
