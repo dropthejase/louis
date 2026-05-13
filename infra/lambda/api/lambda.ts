@@ -42,8 +42,10 @@ async function lambdaHandler(
 
   metrics.addMetric("InvocationCount", MetricUnit.Count, 1);
 
-  const result = await serverlessHandler(event, context);
-  return result as APIGatewayProxyResult;
+  const result = await serverlessHandler(event, context) as APIGatewayProxyResult;
+  logger.info('request', { method: event.httpMethod, path: event.path, statusCode: result.statusCode });
+  metrics.addMetric(`StatusCode_${result.statusCode}`, MetricUnit.Count, 1);
+  return result;
 }
 
 export const handler = middy(lambdaHandler)
