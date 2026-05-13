@@ -152,10 +152,6 @@ export function TRView({ reviewId, projectId }: Props) {
             ...toAdd.map((d) => d.id),
         ];
 
-        await updateTabularReview(reviewId, {
-            document_ids: allIds,
-            columns_config: columns,
-        });
         setDocuments((prev) => [...prev, ...toAdd]);
         if (columns.length > 0) {
             setCells((prev) => [
@@ -172,6 +168,17 @@ export function TRView({ reviewId, projectId }: Props) {
                     })),
                 ),
             ]);
+        }
+
+        try {
+            await updateTabularReview(reviewId, {
+                document_ids: allIds,
+                columns_config: columns,
+            });
+        } catch (err) {
+            console.error("Failed to add documents:", err);
+            setDocuments((prev) => prev.filter((d) => !toAdd.some((t) => t.id === d.id)));
+            setCells((prev) => prev.filter((c) => !toAdd.some((t) => t.id === c.document_id)));
         }
     }
 
