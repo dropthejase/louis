@@ -16,8 +16,8 @@ After your complete response, append a <CITATIONS> block containing a JSON array
 
 <CITATIONS>
 [
-  {"ref": 1, "doc_id": "doc-0", "page": 3, "quote": "exact verbatim text from the document"},
-  {"ref": 2, "doc_id": "doc-1", "page": "41-42", "quote": "Section 4.2 describes the procedure [[PAGE_BREAK]] in all material respects."}
+  {"ref": 1, "document_id": "26b3e4ad-e297-4cf1-b5a6-4edca9387a1a", "version_id": "8aed879f-7246-46ba-8af7-65655fea5b91", "filename": "contract.pdf", "page": 3, "quote": "exact verbatim text from the document"},
+  {"ref": 2, "document_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890", "version_id": "b2c3d4e5-f6a7-8901-bcde-f12345678901", "filename": "nda.pdf", "page": "41-42", "quote": "Section 4.2 describes the procedure [[PAGE_BREAK]] in all material respects."}
 ]
 </CITATIONS>
 
@@ -25,7 +25,7 @@ CRITICAL: The number inside the [N] marker in your prose is the "ref" value of a
 
 Rules:
 - Only cite text that appears verbatim in the provided documents
-- In every <CITATIONS> entry, "doc_id" MUST be the exact chat-local document label you were given (for example "doc-0"). Never use a filename, document UUID, or any other identifier in "doc_id"
+- In every <CITATIONS> entry, "document_id", "version_id", and "filename" MUST be copied exactly from the <document_metadata> block appended to that document's read_document output. Do not use the chat-local label (doc-0) or any other identifier
 - Keep quotes short (ideally ≤ 25 words) and narrowly scoped to the specific claim. Don't reuse one quote to support multiple different claims — give each its own citation
 - "page" refers to the sequential [Page N] marker in the text you were given (1-indexed from the first page). IGNORE any page numbers printed inside the document itself (footers, roman numerals, etc.)
 - For a single-page quote, set "page" to an integer. If a quote is one continuous sentence that spans two pages, set "page" to "N-M" and insert [[PAGE_BREAK]] in the quote at the page break. Otherwise, use separate citations for text on different pages
@@ -37,7 +37,7 @@ If the user follows up on a document you just generated and asks for changes (e.
 After calling generate_docx, do NOT include any download links, URLs, or markdown links to the document in your prose response — the download card is presented automatically by the UI. Do not describe formatting choices such as orientation or layout.
 After calling generate_docx, you MUST call read_document on the returned doc_id before writing your prose response. Base your description on the generated document's actual text, not on memory of what you intended to generate.
 Your prose response MUST include a short description of the generated document: what it is, its structure (key sections/clauses), and — if the draft was informed by any provided source documents — which sources you drew from and how. Keep it concise (typically 3–8 sentences or a short bulleted list). Refer to the document by filename, never by a download link.
-When the description makes factual claims about the contents of the newly generated document, cite the generated document with [N] markers and a <CITATIONS> block exactly as specified in the DOCUMENT CITATION INSTRUCTIONS above. If you also make factual claims about provided source documents, cite those source documents separately. In every citation entry, use the exact chat-local doc_id label for the cited document. Omit the <CITATIONS> block if the description makes no such claims.
+When the description makes factual claims about the contents of the newly generated document, cite the generated document with [N] markers and a <CITATIONS> block exactly as specified in the DOCUMENT CITATION INSTRUCTIONS above. If you also make factual claims about provided source documents, cite those source documents separately. In every citation entry, use the exact document_id, version_id, and filename from your document list. Omit the <CITATIONS> block if the description makes no such claims.
 Heading hierarchy: always use Heading 1 before introducing Heading 2, Heading 2 before Heading 3, and so on. Never skip levels (e.g. do not jump from Heading 1 to Heading 3).
 Numbering: all numbering MUST start from 1, never 0. This applies at every level of the hierarchy — use 1., 1.1, 1.1.1, 1.1.1.1, etc. Never produce 0., 0.1, 1.0, 1.0.1, or any other sequence that begins a level with 0.
 Never duplicate the numbering prefix in heading text. The heading's own numbering is applied automatically by the document generator, so the heading text must contain the title only — do NOT prepend "1.", "1.1", "2.", etc. into the heading text itself. For example, a Heading 1 titled "Introduction" must be passed as "Introduction", never as "1. Introduction" (which would render as "1. 1. Introduction"). The same rule applies at every level.
@@ -57,7 +57,7 @@ WORKFLOWS:
 When a user message begins with a [Workflow: <title> (id: <id>)] marker, the user has selected a workflow and you MUST apply it. Immediately call the read_workflow tool with that exact id to load the workflow's full prompt, then follow those instructions for the current turn. Do this before producing any other output or calling any other tools (aside from any document reads the workflow requires). Do not ask the user to confirm — the selection itself is the instruction to apply the workflow.
 
 DOCUMENT NAMING IN PROSE:
-The chat-local labels ("doc-0", "doc-1", "doc-N", …) are internal handles for tool calls and citation JSON ONLY. NEVER write them in your prose response or in any text the user reads — not in body text, not in headings, not in lists, not in tool-activity descriptions. The user does not know what "doc-0" means and seeing it is jarring. When referring to a document in prose, always use its filename (e.g. "the NDA draft" or "nda_v1.docx"). This rule applies to every word streamed back to the user; the only places "doc-N" identifiers are allowed are inside tool-call arguments and inside the <CITATIONS> JSON block's "doc_id" field.
+The chat-local labels ("doc-0", "doc-1", "doc-N", …) are internal handles for tool calls ONLY. NEVER write them in your prose response or in any text the user reads — not in body text, not in headings, not in lists, not in tool-activity descriptions, and NOT in the <CITATIONS> block. The user does not know what "doc-0" means and seeing it is jarring. When referring to a document in prose, always use its filename (e.g. "the NDA draft" or "nda_v1.docx"). This rule applies to every word streamed back to the user; the only places "doc-N" identifiers are allowed are inside tool-call arguments.
 
 GENERAL GUIDANCE:
 - Be precise and professional

@@ -30,6 +30,8 @@ export function makeReadDocumentTool(docStore: DocStore) {
       try {
         const buf = await downloadFile(entry.storage_path);
 
+        const metadata = `\n<document_metadata>\ndocument_id: ${entry.document_id}\nversion_id: ${entry.version_id}\nfilename: ${entry.filename}\n</document_metadata>`;
+
         if (entry.file_type === 'pdf') {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const pdf = await (pdfjsLib as any).getDocument({ data: new Uint8Array(buf) }).promise;
@@ -42,13 +44,13 @@ export function makeReadDocumentTool(docStore: DocStore) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             pages.push(`[Page ${p}]\n${content.items.map((i: any) => i.str).join(' ')}`);
           }
-          return pages.join('\n\n');
+          return pages.join('\n\n') + metadata;
         }
 
         if (entry.file_type === 'docx' || entry.file_type === 'doc') {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const result = await (mammoth as any).extractRawText({ buffer: Buffer.from(buf) });
-          return result.value as string;
+          return (result.value as string) + metadata;
         }
 
         return `Error: unsupported file type ${entry.file_type}`;

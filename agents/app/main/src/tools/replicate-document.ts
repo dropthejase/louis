@@ -77,7 +77,7 @@ export function makeReplicateDocumentTool(
       );
 
       const label = `doc-${Object.keys(docIndex).length}`;
-      docStore.set(label, { storage_path: newKey, file_type: entry.file_type, filename });
+      docStore.set(label, { storage_path: newKey, file_type: entry.file_type, filename, document_id: newDocId, version_id: versionId ?? '' });
       docIndex[label] = { document_id: newDocId, filename, version_number: 1 };
 
       return JSON.stringify({ new_doc_id: label, filename });

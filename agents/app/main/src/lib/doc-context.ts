@@ -13,7 +13,7 @@
  */
 import { query, queryOne } from './db';
 
-export type DocStore = Map<string, { storage_path: string; file_type: string; filename: string }>;
+export type DocStore = Map<string, { storage_path: string; file_type: string; filename: string; document_id: string; version_id: string }>;
 export type DocIndex = Record<string, { document_id: string; filename: string; version_id?: string; version_number?: number }>;
 
 /**
@@ -54,6 +54,8 @@ export async function buildDocContext(
       storage_path: version.storage_path,
       file_type: doc.file_type,
       filename: doc.filename,
+      document_id: doc.id,
+      version_id: doc.current_version_id,
     });
 
     docIndex[label] = {
@@ -105,6 +107,8 @@ export async function buildProjectDocContext(
       storage_path: version.storage_path,
       file_type: doc.file_type,
       filename: doc.filename,
+      document_id: doc.id,
+      version_id: doc.current_version_id,
     });
 
     docIndex[label] = {

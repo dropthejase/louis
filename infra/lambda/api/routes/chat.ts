@@ -91,6 +91,8 @@ function stripCitationsTag(text: string): string {
     return text.replace(/<CITATIONS>[\s\S]*?<\/CITATIONS>/g, "").trim();
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function extractCitationsFromText(
     text: string,
 ): MikeCitationAnnotation[] {
@@ -98,13 +100,21 @@ function extractCitationsFromText(
     if (!match) return [];
     try {
         const parsed = JSON.parse(match[1]) as unknown;
-        if (Array.isArray(parsed)) {
-            return parsed as MikeCitationAnnotation[];
-        }
+        if (!Array.isArray(parsed)) return [];
+        return (parsed as Record<string, unknown>[]).filter((c) => {
+            const valid =
+                typeof c.ref === 'number' &&
+                typeof c.document_id === 'string' &&
+                UUID_RE.test(c.document_id) &&
+                (typeof c.page === 'number' || typeof c.page === 'string') &&
+                typeof c.quote === 'string' &&
+                c.quote.length > 0;
+            if (!valid) console.warn('[chat] dropping malformed citation on history load', c);
+            return valid;
+        }) as unknown as MikeCitationAnnotation[];
     } catch {
-        // ignore
+        return [];
     }
-    return [];
 }
 
 // Convert Strands snapshot messages into MikeMessage[].

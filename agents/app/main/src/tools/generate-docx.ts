@@ -135,7 +135,7 @@ export function makeGenerateDocxTool(
 
       // Add to docStore for immediate use in same session
       const label = `doc-${Object.keys(docIndex).length}`;
-      docStore.set(label, { storage_path: storageKey, file_type: 'docx', filename });
+      docStore.set(label, { storage_path: storageKey, file_type: 'docx', filename, document_id: docId, version_id: versionId ?? '' });
       docIndex[label] = { document_id: docId, filename, version_number: 1, version_id: versionId };
 
       const url = await getPresignedUrl(storageKey, 900, filename);

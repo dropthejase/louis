@@ -75,6 +75,33 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     const agent = createAgent(userId, docStore, docIndex, projectId, model, sessionId);
 
     let fullText = '';
+    // Buffer tail to suppress <CITATIONS> block from streaming to frontend
+    const CITATIONS_TAG = '<CITATIONS>';
+    let tailBuffer = '';
+    let citationsSeen = false;
+
+    const streamVisible = (delta: string) => {
+      if (!delta || citationsSeen) return;
+      const combined = tailBuffer + delta;
+      const idx = combined.indexOf(CITATIONS_TAG);
+      if (idx >= 0) {
+        const visible = combined.slice(0, idx);
+        if (visible) sse(res, { type: 'content_delta', text: visible });
+        tailBuffer = '';
+        citationsSeen = true;
+        return;
+      }
+      const keep = Math.min(CITATIONS_TAG.length - 1, combined.length);
+      const visible = combined.slice(0, combined.length - keep);
+      tailBuffer = combined.slice(combined.length - keep);
+      if (visible) sse(res, { type: 'content_delta', text: visible });
+    };
+
+    const flushTail = () => {
+      if (citationsSeen || !tailBuffer) { tailBuffer = ''; return; }
+      sse(res, { type: 'content_delta', text: tailBuffer });
+      tailBuffer = '';
+    };
 
     for await (const event of agent.stream(prompt)) {
       console.log('streamingEvent', JSON.stringify(event));
@@ -98,7 +125,7 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       ) {
         const text = event.event.delta.text;
         fullText += text;
-        sse(res, { type: 'content_delta', text });
+        streamVisible(text);
         continue;
       }
 
@@ -183,16 +210,19 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     }
 
     // --- End of stream ---
-    const parsed = extractAnnotations(fullText);
+    flushTail();
+    citationsSeen = false; // reset for next turn
     const idx = docIndex as DocIndex;
+    const byDocumentId = new Map(Object.values(idx).map(d => [d.document_id, d]));
+    const validDocumentIds = new Set(byDocumentId.keys());
+    const parsed = extractAnnotations(fullText, validDocumentIds);
     const annotations = parsed.map((a) => ({
       type: 'citation_data' as const,
       ref: a.ref,
-      doc_id: a.doc_id,
-      document_id: idx[a.doc_id]?.document_id ?? '',
-      version_id: idx[a.doc_id]?.version_id ?? null,
-      version_number: idx[a.doc_id]?.version_number ?? null,
-      filename: idx[a.doc_id]?.filename ?? a.doc_id,
+      document_id: a.document_id,
+      version_id: a.version_id,
+      version_number: byDocumentId.get(a.document_id)?.version_number ?? null,
+      filename: a.filename,
       page: a.page,
       quote: a.quote,
     }));

@@ -39,7 +39,6 @@ const DEFAULT_BEDROCK_MODEL_ID = BEDROCK_MODEL_IDS['claude-sonnet-4-6'];
 function resolveBedrockModelId(logicalModel?: string): string {
   return BEDROCK_MODEL_IDS[logicalModel ?? ''] ?? DEFAULT_BEDROCK_MODEL_ID;
 }
-
 const dynamo = new DynamoDBClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 
 async function addCredits(userId: string, tokens: number): Promise<void> {
