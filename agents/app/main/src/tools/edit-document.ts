@@ -151,7 +151,7 @@ export function makeEditDocumentTool(
       });
       } catch (err) {
         logError('edit_document', 'Failed to apply edits', err, { doc_id, edit_count: edits.length });
-        return `Error: failed to edit document ${doc_id}.`;
+        return `Error: failed to edit document ${doc_id}: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
   });

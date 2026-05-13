@@ -31,7 +31,7 @@ export function makeReadWorkflowTool(userId: string) {
         return `# ${row.title}\n\n${row.prompt_md}`;
       } catch (err) {
         logError('read_workflow', 'Failed to read workflow', err, { workflow_id });
-        return `Error: failed to read workflow ${workflow_id}.`;
+        return `Error: failed to read workflow ${workflow_id}: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
   });

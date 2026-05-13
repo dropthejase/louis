@@ -36,7 +36,7 @@ export function makeListWorkflowsTool(userId: string) {
         return data.map(w => `[Workflow: ${w.title} (id: ${w.id})] type=${w.type}`).join('\n');
       } catch (err) {
         logError('list_workflows', 'Failed to list workflows', err);
-        return `Error: failed to list workflows.`;
+        return `Error: failed to list workflows: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
   });

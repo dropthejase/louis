@@ -39,7 +39,7 @@ export function makeReadTableCellsTool(userId: string) {
         return JSON.stringify(data);
       } catch (err) {
         logError('read_table_cells', 'Failed to read table cells', err, { review_id, column_index });
-        return `Error: failed to read table cells for review ${review_id}.`;
+        return `Error: failed to read table cells for review ${review_id}: ${err instanceof Error ? err.message : String(err)}`;
       }
     },
   });
