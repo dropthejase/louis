@@ -1,5 +1,5 @@
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 
 export function PreResponseWrapper({
@@ -17,18 +17,17 @@ export function PreResponseWrapper({
     compact?: boolean;
 }) {
     const [userToggled, setUserToggled] = useState(false);
-    const [isOpen, setIsOpen] = useState(!shouldMinimize);
-    // Once content has streamed in (shouldMinimize=true even once), stay
-    // minimized even if a later render briefly evaluates shouldMinimize=false.
-    // Without this latch, the wrapper visibly pops open when isStreaming
-    // flips off at the end of the response.
+    const [userOpen, setUserOpen] = useState(false);
+    // Latch: once shouldMinimize has been true, never re-open automatically.
     const hasMinimizedRef = useRef(shouldMinimize);
+    if (shouldMinimize) hasMinimizedRef.current = true;
 
-    useEffect(() => {
-        if (shouldMinimize) hasMinimizedRef.current = true;
-        if (userToggled) return;
-        setIsOpen(!shouldMinimize && !hasMinimizedRef.current);
-    }, [shouldMinimize, userToggled]);
+    // During streaming: derive open/closed directly from current props so
+    // there is no stale-initialisation frame. After streaming ends and the
+    // user has toggled, honour their choice instead.
+    const isOpen = userToggled
+        ? userOpen
+        : !shouldMinimize && !hasMinimizedRef.current;
 
     const stepWord = `step${stepCount === 1 ? "" : "s"}`;
     const label = isStreaming
@@ -43,8 +42,12 @@ export function PreResponseWrapper({
             <button
                 type="button"
                 onClick={() => {
-                    setUserToggled(true);
-                    setIsOpen((v) => !v);
+                    if (!userToggled) {
+                        setUserToggled(true);
+                        setUserOpen(!isOpen);
+                    } else {
+                        setUserOpen((v) => !v);
+                    }
                 }}
                 className={`w-full flex items-center justify-between font-serif text-gray-500 hover:text-gray-700 transition-colors ${buttonTextClass}`}
             >
