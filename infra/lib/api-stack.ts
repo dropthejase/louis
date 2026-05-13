@@ -102,17 +102,18 @@ export class ApiStack extends Stack {
     this.apiLambda = new NodejsFunction(this, 'ApiLambda', {
       entry: path.join(__dirname, '../lambda/api/lambda.ts'),
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_22_X,
       architecture: lambda.Architecture.ARM_64,
       bundling: {
-        minify: true,
-        sourceMap: false,
-        target: 'node20',
+        minify: false,
+        sourceMap: true,
+        target: 'node22',
         nodeModules: ['pdfjs-dist'],
         externalModules: [
           '@aws-lambda-powertools/logger',
           '@aws-lambda-powertools/metrics',
           '@aws-lambda-powertools/tracer',
+          '@aws-sdk/client-bedrock-runtime',
         ],
       },
       role: lambdaRole,
