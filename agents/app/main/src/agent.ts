@@ -27,7 +27,6 @@ import { makeFetchDocumentsTool } from './tools/fetch-documents';
 import { makeGenerateDocxTool } from './tools/generate-docx';
 import { makeEditDocumentTool } from './tools/edit-document';
 import { makeReplicateDocumentTool } from './tools/replicate-document';
-import { makeReadTableCellsTool } from './tools/read-table-cells';
 import { makeListWorkflowsTool } from './tools/list-workflows';
 import { makeReadWorkflowTool } from './tools/read-workflow';
 
@@ -99,7 +98,6 @@ export function createAgent(
     makeFetchDocumentsTool(docStore),
     makeGenerateDocxTool(userId, docStore, docIndex),
     makeEditDocumentTool(userId, docStore, docIndex),
-    makeReadTableCellsTool(userId),
     makeListWorkflowsTool(userId),
     makeReadWorkflowTool(userId),
     ...(projectId ? [makeReplicateDocumentTool(userId, projectId, docStore, docIndex)] : []),
