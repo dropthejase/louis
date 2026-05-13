@@ -30,8 +30,7 @@ import {
 } from '@/app/lib/mikeApi';
 import { useAssistantChat } from '@/app/hooks/useAssistantChat';
 import { useChatHistoryContext } from '@/app/contexts/ChatHistoryContext';
-import { UserMessage } from '@/app/components/assistant/UserMessage';
-import { AssistantMessage } from '@/app/components/assistant/AssistantMessage';
+import { MessageList } from '@/app/components/assistant/MessageList';
 import { ChatInput } from '@/app/components/assistant/ChatInput';
 import type { ChatInputHandle } from '@/app/components/assistant/ChatInput';
 import { ProjectExplorer } from '@/app/components/projects/ProjectExplorer';
@@ -281,10 +280,17 @@ function ProjectChatPage({ projectId, chatId }: { projectId: string; chatId: str
     ].join('|');
   }, [messages]);
 
+  // Refetch project only when a response finishes (isResponseLoading flips
+  // false), not mid-stream. Avoids concurrent setProject re-renders that
+  // pop tool cards back open while text is still streaming.
+  const prevIsResponseLoadingRef = useRef(false);
   useEffect(() => {
-    if (!projectMutationSignature) return;
-    getProject(projectId!).then(setProject).catch(() => {});
-  }, [projectMutationSignature, projectId]);
+    const wasLoading = prevIsResponseLoadingRef.current;
+    prevIsResponseLoadingRef.current = isResponseLoading;
+    if (wasLoading && !isResponseLoading && projectMutationSignature) {
+      getProject(projectId!).then(setProject).catch(() => {});
+    }
+  }, [isResponseLoading, projectMutationSignature, projectId]);
 
   useEffect(() => {
     setCurrentChatId(chatId!);
@@ -445,14 +451,21 @@ function ProjectChatPage({ projectId, chatId }: { projectId: string; chatId: str
     });
   };
 
-  const handleEditResolved = (_args: {
+  const handleEditResolved = (args: {
     editId: string;
     documentId: string;
     status: 'accepted' | 'rejected';
     versionId: string | null;
     downloadUrl: string | null;
   }) => {
-    void _args;
+    // Bump refetchKey on the open tab so DocxView re-fetches the updated document.
+    setTabs((prev) =>
+      prev.map((t) =>
+        t.documentId === args.documentId
+          ? { ...t, refetchKey: (t.refetchKey ?? 0) + 1 }
+          : t,
+      ),
+    );
   };
 
   const patchTab = (documentId: string, patch: Partial<DocTab>) => {
@@ -925,34 +938,19 @@ function ProjectChatPage({ projectId, chatId }: { projectId: string; chatId: str
               className="flex-1 overflow-y-auto px-4 py-4 space-y-4 min-h-0"
               style={{ scrollbarGutter: 'stable' }}
             >
-              {(() => {
-                const lastUserIdx = messages.map((m) => m.role).lastIndexOf('user');
-                const lastAssistantIdx = messages.map((m) => m.role).lastIndexOf('assistant');
-                return messages.map((msg, i) =>
-                  msg.role === 'user' ? (
-                    <div key={i} ref={i === lastUserIdx ? latestUserMessageRef : null}>
-                      <UserMessage content={msg.content ?? ''} files={(msg as any).files} />
-                    </div>
-                  ) : (
-                    <AssistantMessage
-                      key={i}
-                      content={msg.content ?? ''}
-                      events={msg.events}
-                      isStreaming={i === messages.length - 1 && isResponseLoading}
-                      isError={!!(msg as any).error}
-                      annotations={msg.annotations}
-                      onCitationClick={handleCitationClick}
-                      minHeight={i === lastAssistantIdx ? minHeight : '0px'}
-                      onEditViewClick={handleEditViewClick}
-                      onOpenDocument={handleOpenDocument}
-                      onEditResolved={handleEditResolved}
-                      onEditError={handleEditError}
-                      isDocReloading={(docId) => reloadingDocIds.has(docId)}
-                    />
-                  ),
-                );
-              })()}
-              <div ref={messagesEndRef} />
+              <MessageList
+                messages={messages}
+                isResponseLoading={isResponseLoading}
+                minHeight={minHeight}
+                onCitationClick={handleCitationClick}
+                onEditViewClick={handleEditViewClick}
+                onOpenDocument={handleOpenDocument}
+                onEditResolved={handleEditResolved}
+                onEditError={handleEditError}
+                isDocReloading={(docId) => reloadingDocIds.has(docId)}
+                latestUserMessageRef={latestUserMessageRef}
+                messagesEndRef={messagesEndRef}
+              />
             </div>
           )}
 

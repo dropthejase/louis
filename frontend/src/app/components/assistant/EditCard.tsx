@@ -289,6 +289,8 @@ export function EditCard({
         }
     };
 
+    if (resolved) return null;
+
     return (
         <div className="border border-gray-200 rounded-lg p-3 bg-gray-50">
             {annotation.reason && (
@@ -314,14 +316,14 @@ export function EditCard({
                     disabled={inFlight || resolved}
                     className="px-2 py-1 text-xs rounded border border-gray-900 bg-gray-900 text-white hover:bg-gray-800 disabled:opacity-50"
                 >
-                    {status === "accepted" ? "Accepted" : "Accept"}
+                    Accept
                 </button>
                 <button
                     onClick={() => handle("reject")}
                     disabled={inFlight || resolved}
                     className="px-2 py-1 text-xs rounded border border-gray-200 bg-white text-gray-700 hover:bg-gray-100 disabled:opacity-50"
                 >
-                    {status === "rejected" ? "Rejected" : "Reject"}
+                    Reject
                 </button>
                 {onViewClick && (
                     <button

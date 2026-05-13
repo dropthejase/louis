@@ -1,8 +1,7 @@
 
 import { useCallback, useState, useRef, useEffect } from "react";
 import { ArrowDown } from "lucide-react";
-import { UserMessage } from "./UserMessage";
-import { AssistantMessage } from "./AssistantMessage";
+import { MessageList } from "./MessageList";
 import { ChatInput } from "./ChatInput";
 import {
     AssistantSidePanel,
@@ -15,7 +14,6 @@ import type {
     MikeMessage,
 } from "../shared/types";
 import { useSidebar } from "@/app/contexts/SidebarContext";
-import { invalidateDocxBytes } from "@/app/hooks/useFetchDocxBytes";
 
 interface Props {
     messages: MikeMessage[];
@@ -41,10 +39,10 @@ export function ChatView({
     const [reloadingDocIds, setReloadingDocIds] = useState<Set<string>>(
         () => new Set(),
     );
-    // Per-edit in-flight set — disables Accept/Reject on only the one
-    // edit currently being resolved, so sibling edits in the same message
-    // (and their twins in DocPanel) stay clickable.
-    const [reloadingEditIds, setReloadingEditIds] = useState<Set<string>>(
+    // Tracks in-flight edit resolves initiated from the side panel (DocPanel
+    // Accept/Reject buttons), separate from the per-message card state owned
+    // by MessageList.
+    const [panelReloadingEditIds, setPanelReloadingEditIds] = useState<Set<string>>(
         () => new Set(),
     );
     const { setSidebarOpen } = useSidebar();
@@ -186,23 +184,15 @@ export function ChatView({
         [upsertTab],
     );
 
-    const [resolvedEditStatuses, setResolvedEditStatuses] = useState<
-        Record<string, "accepted" | "rejected">
-    >({});
-
-    const handleEditResolveStart = useCallback(
-        (args: {
-            editId: string;
-            documentId: string;
-            verb: "accept" | "reject";
-        }) => {
+    const handlePanelEditResolveStart = useCallback(
+        (args: { editId: string; documentId: string; verb: "accept" | "reject" }) => {
             setReloadingDocIds((prev) => {
                 if (prev.has(args.documentId)) return prev;
                 const next = new Set(prev);
                 next.add(args.documentId);
                 return next;
             });
-            setReloadingEditIds((prev) => {
+            setPanelReloadingEditIds((prev) => {
                 if (prev.has(args.editId)) return prev;
                 const next = new Set(prev);
                 next.add(args.editId);
@@ -220,41 +210,27 @@ export function ChatView({
             versionId: string | null;
             downloadUrl: string | null;
         }) => {
-            setResolvedEditStatuses((prev) => ({
-                ...prev,
-                [args.editId]: args.status,
-            }));
             setReloadingDocIds((prev) => {
                 if (!prev.has(args.documentId)) return prev;
                 const next = new Set(prev);
                 next.delete(args.documentId);
                 return next;
             });
-            setReloadingEditIds((prev) => {
+            setPanelReloadingEditIds((prev) => {
                 if (!prev.has(args.editId)) return prev;
                 const next = new Set(prev);
                 next.delete(args.editId);
                 return next;
             });
-            // Propagate the new status onto any open edit-tab for this
-            // edit so DocPanel's Accept/Reject buttons flip and disable
-            // (their sync effect keys off edit.status). Without this, a
-            // resolve triggered from the inline EditCard or BulkEditActions
-            // leaves the panel buttons looking live.
+            // Propagate the new status onto any open edit-tab so DocPanel's
+            // Accept/Reject buttons flip and disable.
             setTabs((prev) =>
                 prev.map((t) =>
                     t.kind === "edit" && t.edit.edit_id === args.editId
-                        ? {
-                              ...t,
-                              edit: { ...t.edit, status: args.status },
-                          }
+                        ? { ...t, edit: { ...t.edit, status: args.status } }
                         : t,
                 ),
             );
-            // Accept/reject mutates bytes for this document's current
-            // version; drop the cache so the next DocxView render (or an
-            // explicit re-open) fetches the fresh file.
-            invalidateDocxBytes(args.documentId);
         },
         [],
     );
@@ -297,14 +273,6 @@ export function ChatView({
                 next.delete(args.documentId);
                 return next;
             });
-            if (args.editId) {
-                setReloadingEditIds((prev) => {
-                    if (!prev.has(args.editId!)) return prev;
-                    const next = new Set(prev);
-                    next.delete(args.editId!);
-                    return next;
-                });
-            }
         },
         [],
     );
@@ -474,80 +442,25 @@ export function ChatView({
                             className="space-y-6 transition-opacity duration-150"
                             style={{ opacity: messagesVisible ? 1 : 0 }}
                         >
-                            {(() => {
-                                const lastUserIndex = messages
-                                    .map((m) => m.role)
-                                    .lastIndexOf("user");
-                                const lastAssistantIndex = messages
-                                    .map((m) => m.role)
-                                    .lastIndexOf("assistant");
-                                return messages.map((msg, i) => (
-                                    <div
-                                        key={i}
-                                        ref={
-                                            i === lastUserIndex
-                                                ? latestUserMessageRef
-                                                : null
-                                        }
-                                    >
-                                        {msg.role === "user" ? (
-                                            <UserMessage
-                                                content={msg.content ?? ""}
-                                                files={(msg as any).files}
-                                                workflow={(msg as any).workflow}
-                                            />
-                                        ) : (
-                                            <AssistantMessage
-                                                content={msg.content ?? ""}
-                                                events={msg.events}
-                                                isStreaming={
-                                                    i === messages.length - 1 &&
-                                                    isResponseLoading
-                                                }
-                                                isError={!!(msg as any).error}
-                                                errorMessage={
-                                                    typeof (msg as any).error ===
-                                                    "string"
-                                                        ? (msg as any).error
-                                                        : undefined
-                                                }
-                                                annotations={msg.annotations}
-                                                onCitationClick={openCitation}
-                                                minHeight={
-                                                    i === lastAssistantIndex
-                                                        ? minHeight
-                                                        : "0px"
-                                                }
-                                                onWorkflowClick={(id) => {
-                                                    setWorkflowModalInitialId(
-                                                        id,
-                                                    );
-                                                    setWorkflowModalOpen(true);
-                                                }}
-                                                onEditViewClick={openEditor}
-                                                onOpenDocument={openDocument}
-                                                onEditResolveStart={
-                                                    handleEditResolveStart
-                                                }
-                                                onEditResolved={
-                                                    handleEditResolved
-                                                }
-                                                onEditError={handleEditError}
-                                                isDocReloading={(docId) =>
-                                                    reloadingDocIds.has(docId)
-                                                }
-                                                isEditReloading={(editId) =>
-                                                    reloadingEditIds.has(editId)
-                                                }
-                                                resolvedEditStatuses={
-                                                    resolvedEditStatuses
-                                                }
-                                            />
-                                        )}
-                                    </div>
-                                ));
-                            })()}
-                            <div ref={messagesEndRef} />
+                            <MessageList
+                                messages={messages}
+                                isResponseLoading={isResponseLoading}
+                                minHeight={minHeight}
+                                onCitationClick={openCitation}
+                                onEditViewClick={openEditor}
+                                onOpenDocument={openDocument}
+                                onWorkflowClick={(id) => {
+                                    setWorkflowModalInitialId(id);
+                                    setWorkflowModalOpen(true);
+                                }}
+                                onEditResolved={handleEditResolved}
+                                onEditError={handleEditError}
+                                isDocReloading={(docId) =>
+                                    reloadingDocIds.has(docId)
+                                }
+                                latestUserMessageRef={latestUserMessageRef}
+                                messagesEndRef={messagesEndRef}
+                            />
                         </div>
                     </div>
                 </div>
@@ -611,9 +524,9 @@ export function ChatView({
                             reloadingDocIds.has(documentId)
                         }
                         isEditReloading={(editId) =>
-                            reloadingEditIds.has(editId)
+                            panelReloadingEditIds.has(editId)
                         }
-                        onEditResolveStart={handleEditResolveStart}
+                        onEditResolveStart={handlePanelEditResolveStart}
                         onEditResolved={handleEditResolved}
                         onEditError={handleEditError}
                         onWarningDismiss={handleWarningDismiss}
