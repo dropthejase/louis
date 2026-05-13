@@ -504,17 +504,13 @@ async function hydrateEditStatuses(
     });
 }
 
-// GET /chat/:chatId/messages — read conversation history from S3 snapshot
+// GET /chat/:chatId/messages — read conversation history from S3
 chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
 
-    // Look up the S3 session ID stored on the chat row.
-    const chat = await queryOne<{
-        agentcore_session_id: string | null;
-        user_id: string;
-    }>(
-        `SELECT agentcore_session_id, user_id FROM chats WHERE id = :id`,
+    const chat = await queryOne<{ user_id: string }>(
+        `SELECT user_id FROM chats WHERE id = :id`,
         [{ name: "id", value: { stringValue: chatId } }],
     );
 
@@ -523,50 +519,22 @@ chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
     if (chat.user_id !== userId)
         return void res.status(404).json({ detail: "Chat not found" });
 
-    const sessionId = chat.agentcore_session_id;
-    if (!sessionId) return void res.json({ messages: [] });
-
     const bucket = process.env.SESSIONS_BUCKET_NAME;
     if (!bucket)
         return void res.status(500).json({ detail: "Sessions bucket not configured" });
 
     try {
         const s3 = getSessionS3();
+        const conversationKey = `conversations/${chatId}/messages.json`;
 
-        // List objects under sessions/{sessionId}/scopes/agent/ to find the agentId.
-        const prefix = `sessions/${sessionId}/scopes/agent/`;
-        const listCmd = new ListObjectsV2Command({
-            Bucket: bucket,
-            Prefix: prefix,
-            MaxKeys: 10,
-        });
-        const listResult = await s3.send(listCmd);
-        const keys = (listResult.Contents ?? []).map((o) => o.Key ?? "");
-
-        // Extract the first path segment after "agent/" as the agentId.
-        let agentId: string | undefined;
-        for (const key of keys) {
-            const rest = key.slice(prefix.length);
-            const segment = rest.split("/")[0];
-            if (segment) {
-                agentId = segment;
-                break;
-            }
-        }
-
-        if (!agentId) return void res.json({ messages: [] });
-
-        const snapshotKey = `sessions/${sessionId}/scopes/agent/${agentId}/snapshots/snapshot_latest.json`;
-        const getCmd = new GetObjectCommand({ Bucket: bucket, Key: snapshotKey });
-
-        let snapshotBody: string;
+        let rawMessages: SnapshotMessage[] = [];
         try {
-            const getResult = await s3.send(getCmd);
+            const getResult = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: conversationKey }));
             const chunks: Uint8Array[] = [];
             for await (const chunk of getResult.Body as AsyncIterable<Uint8Array>) {
                 chunks.push(chunk);
             }
-            snapshotBody = Buffer.concat(chunks).toString("utf-8");
+            rawMessages = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as SnapshotMessage[];
         } catch (err: unknown) {
             const code = (err as { name?: string }).name;
             if (code === "NoSuchKey" || code === "NoSuchBucket") {
@@ -575,12 +543,7 @@ chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
             throw err;
         }
 
-        const snapshot = JSON.parse(snapshotBody) as {
-            data?: { messages?: SnapshotMessage[] };
-        };
-        const rawMessages = snapshot.data?.messages ?? [];
         const messages = snapshotMessagesToMikeMessages(rawMessages);
-
         res.json({ messages });
     } catch (err) {
         console.error("[chat/messages] error:", err);

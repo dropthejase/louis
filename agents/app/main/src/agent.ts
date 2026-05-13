@@ -1,6 +1,6 @@
 /**
  * AgentCore agent factory — constructs the Strands SDK Agent with all tools,
- * Bedrock model, and optional S3-backed session persistence.
+ * Bedrock model, and S3-backed conversation persistence.
  *
  * userId is always sourced from the JWT `sub` claim (validated in index.ts)
  * and is never derived from LLM input. The AfterModelCallEvent hook increments
@@ -9,12 +9,15 @@
  *
  * replicate_document is only included when projectId is provided — the tool
  * makes no sense in a standalone-document context.
+ *
+ * Conversation history is managed manually: loadMessages() reads prior messages
+ * from S3 before each turn; AfterInvocationEvent writes agent.messages back.
+ * This ensures the system prompt is always fresh from code, never from a snapshot.
  */
-import { Agent, BedrockModel, SessionManager, AfterModelCallEvent } from '@strands-agents/sdk';
-// @ts-expect-error — package exports map not supported under moduleResolution:node; Node 22 resolves subpath exports at runtime
-import { S3Storage } from '@strands-agents/sdk/session/s3-storage';
-import { S3Client } from '@aws-sdk/client-s3';
+import { Agent, BedrockModel, AfterModelCallEvent, AfterInvocationEvent } from '@strands-agents/sdk';
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
+import type { MessageData } from '@strands-agents/sdk';
 import { DocStore, DocIndex } from './lib/doc-context';
 import { SYSTEM_PROMPT } from './system-prompt';
 import { makeReadDocumentTool } from './tools/read-document';
@@ -39,7 +42,27 @@ const DEFAULT_BEDROCK_MODEL_ID = BEDROCK_MODEL_IDS['claude-sonnet-4-6'];
 function resolveBedrockModelId(logicalModel?: string): string {
   return BEDROCK_MODEL_IDS[logicalModel ?? ''] ?? DEFAULT_BEDROCK_MODEL_ID;
 }
+const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 const dynamo = new DynamoDBClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
+
+const SESSIONS_BUCKET = process.env.SESSIONS_BUCKET_NAME!;
+
+function conversationKey(chatId: string): string {
+  return `conversations/${chatId}/messages.json`;
+}
+
+export async function loadMessages(chatId: string): Promise<MessageData[]> {
+  try {
+    const res = await s3.send(new GetObjectCommand({
+      Bucket: SESSIONS_BUCKET,
+      Key: conversationKey(chatId),
+    }));
+    const body = await res.Body?.transformToString();
+    return body ? JSON.parse(body) as MessageData[] : [];
+  } catch {
+    return [];
+  }
+}
 
 async function addCredits(userId: string, tokens: number): Promise<void> {
   const month = new Date().toISOString().slice(0, 7);
@@ -51,23 +74,14 @@ async function addCredits(userId: string, tokens: number): Promise<void> {
   }));
 }
 
-/**
- * Build and return a configured Strands Agent for a single invocation.
- *
- * @param userId Cognito sub — used for ownership checks inside tools.
- * @param docStore In-memory map of doc labels to storage metadata.
- * @param docIndex In-memory map of doc labels to DB metadata.
- * @param projectId When set, scopes the context to a project and enables replicate_document.
- * @param modelId Logical model tier name (e.g. "claude-sonnet-4-6"); defaults to mid tier.
- * @param sessionId When set, enables S3-backed conversation snapshot persistence.
- */
 export function createAgent(
   userId: string,
   docStore: DocStore,
   docIndex: DocIndex,
+  chatId: string,
+  previousMessages: MessageData[],
   projectId?: string,
   modelId?: string,
-  sessionId?: string,
 ): Agent {
   const model = new BedrockModel({
     modelId: resolveBedrockModelId(modelId),
@@ -91,20 +105,20 @@ export function createAgent(
     ...(projectId ? [makeReplicateDocumentTool(userId, docStore, docIndex)] : []),
   ];
 
-  let sessionManager: SessionManager | undefined;
-  if (sessionId) {
-    const storage = new S3Storage({
-      bucket: process.env.SESSIONS_BUCKET_NAME!,
-      prefix: 'sessions',
-      s3Client: new S3Client({ region: process.env.AWS_REGION ?? 'eu-west-1' }),
-    });
-    sessionManager = new SessionManager({
-      storage: { snapshot: storage },
-      sessionId,
-    });
-  }
+  const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, messages: previousMessages, printer: false });
 
-  const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, sessionManager, printer: false });
+  agent.addHook(AfterInvocationEvent, async () => {
+    try {
+      await s3.send(new PutObjectCommand({
+        Bucket: SESSIONS_BUCKET,
+        Key: conversationKey(chatId),
+        Body: JSON.stringify(agent.messages),
+        ContentType: 'application/json',
+      }));
+    } catch (err) {
+      console.error('[session] failed to save messages:', err);
+    }
+  });
 
   agent.addHook(AfterModelCallEvent, async (event) => {
     const tokens = event.stopData?.message?.metadata?.usage?.totalTokens;
