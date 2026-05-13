@@ -65,19 +65,10 @@ async function uploadViaPresignedUrl(
     });
 }
 
-async function doRequest(url: string, init: RequestInit): Promise<Response> {
-    const response = await fetch(url, init);
-    if (response.status === 500) {
-        await new Promise((resolve) => setTimeout(resolve, 1500));
-        return fetch(url, init);
-    }
-    return response;
-}
-
 export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
     const authHeader = await getAuthHeader();
     const { headers: initHeaders, ...restInit } = init ?? {};
-    const response = await doRequest(`${API_BASE}${path}`, {
+    const response = await fetch(`${API_BASE}${path}`, {
         cache: "no-store",
         ...restInit,
         headers: {
