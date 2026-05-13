@@ -146,8 +146,9 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | PDF upload passthrough | No — only DOCX/DOC supported | ✅ | Added: Conversion Lambda detects `.pdf`, copies to `converted-pdfs/` prefix, updates DB |
 | AI chat | Supabase AI edge function via backend proxy | ✅ | AWS AgentCore Runtime (Strands agent) with SSE streaming; frontend calls AgentCore directly |
 | Credits metering | No | ✅ | DynamoDB `credits_used` per userId+month; `AfterModelCallEvent` tracks `totalTokens` |
-| Session persistence | No | ✅ | S3-backed AgentCore session snapshots; session cleanup on chat delete |
+| Session persistence | No | ✅ | Manual S3 read/write (`conversations/{chatId}/messages.json`); system prompt always fresh from code (SessionManager removed); session cleanup on chat delete |
 | Database | Supabase Postgres | ✅ | Aurora Serverless v2 PostgreSQL via RDS Data API |
+| Chat history reload | No — original had no tool activity cards | ✅ | Tool activity cards (doc_read, doc_edited, etc.) and reasoning blocks reconstructed from S3 snapshot on history load |
 | Real-time / subscriptions | Supabase Realtime | 🚫 | Not used in original codebase (no realtime subscriptions found) |
 | `documents.structure_tree` | Written on every upload (heading/section extraction) | 🚫 | Column kept in schema but no longer populated. Extraction wasted CPU on every upload; nothing in frontend, backend, or agents ever reads the column. Can be backfilled via batch job if a future feature needs it. See ARCHITECTURE.md → Database section |
 
@@ -155,19 +156,22 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 
 ## To Test
 
-| Area | Test |
-|------|------|
-| Document upload | Upload a `.docx` file — verify conversion Lambda fires, PDF available |
-| Document upload | Upload a `.pdf` file — verify passthrough to `converted-pdfs/`, available in UI |
-| AI chat | Chat against uploaded documents — verify agent reads doc context |
-| AI chat — tool spinner | While agent runs tools, spinner should show tool name (not infinite "Working…") |
-| AI edit | Ask agent to make a tracked change edit to a Word doc — verify edit appears in UI |
-| Document preview | Open a document — verify PDF renders in the preview panel |
-| Projects | Create project, add documents, navigate project page |
-| Tabular Review | Create review, add documents/columns, generate cells |
-| Workflows | Create workflow, run it |
-| Project chat | Chat within a project — verify project context passed to agent |
-| Workflow chat | Invoke workflow from chat — verify workflow runs correctly |
+| Area | Test | Status |
+|------|------|--------|
+| Document upload | Upload a `.docx` file — verify conversion Lambda fires, PDF available | ✅ Verified |
+| Document upload | Upload a `.pdf` file — verify passthrough to `converted-pdfs/`, available in UI | ✅ Verified |
+| AI chat | Chat against uploaded documents — verify agent reads doc context | ✅ Verified |
+| AI chat — tool spinner | While agent runs tools, spinner should show tool name (not infinite "Working…") | ✅ Verified |
+| AI edit | Ask agent to make a tracked change edit to a Word doc — verify edit appears in UI | ✅ Verified |
+| Document preview | Open a document — verify PDF renders in the preview panel | ✅ Verified |
+| AI chat — generate docx | Ask agent to generate a new DOCX — verify download card appears | ✅ Verified |
+| AI chat — history reload | Reopen a chat — verify tool activity cards + reasoning blocks restore | ⬜ Pending deploy |
+| AI chat — multi-turn context | Send 2+ turns — verify agent remembers prior context | ⬜ Pending verify |
+| Projects | Create project, add documents, navigate project page | ⬜ Not yet tested |
+| Tabular Review | Create review, add documents/columns, generate cells | ⬜ Not yet tested |
+| Workflows | Create workflow, run it | ⬜ Not yet tested |
+| Project chat | Chat within a project — verify project context passed to agent | ⬜ Not yet tested |
+| Workflow chat | Invoke workflow from chat — verify workflow runs correctly | ⬜ Not yet tested |
 
 ---
 
@@ -176,6 +180,7 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 | Area | Notes |
 |------|-------|
 | Sync `organisation` to Cognito on profile update | `custom:organisation` Cognito attribute is set at signup only. When user updates org in Account Settings, only `user_profiles.organisation` is updated — Cognito attribute is not synced. DB is the app's source of truth; Cognito attribute is never read back. Not worth the extra Cognito API call for a POC. |
+| Sidebar — user tier display | `main` shows `profile.tier` (e.g. "Free", "Pro") below the user's name. Dev hardcodes `"Free"`. Not worth the plumbing for a POC — tier display is cosmetic. |
 
 ---
 
@@ -183,8 +188,6 @@ Tracks every API endpoint and key feature from the original Supabase-backed code
 
 | Area | Gap | Notes |
 |------|-----|-------|
-| Sidebar — user tier | `main` reads `profile.tier` from DB (`user_profiles.tier` column) and displays it below the user's name (e.g. "Free", "Pro"). Dev hardcodes `"Free"`. | Need to expose `tier` field in `GET /user/profile` response and consume it in the dev `AppSidebar`. |
-| Account Settings page | `main` has a dropdown on the sidebar user widget → "Account Settings" page. Dev sidebar has the same dropdown but the Account Settings page content needs parity review. | To be worked next. |
 | Credit enforcement | `main` has pre-flight credit check — requests blocked with 429 when credits exhausted. Dev tracks credits (DynamoDB) but no enforcement gate. | See project TODO. |
 | Schema cleanup TBD on implementation — `chat_messages` | `chat_messages` table and `document_edits.chat_message_id` column are dead in dev — messages live in S3 snapshots only. `chat_message_id` was never written to in either branch. | Remove from `000_one_shot_schema.sql`: `chat_messages` table + index, `document_edits.chat_message_id` column + `document_edits_message_id_idx` + FK constraint block. Also strip the `chat_messages` query from `GET /chat/:chatId` backend (returns metadata only). `hydrateEditStatuses` already moved to `/messages` endpoint. |
 | Tracked change — cross-paragraph deletion | Agent cannot propose a deletion that spans two `<w:p>` elements. `applyTrackedEdits` searches per-paragraph; a `find` string containing `\n` across paragraphs never matches. Edit is silently skipped — DOCX unmodified, `del_w_id = null`, fake pending card shown. | Workaround: agent should delete within a single paragraph at a time. Full fix requires multi-paragraph span support in `applyTrackedEdits`. |

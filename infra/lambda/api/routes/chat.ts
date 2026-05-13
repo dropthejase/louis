@@ -35,13 +35,18 @@ function getSessionS3(): S3Client {
 // Types mirroring the Strands snapshot message format
 // ---------------------------------------------------------------------------
 interface SnapshotContentBlock {
-    type: string;
+    // Flat Bedrock Converse format (type field present)
+    type?: string;
     text?: string;
     id?: string;
     name?: string;
     input?: unknown;
     tool_use_id?: string;
     content?: unknown;
+    // Nested Strands SDK snapshot format (no type field, nested objects)
+    toolUse?: { name: string; toolUseId: string; input?: unknown };
+    toolResult?: { toolUseId: string; status?: string; content?: unknown };
+    reasoning?: { text: string; signature?: string };
 }
 interface SnapshotMessage {
     role: "user" | "assistant";
@@ -53,6 +58,7 @@ interface SnapshotMessage {
 // ---------------------------------------------------------------------------
 type MikeAssistantEvent =
     | { type: "content"; text: string }
+    | { type: "reasoning"; text: string }
     | { type: "doc_read"; filename: string; document_id?: string }
     | { type: "doc_find"; filename: string; query: string; total_matches: number }
     | { type: "doc_created"; filename: string; download_url: string; document_id?: string; version_id?: string }
@@ -124,14 +130,15 @@ function snapshotMessagesToMikeMessages(
     const result: MikeMessage[] = [];
 
     // Build a map of tool_use_id -> tool result content for lookup.
+    // Handles both flat Bedrock format ({ type: "tool_result", tool_use_id })
+    // and nested Strands snapshot format ({ toolResult: { toolUseId, content } }).
     const toolResults = new Map<string, unknown>();
     for (const msg of messages) {
         if (msg.role === "user") {
             for (const block of msg.content) {
-                if (
-                    block.type === "tool_result" &&
-                    typeof block.tool_use_id === "string"
-                ) {
+                if (block.toolResult && typeof block.toolResult.toolUseId === "string") {
+                    toolResults.set(block.toolResult.toolUseId, block.toolResult.content);
+                } else if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
                     toolResults.set(block.tool_use_id, block.content);
                 }
             }
@@ -140,10 +147,12 @@ function snapshotMessagesToMikeMessages(
 
     for (const msg of messages) {
         if (msg.role === "user") {
-            // Only include user text blocks (skip tool_result blocks).
+            // Only include user text blocks (skip tool_result/toolResult blocks).
             // Strands SDK uses type "textBlock"; Bedrock Converse uses "text"; snapshot may omit type entirely — accept all.
+            // Exclude nested-format toolResult blocks which have no type but are not text.
             const textBlocks = msg.content.filter(
-                (b) => (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
+                (b) => !b.toolResult && !b.toolUse &&
+                    (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
             );
             if (textBlocks.length === 0) continue;
             const content = textBlocks
@@ -155,25 +164,38 @@ function snapshotMessagesToMikeMessages(
         } else {
             // assistant message
             // Strands SDK uses type "textBlock"; Bedrock Converse uses "text"; snapshot may omit type entirely — accept all.
+            // Exclude nested-format blocks (toolUse/toolResult/reasoning) which have no type but are not text.
             const textBlocks = msg.content.filter(
-                (b) => (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
+                (b) => !b.toolUse && !b.toolResult && !b.reasoning &&
+                    (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
             );
+            // Handles nested Strands format ({ toolUse: {...} }) and flat Bedrock format ({ type: "tool_use"|"toolUse" })
             const toolUseBlocks = msg.content.filter(
-                (b) => b.type === "tool_use" || b.type === "toolUse",
+                (b) => !!b.toolUse || b.type === "tool_use" || b.type === "toolUse",
             );
+            // Reasoning blocks: nested Strands format ({ reasoning: { text, signature } })
+            const reasoningBlocks = msg.content.filter((b) => !!b.reasoning);
 
             const fullText = textBlocks.map((b) => b.text ?? "").join("\n");
             const content = stripCitationsTag(fullText);
             const annotations = extractCitationsFromText(fullText);
 
             const events: MikeAssistantEvent[] = [];
+
+            for (const rb of reasoningBlocks) {
+                if (rb.reasoning?.text) {
+                    events.push({ type: "reasoning", text: rb.reasoning.text });
+                }
+            }
+
             if (content) {
                 events.push({ type: "content", text: content });
             }
 
             for (const toolUse of toolUseBlocks) {
-                const toolName = toolUse.name ?? "";
-                const toolId = toolUse.id ?? "";
+                // Support both nested ({ toolUse: { name, toolUseId } }) and flat ({ name, id }) formats
+                const toolName = (toolUse.toolUse?.name ?? toolUse.name) ?? "";
+                const toolId = (toolUse.toolUse?.toolUseId ?? toolUse.id) ?? "";
                 const resultRaw = toolResults.get(toolId);
                 let resultObj: Record<string, unknown> = {};
                 try {
@@ -198,11 +220,21 @@ function snapshotMessagesToMikeMessages(
                     // ignore parse errors
                 }
 
+                // For read_document, result is raw doc text (not JSON) — extract filename from metadata block.
+                let rawResultText = "";
+                if (Array.isArray(resultRaw)) {
+                    const textEntry = (resultRaw as { type?: string; text?: string }[])
+                        .find((e) => e.text);
+                    rawResultText = textEntry?.text ?? "";
+                }
+                const metaFilenameMatch = rawResultText.match(/^filename:\s*(.+)$/m);
+                const metaFilename = metaFilenameMatch?.[1]?.trim() ?? "";
+
                 switch (toolName) {
                     case "read_document":
                         events.push({
                             type: "doc_read",
-                            filename: (resultObj.filename as string) ?? "",
+                            filename: (resultObj.filename as string) || metaFilename,
                         });
                         break;
                     case "find_in_document":
