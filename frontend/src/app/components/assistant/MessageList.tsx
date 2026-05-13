@@ -37,8 +37,8 @@ interface MessageListProps {
         downloadUrl: string | null;
     }) => void;
     isDocReloading?: (documentId: string) => boolean;
-    latestUserMessageRef?: React.RefObject<HTMLDivElement>;
-    messagesEndRef?: React.RefObject<HTMLDivElement>;
+    latestUserMessageRef?: React.RefObject<HTMLDivElement | null>;
+    messagesEndRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export function MessageList({
