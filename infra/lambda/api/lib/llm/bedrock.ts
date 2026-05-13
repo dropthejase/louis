@@ -28,10 +28,10 @@ import type {
 
 const MAX_TOKENS = 16384;
 
+let _client: BedrockRuntimeClient | null = null;
 function getClient(): BedrockRuntimeClient {
-  return new BedrockRuntimeClient({
-    region: process.env.AWS_REGION ?? "eu-west-1",
-  });
+  if (!_client) _client = new BedrockRuntimeClient({ region: process.env.AWS_REGION ?? "eu-west-1" });
+  return _client;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +88,6 @@ export async function streamBedrock(
     runTools,
   } = params;
   const maxIter = params.maxIterations ?? 10;
-  const client = getClient();
   const bedrockTools = toBedrockTools(tools);
 
   // Bedrock messages accumulate across tool-call iterations.
@@ -106,7 +105,7 @@ export async function streamBedrock(
         : undefined,
     });
 
-    const response = await client.send(command);
+    const response = await getClient().send(command);
 
     // Accumulate assistant content blocks for the follow-up message.
     const assistantBlocks: ContentBlock[] = [];
@@ -230,7 +229,6 @@ export async function completeBedrockText(params: {
   user: string;
   maxTokens?: number;
 }): Promise<string> {
-  const client = getClient();
   const command = new ConverseCommand({
     modelId: params.model,
     system: params.systemPrompt ? [{ text: params.systemPrompt }] : undefined,
@@ -240,7 +238,7 @@ export async function completeBedrockText(params: {
     inferenceConfig: { maxTokens: params.maxTokens ?? 512 },
   });
 
-  const response = await client.send(command);
+  const response = await getClient().send(command);
   const outputMessage = response.output?.message;
   if (!outputMessage) return "";
 

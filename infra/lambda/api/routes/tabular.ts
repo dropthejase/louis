@@ -136,7 +136,7 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
         sharedProjectIds.length > 0
             ? (async () => {
                   const placeholders = sharedProjectIds
-                      .map((_, i) => `:pid${i}`)
+                      .map((_, i) => `:pid${i}::uuid`)
                       .join(", ");
                   return query<ReviewRow>(
                       `SELECT * FROM tabular_reviews
@@ -869,7 +869,7 @@ tabularRouter.post(
         }
 
         const { tabular_model } = await getUserModelSettings(userId);
-        const result = await queryGemini(
+        const result = await queryBedrock(
             tabular_model,
             doc.filename,
             markdown,
@@ -931,7 +931,9 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     if (!access.ok)
         return void res.status(404).json({ detail: "Review not found" });
 
-    const columns: ColumnConfig[] = review.columns_config ?? [];
+    const columns: ColumnConfig[] = typeof review.columns_config === "string"
+        ? JSON.parse(review.columns_config)
+        : (review.columns_config ?? []);
     if (columns.length === 0)
         return void res.status(400).json({ detail: "No columns configured" });
 
@@ -1029,7 +1031,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                 // Single LLM call for all columns, streaming one JSON line per column
                 const receivedColumns = new Set<number>();
                 try {
-                    await queryGeminiAllColumns(
+                    await queryBedrockAllColumns(
                         tabular_model,
                         filename,
                         markdown,
@@ -1059,7 +1061,7 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
                     );
                 } catch (err) {
                     console.error(
-                        `[tabular/generate] queryGeminiAllColumns error doc=${docId}`,
+                        `[tabular/generate] queryBedrockAllColumns error doc=${docId}`,
                         err,
                     );
                 }
@@ -1423,7 +1425,7 @@ function parseCellContent(
     return null;
 }
 
-async function queryGemini(
+async function queryBedrock(
     model: string,
     filename: string,
     documentText: string,
@@ -1450,7 +1452,7 @@ The "summary" field must contain only the extracted value with inline citations 
             maxTokens: 2048,
         });
     } catch (err) {
-        console.error("[queryGemini] completion failed", err);
+        console.error("[queryBedrock] completion failed", err);
         return null;
     }
     try {
@@ -1519,7 +1521,7 @@ type CellResult = {
     reasoning: string;
 };
 
-async function queryGeminiAllColumns(
+async function queryBedrockAllColumns(
     model: string,
     filename: string,
     documentText: string,
@@ -1602,7 +1604,7 @@ Rules:
             },
         });
     } catch (err) {
-        console.error("[queryGeminiAllColumns] stream failed", err);
+        console.error("[queryBedrockAllColumns] stream failed", err);
     }
 
     if (contentBuffer.trim()) pending.push(processLine(contentBuffer));
