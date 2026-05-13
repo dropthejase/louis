@@ -18,7 +18,6 @@ import {
   X,
 } from 'lucide-react';
 import {
-  deleteChat,
   deleteDocument,
   getProject,
   uploadProjectDocument,
@@ -228,7 +227,7 @@ function ProjectChatPage({ projectId, chatId }: { projectId: string; chatId: str
   const latestUserMessageRef = useRef<HTMLDivElement>(null);
   const [minHeight, setMinHeight] = useState('0px');
 
-  const { setCurrentChatId, newChatMessages, setNewChatMessages, chats, saveChat } =
+  const { setCurrentChatId, newChatMessages, setNewChatMessages, chats, saveChat, deleteChat } =
     useChatHistoryContext();
   const [initialMessages] = useState<MikeMessage[]>(newChatMessages ?? []);
   const { messages, isResponseLoading, handleChat, setMessages, cancel } = useAssistantChat({
