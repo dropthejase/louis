@@ -364,55 +364,65 @@ chatRouter.get("/", requireAuth, async (req, res) => {
 
 // POST /chat/create
 chatRouter.post("/create", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const projectId: string | null = req.body.project_id ?? null;
-    const data = await queryOne<{ id: string }>(
-        `INSERT INTO chats (user_id, project_id) VALUES (:userId, :projectId) RETURNING id`,
-        [
-            { name: "userId", value: { stringValue: userId } },
-            {
-                name: "projectId",
-                value: projectId != null ? { stringValue: projectId } : { isNull: true },
-            },
-        ],
-    );
-    if (!data)
-        return void res.status(500).json({ detail: "Failed to create chat" });
-    res.json({ id: data.id });
+    try {
+        const userId = res.locals.userId as string;
+        const projectId: string | null = req.body.project_id ?? null;
+        const data = await queryOne<{ id: string }>(
+            `INSERT INTO chats (user_id, project_id) VALUES (:userId, :projectId) RETURNING id`,
+            [
+                { name: "userId", value: { stringValue: userId } },
+                {
+                    name: "projectId",
+                    value: projectId != null ? { stringValue: projectId } : { isNull: true },
+                },
+            ],
+        );
+        if (!data)
+            return void res.status(500).json({ detail: "Failed to create chat" });
+        res.json({ id: data.id });
+    } catch (err) {
+        console.error("[chat] POST /create error:", err);
+        res.status(500).json({ detail: "Internal server error" });
+    }
 });
 
 // GET /chat/:chatId
 chatRouter.get("/:chatId", requireAuth, async (req, res) => {
-    const userId = res.locals.userId as string;
-    const userEmail = res.locals.userEmail as string | undefined;
-    const { chatId } = req.params;
+    try {
+        const userId = res.locals.userId as string;
+        const userEmail = res.locals.userEmail as string | undefined;
+        const { chatId } = req.params;
 
-    const chat = await queryOne<ChatRow>(
-        `SELECT * FROM chats WHERE id = :id`,
-        [{ name: "id", value: { stringValue: chatId } }],
-    );
-    if (!chat)
-        return void res.status(404).json({ detail: "Chat not found" });
-    // Owner of the chat OR a member of the chat's project can view it.
-    let canView = chat.user_id === userId;
-    if (!canView && chat.project_id) {
-        const access = await checkProjectAccess(
-            chat.project_id,
-            userId,
-            userEmail,
+        const chat = await queryOne<ChatRow>(
+            `SELECT * FROM chats WHERE id = :id`,
+            [{ name: "id", value: { stringValue: chatId } }],
         );
-        canView = access.ok;
+        if (!chat)
+            return void res.status(404).json({ detail: "Chat not found" });
+        // Owner of the chat OR a member of the chat's project can view it.
+        let canView = chat.user_id === userId;
+        if (!canView && chat.project_id) {
+            const access = await checkProjectAccess(
+                chat.project_id,
+                userId,
+                userEmail,
+            );
+            canView = access.ok;
+        }
+        if (!canView)
+            return void res.status(404).json({ detail: "Chat not found" });
+
+        const messages = await query<Record<string, unknown>>(
+            `SELECT * FROM chat_messages WHERE chat_id = :chatId ORDER BY created_at ASC`,
+            [{ name: "chatId", value: { stringValue: chatId } }],
+        );
+
+        const hydrated = await hydrateEditStatuses(messages);
+        res.json({ chat, messages: hydrated });
+    } catch (err) {
+        console.error("[chat] GET /:chatId error:", err);
+        res.status(500).json({ detail: "Internal server error" });
     }
-    if (!canView)
-        return void res.status(404).json({ detail: "Chat not found" });
-
-    const messages = await query<Record<string, unknown>>(
-        `SELECT * FROM chat_messages WHERE chat_id = :chatId ORDER BY created_at ASC`,
-        [{ name: "chatId", value: { stringValue: chatId } }],
-    );
-
-    const hydrated = await hydrateEditStatuses(messages);
-    res.json({ chat, messages: hydrated });
 });
 
 // Stored message annotations/events capture the `status` at the time the
@@ -591,6 +601,7 @@ chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
 // PUT /chat/:chatId/session-id — persist AgentCore session ID on first turn.
 // No-ops if the chat already has a session ID (never overwrites an existing session).
 chatRouter.put("/:chatId/session-id", requireAuth, async (req, res) => {
+  try {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
     const sessionId: string = (req.body.agentcore_session_id ?? "").trim();
@@ -624,10 +635,15 @@ chatRouter.put("/:chatId/session-id", requireAuth, async (req, res) => {
     );
 
     res.json({ agentcore_session_id: sessionId });
+  } catch (err) {
+    console.error("[chat] PUT /:chatId/session-id error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // GET /chat/:chatId/session-id
 chatRouter.get("/:chatId/session-id", requireAuth, async (req, res) => {
+  try {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
     const chat = await queryOne<{
@@ -640,10 +656,15 @@ chatRouter.get("/:chatId/session-id", requireAuth, async (req, res) => {
     if (!chat || chat.user_id !== userId)
         return void res.status(404).json({ detail: "Chat not found" });
     res.json({ agentcore_session_id: chat.agentcore_session_id ?? null });
+  } catch (err) {
+    console.error("[chat] GET /:chatId/session-id error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // PATCH /chat/:chatId
 chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
+  try {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
     const title = (req.body.title ?? "").trim();
@@ -664,10 +685,15 @@ chatRouter.patch("/:chatId", requireAuth, async (req, res) => {
     if (!data)
         return void res.status(404).json({ detail: "Chat not found" });
     res.json(data);
+  } catch (err) {
+    console.error("[chat] PATCH /:chatId error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // DELETE /chat/:chatId
 chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
+  try {
     const userId = res.locals.userId as string;
     const { chatId } = req.params;
 
@@ -718,10 +744,15 @@ chatRouter.delete("/:chatId", requireAuth, async (req, res) => {
     }
 
     res.status(204).send();
+  } catch (err) {
+    console.error("[chat] DELETE /:chatId error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // POST /chat/:chatId/generate-title
 chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
+  try {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { chatId } = req.params;
@@ -779,5 +810,9 @@ chatRouter.post("/:chatId/generate-title", requireAuth, async (req, res) => {
         console.error("[generate-title]", err);
         res.status(500).json({ detail: "Failed to generate title" });
     }
+  } catch (err) {
+    console.error("[chat] POST /:chatId/generate-title error:", err);
+    if (!res.headersSent) res.status(500).json({ detail: "Internal server error" });
+  }
 });
 

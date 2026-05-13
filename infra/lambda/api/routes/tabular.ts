@@ -89,6 +89,7 @@ export const tabularRouter = Router();
 
 // GET /tabular-review
 tabularRouter.get("/", requireAuth, async (req, res) => {
+  try {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
 
@@ -247,6 +248,10 @@ tabularRouter.get("/", requireAuth, async (req, res) => {
             document_count: docCounts[r.id] ?? 0,
         })),
     );
+  } catch (err) {
+    console.error("[tabular] GET / error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // POST /tabular-review
@@ -331,6 +336,7 @@ tabularRouter.post("/", requireAuth, async (req, res) => {
 
 // POST /tabular-review/prompt (must come before /:reviewId routes)
 tabularRouter.post("/prompt", requireAuth, async (req, res) => {
+  try {
     const title =
         typeof req.body.title === "string" ? req.body.title.trim() : "";
     if (!title)
@@ -396,6 +402,10 @@ tabularRouter.post("/prompt", requireAuth, async (req, res) => {
     } catch {
         res.status(502).json({ detail: "Failed to generate prompt from LLM" });
     }
+  } catch (err) {
+    console.error("[tabular] POST /prompt error:", err);
+    res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // GET /tabular-review/:reviewId
@@ -906,6 +916,7 @@ tabularRouter.post(
 
 // POST /tabular-review/:reviewId/generate
 tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
+  try {
     const userId = res.locals.userId as string;
     const userEmail = res.locals.userEmail as string | undefined;
     const { reviewId } = req.params;
@@ -1088,6 +1099,10 @@ tabularRouter.post("/:reviewId/generate", requireAuth, async (req, res) => {
     } finally {
         res.end();
     }
+  } catch (err) {
+    console.error("[tabular] POST /:reviewId/generate error:", err);
+    if (!res.headersSent) res.status(500).json({ detail: "Internal server error" });
+  }
 });
 
 // GET /tabular-review/:reviewId/chats — list chats (metadata only, no messages)
