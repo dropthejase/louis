@@ -14,7 +14,7 @@ import express from 'express';
 import { buildDocContext, buildProjectDocContext, DocIndex } from './lib/doc-context';
 import { extractAnnotations } from './lib/citations';
 import { execute } from './lib/db';
-import { createAgent } from './agent';
+import { createAgent, loadMessages } from './agent';
 
 const PORT = process.env.PORT ?? 8080;
 const app = express();
@@ -59,8 +59,6 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
   }
 
   const { chatId, prompt, projectId, model } = body;
-  // Always have a session ID — frontend sends one on turn 2+; generate a fallback
-  // on turn 1 so the SessionManager is always created and the snapshot is always saved.
   const sessionId = body.runtimeSessionId ?? `${userId}-${crypto.randomUUID()}`;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -68,11 +66,12 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const { docIndex, docStore } = projectId
-      ? await buildProjectDocContext(projectId)
-      : await buildDocContext(userId);
+    const [{ docIndex, docStore }, previousMessages] = await Promise.all([
+      projectId ? buildProjectDocContext(projectId) : buildDocContext(userId),
+      loadMessages(chatId),
+    ]);
 
-    const agent = createAgent(userId, docStore, docIndex, projectId, model, sessionId);
+    const agent = createAgent(userId, docStore, docIndex, chatId, previousMessages, projectId, model);
 
     let fullText = '';
     // Buffer tail to suppress <CITATIONS> block from streaming to frontend
