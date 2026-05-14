@@ -24,11 +24,10 @@ export async function buildTabularContext(reviewId: string, userId: string): Pro
   );
   if (!review) return null;
 
-  // Ownership check: allow review owner or any project member (checked via cells join below)
-  // For agent use, we only need read access — verified by JOIN in read_table_cells tool.
-  // We also accept project-shared access if the review row exists (ownership enforced in tool).
-
-  const columns: ColumnConfig[] = (review.columns_config ?? [])
+  const rawColumns = typeof review.columns_config === 'string'
+    ? JSON.parse(review.columns_config)
+    : (review.columns_config ?? []);
+  const columns: ColumnConfig[] = (rawColumns as ColumnConfig[])
     .slice()
     .sort((a, b) => a.index - b.index);
 
@@ -40,11 +39,12 @@ export async function buildTabularContext(reviewId: string, userId: string): Pro
   const docIds = cells.map((c) => c.document_id);
   let documents: ReviewDoc[] = [];
   if (docIds.length > 0) {
-    const placeholders = docIds.map((_, i) => `:did${i}`).join(', ');
+    const placeholders = docIds.map((_, i) => `:did${i}::uuid`).join(', ');
     documents = await query<ReviewDoc>(
       `SELECT id, filename FROM documents WHERE id IN (${placeholders}) ORDER BY created_at ASC`,
       docIds.map((id, i) => ({ name: `did${i}`, value: { stringValue: id } })),
     );
+    console.log('[buildTabularContext] documents query done', { count: documents.length });
   }
 
   return {

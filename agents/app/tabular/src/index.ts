@@ -38,7 +38,6 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     res.status(400).json({ error: 'Invalid JSON payload' });
     return;
   }
-
   const userId = extractUserIdFromBearer(req.headers.authorization);
   if (!userId) {
     res.status(401).json({ error: 'Unauthorized' });
@@ -60,7 +59,7 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       return;
     }
 
-    const systemPrompt = buildTabularSystemPrompt(ctx);
+    const systemPrompt = buildTabularSystemPrompt(ctx, reviewId);
     const agent = createAgent(userId, systemPrompt, model);
 
     let fullText = '';

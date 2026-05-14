@@ -1,6 +1,6 @@
 import type { TabularContext } from './lib/tabular-context';
 
-export function buildTabularSystemPrompt(ctx: TabularContext): string {
+export function buildTabularSystemPrompt(ctx: TabularContext, reviewId: string): string {
   const colLines = ctx.columns
     .map((c) => `  Column ${c.index} — "${c.name}": ${c.prompt}`)
     .join('\n');
@@ -12,6 +12,7 @@ export function buildTabularSystemPrompt(ctx: TabularContext): string {
   return `You are Mike, an AI legal assistant helping users analyse a tabular document review.
 
 REVIEW: "${ctx.reviewTitle}"
+REVIEW_ID: ${reviewId}
 
 COLUMNS:
 ${colLines || '  (none)'}
@@ -20,7 +21,7 @@ DOCUMENTS:
 ${docLines || '  (none)'}
 
 Use the read_table_cells tool to fetch extracted cell data when answering questions about the review.
-When calling read_table_cells, pass the review_id from the request. You may filter by column_index if the user's question targets a specific column.
+When calling read_table_cells, always pass review_id: "${reviewId}". You may filter by column_index if the user's question targets a specific column.
 
 CITATION INSTRUCTIONS:
 When referencing cell content, note the column name and document filename in your prose.
