@@ -649,14 +649,24 @@ export interface TRChat {
 
 export function mapTRMessages(raw: RawTRMessage[]): TRDisplayMessage[] {
     return raw.map((m) => {
+        // Aurora Data API returns jsonb columns as strings — parse if needed.
+        const parsedContent: AssistantEvent[] | string | null =
+            typeof m.content === "string"
+                ? (() => { try { return JSON.parse(m.content); } catch { return m.content; } })()
+                : m.content;
+        const parsedAnnotations: TRCitationAnnotation[] | null | undefined =
+            typeof m.annotations === "string"
+                ? (() => { try { return JSON.parse(m.annotations as string); } catch { return undefined; } })()
+                : m.annotations;
+
         if (m.role === "user") {
             return {
                 role: "user" as const,
-                content: typeof m.content === "string" ? m.content : "",
+                content: typeof parsedContent === "string" ? parsedContent : "",
             };
         }
-        const events = Array.isArray(m.content)
-            ? (m.content as AssistantEvent[])
+        const events = Array.isArray(parsedContent)
+            ? (parsedContent as AssistantEvent[])
             : undefined;
         const content =
             events
@@ -667,7 +677,7 @@ export function mapTRMessages(raw: RawTRMessage[]): TRDisplayMessage[] {
             role: "assistant" as const,
             content,
             events,
-            annotations: m.annotations ?? undefined,
+            annotations: parsedAnnotations ?? undefined,
         };
     });
 }
