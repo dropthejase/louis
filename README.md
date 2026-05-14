@@ -1,252 +1,228 @@
-# Louis — AWS
+# Louis
 
-Louis is an AI-powered legal document workspace. Upload documents, chat with an AI assistant, get tracked-change edits, run tabular reviews across document sets, and share projects with colleagues.
+It's time to Litt up!
 
-Licensed AGPL-3.0.
+Louis is a fork of [MikeOSS](https://github.com/willchen96/mike) — an AWS-native implementation of the same AI-powered legal document workspace. 
+
+## Highlights
+
+- **No vendor API keys** — Claude is accessed via Amazon Bedrock; model access is an IAM permission, not a stored secret
+- **No long-lived credentials** — short-lived STS credentials scoped per-user; Lambda and AgentCore assume IAM roles at runtime
+- **Per-user data isolation at the IAM layer** — S3 bucket policies scope each user to their own prefix via `${cognito-identity.amazonaws.com:sub}` (Identity Pool identity ID), enforced by AWS not application code
+- **Serverless** — Aurora Serverless v2, Lambda, pay-per-request DynamoDB; no servers to run or patch
+- **Built-in observability** — structured JSON logs, X-Ray tracing, and CloudWatch metrics on every Lambda invocation via AWS Lambda Powertools
+- **Strands Agents SDK** — model-agnostic agentic framework; swap between Claude models (or any Bedrock-supported model) by changing a model ID, not rewriting agent logic
+- **Bedrock cross-region inference** — automatic routing across EU regions for resilience and throughput; can be scoped to a single AWS region if needed
 
 ## Architecture
 
-```text
-CloudFront → S3 (static Next.js export)
+![assets/architecture.png](assets/architecture.png)
 
-API Gateway REST API (Cognito User Pool authorizer)
-└→ Lambda ZIP (Express + serverless-http + Lambda Powertools)
-└→ Aurora Serverless v2 PostgreSQL 17.9 (RDS Data API, VPC isolated subnets)
+- Frontend (React + Vite) → Amazon API Gateway → AWS Lambda (Express) → Amazon Aurora Serverless v2
+- Documents stored in S3; LibreOffice container Lambda handles DOCX→PDF conversion
+- Amazon Bedrock AgentCore Runtime hosts two Strands SDK agents using models on Amazon Bedrock
 
-AgentCore Runtime (JWT inbound authorizer — Cognito OIDC)
-└→ Strands agent (10 tools, Bedrock Claude)
-└→ DynamoDB (per-user monthly credits tracking via after_model_call hook)
+This repo deploys resources in `eu-west-1` (Dublin).
 
-S3 PutObject (.docx/.doc) → EventBridge → Lambda container (LibreOffice DOCX→PDF)
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full detail.
 
-Cognito Identity Pool (native User Pool federation)
-└→ temporary IAM creds for frontend S3 uploads
-
-LLM → Amazon Bedrock Converse API (Claude only, eu-west-1 cross-region inference)
-```
-
-Auth: Cognito User Pool issues the id token. API Gateway validates it via the native Cognito authorizer. AgentCore validates it via JWT inbound authorizer. S3 access uses the id token exchanged for temporary IAM creds via the Cognito Identity Pool.
-
-## Repo Structure
+## High-Level Repo Structure
 
 ```text
-frontend/       Next.js app (static export, Amplify Auth)
+frontend/       React + Vite SPA (Amplify Auth)
 infra/          CDK app — StorageStack, DatabaseStack, AuthStack, ApiStack, ConversionStack
-                └─ lambda/  Express API Lambda (serverless-http, Powertools)
-agents/         AgentCore agents; app/main = main chat, app/tabular = tabular review chat
+agents/         AgentCore agents (main chat + tabular review)
 conversion/     LibreOffice Lambda container (DOCX→PDF, x86_64)
 scripts/        Deploy and utility scripts
 ```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for full detail.
 
 ## Prerequisites
 
-- AWS CLI v2.34.45 or later configured for `eu-west-1`
+- AWS CLI v2.34.45+ configured for `eu-west-1` with valid credentials (`aws sts get-caller-identity` should return your account ID)
 - Node 22
-- **Finch** — required only for building the LibreOffice conversion Lambda container
-- CDK bootstrapped: `npx cdk bootstrap aws://ACCOUNT_ID/eu-west-1`
-
-### Installing Finch
-
-Finch is an open-source container runtime from AWS (replaces Docker Desktop for container builds).
-
-```bash
-# macOS (Homebrew) — one-time install
-brew install --cask finch
-finch vm init    # creates the Linux VM (one-time, takes a few minutes)
-```
-
-Before each container build session:
-
-```bash
-finch vm start
-```
-
-After you're done building:
-
-```bash
-finch vm stop    # frees the VM resources
-```
-
-CDK uses the `CDK_DOCKER` environment variable to select the container build tool:
-
-```bash
-export CDK_DOCKER=finch
-```
-
-Add to your shell profile (`~/.zshrc` or `~/.bashrc`) so it persists. CDK calls `finch build` instead of `docker build` for container image assets.
-
-> **Note:** Finch is only required when deploying `ConversionStack`. All other stacks (including the AgentCore agent) use zip-based packaging — no container build needed.
+- **Amazon Bedrock model access** — request access in the Bedrock console for the models used (Claude on Anthropic requires submitting a use case description before access is granted)
+- **Finch** — container runtime required only for `ConversionStack` builds
+  ```bash
+  brew install --cask finch
+  ```
+- CDK bootstrapped:
+  ```bash
+  npx cdk bootstrap aws://ACCOUNT_ID/eu-west-1
+  ```
 
 ## First-Time Deployment
+
+### Configuration notes
+
+Before deploying, review these settings in `infra/`:
+
+- **Bedrock model IDs** — update model ID constants if you want to swap Claude versions or use a different model
+- **Aurora minimum ACU** — defaults to `0` (scales to zero). Set a non-zero minimum (e.g. `0.5`) to avoid cold-start latency on the first query after idle
+- **Lambda provisioned concurrency** — not configured by default; the API and agent Lambdas will cold-start after periods of inactivity. Add provisioned concurrency to `ApiStack` / agent function if you need consistent response times
+
+**Deletion policies — review before deploying to anything real:**
+
+All stacks currently use `RemovalPolicy.DESTROY`. This means `cdk destroy` (or an accidental stack deletion) will **permanently delete all data** with no recovery path. The specific risks:
+
+| Resource | Stack | Current policy | Safer alternative |
+|---|---|---|---|
+| S3 buckets (docs, sessions, frontend, deploy) | `StorageStack` | `DESTROY` + `autoDeleteObjects: true` | `RETAIN` |
+| Aurora cluster + subnet group | `DatabaseStack` | `DESTROY` | `SNAPSHOT` (preserves a final snapshot) |
+| Cognito User Pool | `AuthStack` | `DESTROY` | `RETAIN` |
+| CloudWatch Log Group | `ApiStack` | `DESTROY` | `RETAIN` |
+
+Change `RemovalPolicy.DESTROY` → `RemovalPolicy.RETAIN` (or `SNAPSHOT` for Aurora) in the relevant stack files before deploying to a real environment.
 
 ### 1. Deploy CDK stacks
 
 ```bash
 cd infra && npm install
-
-npx cdk deploy StorageStack
-npx cdk deploy DatabaseStack
-npx cdk deploy AuthStack
-npx cdk deploy ApiStack
+npx cdk deploy StorageStack DatabaseStack AuthStack ApiStack
 ```
 
-For ConversionStack, Finch must be running first:
+For `ConversionStack`, Finch must be running:
 
 ```bash
+finch vm init       # one-time — creates the Linux VM
 finch vm start
 export CDK_DOCKER=finch
 npx cdk deploy ConversionStack
 finch vm stop
 ```
 
-Deploy order matters: DatabaseStack before AuthStack and ApiStack. ConversionStack last.
-
 ### 2. Initialise the database schema
 
 ```bash
-# From repo root
 ./scripts/init-db.sh
 ```
 
-Reads `ClusterArn`, `SecretArn`, `DatabaseName` from the `DatabaseStack` CloudFormation outputs and runs `infra/migrations/000_one_shot_schema.sql` via the RDS Data API. Safe to re-run (all statements are idempotent).
+Reads `ClusterArn`, `SecretArn`, `DatabaseName` from `DatabaseStack` outputs and applies `infra/migrations/000_one_shot_schema.sql` via the RDS Data API.
 
-### 3. Deploy the AgentCore agents
+### 3. Deploy AgentCore agents
 
 ```bash
-# From repo root — reads all config from CFN outputs, no CLI tooling required
 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain
 AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
 ```
 
-Builds the agent (`tsc` + `npm ci --omit=dev --os linux --cpu arm64`), zips `dist/` + `node_modules/`, uploads to the `AgentDeployBucket` S3 bucket, then calls `create-agent-runtime` (first run) or `update-agent-runtime` (subsequent runs). Runtime ID and ARN are stored in SSM at `/louis/agents/louisMain/runtimeId` and `/louis/agents/louisMain/runtimeArn`. No Docker or agentcore CLI required.
+Builds, zips, uploads to S3, and creates/updates the agent runtime. Runtime IDs stored in SSM under `/louis/agents/`. No Docker or agentcore CLI required.
 
 ### 4. Configure frontend environment
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local
-# Fill in values from CDK outputs — see Environment Variables section below
-# VITE_AGENTCORE_MAIN_ARN and VITE_AGENTCORE_TABULAR_ARN come from step 3 output
-# or: aws ssm get-parameter --name /louis/agents/louisMain/runtimeArn --region eu-west-1 --query Parameter.Value --output text
+# Fill in values from CloudFormation outputs
+```
+
+```env
+VITE_AWS_REGION=eu-west-1
+VITE_USER_POOL_ID=eu-west-1_XXXXXXXXX
+VITE_USER_POOL_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
+VITE_IDENTITY_POOL_ID=eu-west-1:XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+VITE_DOCS_BUCKET_NAME=your-docs-bucket-name
+VITE_API_URL=https://XXXXXXXXXX.execute-api.eu-west-1.amazonaws.com/prod
+
+# AgentCore ARNs (used to build invocation URLs at runtime)
+VITE_AGENTCORE_MAIN_ARN=arn:aws:bedrock:eu-west-1:XXXXXXXXXXXX:agent-runtime/XXXXXXXXXX
+VITE_AGENTCORE_TABULAR_ARN=arn:aws:bedrock:eu-west-1:XXXXXXXXXXXX:agent-runtime/XXXXXXXXXX
 ```
 
 ### 5. Deploy frontend
 
 ```bash
-# From repo root
 AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh
 ```
 
-Reads `FrontendBucketName` and `DistributionId` from `StorageStack` CFN outputs automatically. Runs `npm run build` (Next.js static export → `frontend/out/`), syncs to S3 with `--delete`, then creates a CloudFront invalidation on `/*`. Set `WAIT=1` to block until the CDN cache clears.
+Runs `vite build`, syncs the output to S3, and invalidates the CloudFront cache. Set `WAIT=1` to block until the CDN clears.
 
 ## Redeploying
 
-**Backend / API changes:**
+| What changed | Command |
+|---|---|
+| CDK stack | `cd infra && npx cdk deploy <STACK>` |
+| Agents | `AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain` (or `louisTabular`) |
+| Frontend | `AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh` |
+| ConversionStack | `finch vm start && export CDK_DOCKER=finch && npx cdk deploy ConversionStack && finch vm stop` |
+
+## Cleanup
+
+> **Warning:** Destroying `DatabaseStack` drops the Aurora cluster permanently (unless you changed to `SNAPSHOT` removal policy). Back up any data first.
+
+**1. Destroy AgentCore runtimes**
 
 ```bash
-cd infra && npx cdk deploy ApiStack
+AWS_REGION=eu-west-1 ./scripts/destroy-agent.sh louisMain
+AWS_REGION=eu-west-1 ./scripts/destroy-agent.sh louisTabular
 ```
 
-**Agent changes:**
+**2. Empty S3 buckets** (CDK cannot delete non-empty buckets unless `autoDeleteObjects` is set — check your removal policy)
 
 ```bash
-AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain
-AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisTabular
+aws s3 rm s3://DOCS_BUCKET_NAME --recursive
+aws s3 rm s3://SESSIONS_BUCKET_NAME --recursive
+aws s3 rm s3://FRONTEND_BUCKET_NAME --recursive
 ```
 
-**Frontend changes:**
+**3. Destroy CDK stacks**
 
 ```bash
-AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh
+cd infra
+npx cdk destroy ConversionStack ApiStack AuthStack DatabaseStack StorageStack
 ```
 
-**Conversion Lambda changes** (requires Finch):
+**4. Clean up remaining resources manually if needed**
 
-```bash
-finch vm start
-export CDK_DOCKER=finch
-cd infra && npx cdk deploy ConversionStack
-finch vm stop
-```
+- SSM parameters under `/louis/` — not managed by CDK stacks
+- Any CloudWatch log groups not deleted by the stack
+- Verify S3 buckets are gone in the console (deletion can fail silently if not empty)
 
-## CDK Stacks
+## Ideas for Extension
 
-| Stack | Provisions |
-| --- | --- |
-| `StorageStack` | S3 docs bucket (private, EventBridge enabled), S3 sessions + frontend + agent deploy buckets, CloudFront + OAC |
-| `DatabaseStack` | Aurora Serverless v2 PostgreSQL 17.9 (min 0 / max 1 ACU, RDS Data API, VPC isolated subnets, auto-pause) |
-| `AuthStack` | Cognito User Pool (TOTP MFA, email verification), App Client, Post-Confirmation Lambda (creates user_profiles row), Identity Pool, authenticated IAM role |
-| `ApiStack` | REST API Gateway (Cognito authorizer), API Lambda (ARM64 ZIP), AgentCore execution IAM role, DynamoDB credits table |
-| `ConversionStack` | LibreOffice Lambda (x86_64 container), EventBridge rule triggering on `.docx`/`.doc` uploads to `documents/` prefix |
+**Agents & AI**
+- **Agentic Memory** — persist user/matter context across sessions using Amazon Bedrock Knowledge Bases (managed RAG) or pgvector on Aurora
+- **Agentic RAG** — index document corpora into Bedrock Knowledge Bases; agents retrieve relevant clauses before responding rather than loading full documents into context
+- **AgentCore Gateway** — front multiple specialised agents (drafting, review, research) behind a single entry point with built-in routing, rate limiting, and observability
+- **Multi-agent workflows** — Strands multi-agent patterns or Bedrock inline agents; e.g. a supervisor that delegates to a redline agent, citation agent, and risk-flagging agent in parallel
+- **Evals & quality tracking** — Bedrock model invocation logging + Bedrock Evaluations to measure answer quality over time and catch regressions on model upgrades
 
-All buckets: `blockPublicAccess: BLOCK_ALL`. CloudFront uses OAC (no public S3 access). Aurora: `DESTROY` removal policy — fully cleaned up on `cdk destroy`.
+**Document Processing**
+- **Async document pipeline** — move heavy processing off Lambda onto Step Functions; add OCR via Amazon Textract for scanned PDFs, entity extraction, and clause classification before documents reach the agent
+- **Document comparison** — dedicated diff agent using Bedrock to produce structured redlines between two document versions; store artefacts in S3 with version metadata in Aurora
 
-Synth without deploying:
+**Platform & Scale**
+- **Multi-region active-active** — Aurora Global Database (primary `eu-west-1`, read replica `eu-central-1`), Route 53 latency routing, multi-origin CloudFront; near-zero RPO, minute-scale RTO
+- **Async job queue** — SQS + Lambda for long-running tabular reviews across large document sets; results pushed back via API Gateway WebSockets or AppSync subscriptions
+- **Real-time collaboration** — AWS AppSync GraphQL subscriptions to push document edits and agent responses to multiple connected users simultaneously
+- **Usage analytics** — Kinesis Data Firehose to stream credit events to S3; Athena + QuickSight for per-matter cost dashboards
 
-```bash
-cd infra && npx tsc --noEmit && npx cdk synth
-```
+**Auth & Multi-tenancy**
+- **Firm-level tenancy** — add an `organisation_id` tier; Cognito user groups + IAM permission boundaries to enforce firm isolation at the AWS level
+- **SSO / SAML federation** — Cognito identity provider federation with law firm Active Directory or Okta via SAML 2.0
+- **Fine-grained document permissions** — per-document ACLs in Aurora; share specific matters with colleagues without exposing the full S3 prefix
 
-## Credits / Usage Metering
+**Security** — see Disclaimer below
 
-Per-user monthly credit tracking via DynamoDB:
+## Disclaimer
 
-- **Table:** `PK=userId`, `SK=YYYY-MM`, `credits_used` (atomic `UpdateItem ADD`)
-- **Increment:** Strands `after_model_call` hook runs after each successful AgentCore model invocation
-- **IAM:** AgentCore execution role has `dynamodb:GetItem` + `dynamodb:UpdateItem` on credits table only
+This project was built as a learning exercise and vibe-coded with [Claude Code](https://claude.ai/code). It is not production-ready and comes with no warranties.
 
-## Environment Variables
+**Not legal advice.** Nothing in this software or its outputs constitutes legal advice. Always consult a qualified lawyer.
 
-### Backend Lambda (set by CDK — do not configure manually)
+**Security notice.** This deployment is intentionally minimal. Depending on your threat model, you may or may not want to consider additions such as:
 
-| Var | Description |
-| --- | --- |
-| `DB_CLUSTER_ARN` | Aurora cluster ARN (DatabaseStack output) |
-| `DB_SECRET_ARN` | RDS-managed credentials secret ARN (DatabaseStack output) |
-| `DB_NAME` | Database name (`mike`) |
-| `DOCS_BUCKET_NAME` | Documents S3 bucket name (StorageStack output) |
-| `SESSIONS_BUCKET_NAME` | Sessions S3 bucket name (StorageStack output) |
-| `USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
-| `FRONTEND_URL` | CloudFront domain for CORS (StorageStack output) |
-| `CREDITS_TABLE_NAME` | DynamoDB credits table name (ApiStack output) |
-
-### Frontend (build-time, `VITE_*`)
-
-| Var | Description |
-| --- | --- |
-| `VITE_AWS_REGION` | AWS region (`eu-west-1`) |
-| `VITE_USER_POOL_ID` | Cognito User Pool ID (AuthStack output) |
-| `VITE_USER_POOL_CLIENT_ID` | Cognito App Client ID (AuthStack output) |
-| `VITE_IDENTITY_POOL_ID` | Cognito Identity Pool ID (AuthStack output) |
-| `VITE_DOCS_BUCKET_NAME` | S3 docs bucket name (StorageStack output) |
-| `VITE_API_URL` | API Gateway invoke URL (ApiStack output) |
-| `VITE_AGENTCORE_MAIN_ARN` | AgentCore runtime ARN for main chat (SSM: `/louis/agents/louisMain/runtimeArn`) |
-| `VITE_AGENTCORE_TABULAR_ARN` | AgentCore runtime ARN for tabular review chat (SSM: `/louis/agents/louisTabular/runtimeArn`) |
-
-## Models
-
-> **Prerequisites:** Before deploying, request model access in the AWS Console (Bedrock → Model access, eu-west-1) for each model below. Claude 4.x models additionally require submitting a use case to Anthropic — follow the in-console prompts after selecting the model.
-
-Three Claude tiers via Bedrock (eu-west-1 cross-region inference):
-
-| UI label | Logical model ID | Bedrock inference profile |
-| --- | --- | --- |
-| Claude Opus 4.7 | `claude-opus-4-7` | `eu.anthropic.claude-opus-4-7` |
-| Claude Sonnet 4.6 *(default)* | `claude-sonnet-4-6` | `eu.anthropic.claude-sonnet-4-6` |
-| Claude Haiku 4.5 | `claude-haiku-4-5` | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
-
-## Build Checks
-
-```bash
-# Infra (includes Lambda source)
-cd infra && npx tsc --noEmit
-
-# Agents
-cd agents/app/main && npm run build
-cd agents/app/tabular && npm run build
-
-# Frontend
-cd frontend && npm run build
-```
+- VPC with private subnets and VPC endpoints (S3, Bedrock, RDS, SSM) to keep traffic off the public internet
+- AWS WAF on CloudFront and API Gateway for OWASP rule sets and rate limiting
+- API Gateway usage plans and per-client throttling/quotas
+- Amazon Bedrock Guardrails for content filtering and prompt injection defence
+- AWS Config rules and Security Hub for continuous compliance monitoring
+- Amazon GuardDuty for threat detection
+- Service Control Policies (SCPs) in AWS Organizations to enforce guardrails at the account level
+- Tighter IAM least-privilege scoping — Lambda and agent execution roles are currently broad
+- Secrets Manager rotation for database credentials
+- CloudTrail and VPC Flow Logs for auditability
+- Customer-managed KMS keys (CMKs) for S3, Aurora, and Secrets Manager encryption at rest
+- Data retention policies such as S3 lifecycle rules, Aurora automated backup windows, and log retention periods in CloudWatch
 
 ## License
 
