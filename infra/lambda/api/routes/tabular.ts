@@ -1319,7 +1319,7 @@ tabularRouter.post(
         // Persist user message
         await execute(
             `INSERT INTO tabular_review_chat_messages (chat_id, role, content)
-             VALUES (:chatId, 'user', :content)`,
+             VALUES (:chatId, 'user', :content::jsonb)`,
             [
                 { name: "chatId", value: { stringValue: chatId } },
                 { name: "content", value: { stringValue: JSON.stringify(user_message) } },
