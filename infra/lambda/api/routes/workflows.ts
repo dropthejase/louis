@@ -41,6 +41,9 @@ function withWorkflowAccess<T extends Record<string, unknown>>(
 ) {
   return {
     ...workflow,
+    columns_config: typeof workflow.columns_config === 'string'
+      ? JSON.parse(workflow.columns_config)
+      : (workflow.columns_config ?? null),
     allow_edit: access.allowEdit,
     is_owner: access.isOwner,
     shared_by_name: access.sharedByName ?? null,
