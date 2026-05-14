@@ -4,6 +4,8 @@ It's time to Litt up!
 
 Louis is a fork of [MikeOSS](https://github.com/willchen96/mike) — an AWS-native implementation of the same AI-powered legal document workspace. 
 
+**DEMO TO DO**
+
 ## Highlights
 
 - **No vendor API keys** — Claude is accessed via Amazon Bedrock; model access is an IAM permission, not a stored secret
@@ -180,26 +182,19 @@ npx cdk destroy ConversionStack ApiStack AuthStack DatabaseStack StorageStack
 ## Ideas for Extension
 
 **Agents & AI**
-- **Agentic Memory** — persist user/matter context across sessions using Amazon Bedrock Knowledge Bases (managed RAG) or pgvector on Aurora
-- **Agentic RAG** — index document corpora into Bedrock Knowledge Bases; agents retrieve relevant clauses before responding rather than loading full documents into context
-- **AgentCore Gateway** — front multiple specialised agents (drafting, review, research) behind a single entry point with built-in routing, rate limiting, and observability
-- **Multi-agent workflows** — Strands multi-agent patterns or Bedrock inline agents; e.g. a supervisor that delegates to a redline agent, citation agent, and risk-flagging agent in parallel
-- **Evals & quality tracking** — Bedrock model invocation logging + Bedrock Evaluations to measure answer quality over time and catch regressions on model upgrades
-
-**Document Processing**
-- **Async document pipeline** — move heavy processing off Lambda onto Step Functions; add OCR via Amazon Textract for scanned PDFs, entity extraction, and clause classification before documents reach the agent
-- **Document comparison** — dedicated diff agent using Bedrock to produce structured redlines between two document versions; store artefacts in S3 with version metadata in Aurora
+- **Agentic Memory (STM and/or LTM)** — persist user/matter context across sessions using Amazon Bedrock AgentCore Memory
+- **Agentic RAG** — incorporate Bedrock Knowledge Bases; agents retrieve relevant clauses before responding rather than loading full documents into context
+- **AgentCore Gateway** — fully managed MCP-compatible gateway that converts Lambda functions and APIs into agent tools with semantic discovery, unified auth, and server-side tool execution; eliminates client-side orchestration loops
+- **Fine-grained tool access** - using AgentCore Policy
+- **Evals & quality tracking** — enable AgentCore Observability for logging/tracing + AgentCore Evaluations to measure answer quality over time and catch regressions on model upgrades
 
 **Platform & Scale**
-- **Multi-region active-active** — Aurora Global Database (primary `eu-west-1`, read replica `eu-central-1`), Route 53 latency routing, multi-origin CloudFront; near-zero RPO, minute-scale RTO
-- **Async job queue** — SQS + Lambda for long-running tabular reviews across large document sets; results pushed back via API Gateway WebSockets or AppSync subscriptions
-- **Real-time collaboration** — AWS AppSync GraphQL subscriptions to push document edits and agent responses to multiple connected users simultaneously
-- **Usage analytics** — Kinesis Data Firehose to stream credit events to S3; Athena + QuickSight for per-matter cost dashboards
+- **Decoupling** — with SQS
+- **Usage analytics** — with Amazon Quick
 
 **Auth & Multi-tenancy**
 - **Firm-level tenancy** — add an `organisation_id` tier; Cognito user groups + IAM permission boundaries to enforce firm isolation at the AWS level
-- **SSO / SAML federation** — Cognito identity provider federation with law firm Active Directory or Okta via SAML 2.0
-- **Fine-grained document permissions** — per-document ACLs in Aurora; share specific matters with colleagues without exposing the full S3 prefix
+- **SSO / SAML federation** — Cognito identity provider federation with Active Directory or Okta via SAML 2.0
 
 **Security** — see Disclaimer below
 
