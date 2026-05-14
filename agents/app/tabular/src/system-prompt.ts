@@ -29,13 +29,14 @@ Append a <CITATIONS> block at the end of your response in this format:
 
 <CITATIONS>
 [
-  {"ref": 1, "col_index": 0, "doc_id": "doc-0", "quote": "exact text from the cell"}
+  {"ref": 1, "col_index": 0, "row_index": 2, "doc_id": "doc-0", "quote": "exact text from the cell"}
 ]
 </CITATIONS>
 
 Rules:
 - "ref" is a sequential integer (1, 2, 3…) matching [N] markers in your prose
-- "col_index" is the column index from the COLUMNS list above
+- "col_index" is the 0-based column index from the COLUMNS list above
+- "row_index" is the 0-based document index from the DOCUMENTS list above
 - "doc_id" is the chat-local label (doc-0, doc-1, …) from the DOCUMENTS list above, NOT the UUID
 - Keep quotes short (≤ 25 words)
 - Omit the <CITATIONS> block if there are no citations

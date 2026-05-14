@@ -63,6 +63,33 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     const agent = createAgent(userId, systemPrompt, model);
 
     let fullText = '';
+    // Buffer tail to suppress <CITATIONS> block from streaming to frontend
+    const CITATIONS_TAG = '<CITATIONS>';
+    let tailBuffer = '';
+    let citationsSeen = false;
+
+    const streamVisible = (delta: string) => {
+      if (!delta || citationsSeen) return;
+      const combined = tailBuffer + delta;
+      const idx = combined.indexOf(CITATIONS_TAG);
+      if (idx >= 0) {
+        const visible = combined.slice(0, idx);
+        if (visible) sse(res, { type: 'content_delta', text: visible });
+        tailBuffer = '';
+        citationsSeen = true;
+        return;
+      }
+      const keep = Math.min(CITATIONS_TAG.length - 1, combined.length);
+      const visible = combined.slice(0, combined.length - keep);
+      tailBuffer = combined.slice(combined.length - keep);
+      if (visible) sse(res, { type: 'content_delta', text: visible });
+    };
+
+    const flushTail = () => {
+      if (citationsSeen || !tailBuffer) { tailBuffer = ''; return; }
+      sse(res, { type: 'content_delta', text: tailBuffer });
+      tailBuffer = '';
+    };
 
     for await (const event of agent.stream(prompt)) {
       console.log('streamingEvent', JSON.stringify(event));
@@ -85,7 +112,7 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       ) {
         const text = event.event.delta.text;
         fullText += text;
-        sse(res, { type: 'content_delta', text });
+        streamVisible(text);
         continue;
       }
 
@@ -95,7 +122,8 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       }
     }
 
-    const annotations = extractAnnotations(fullText);
+    flushTail();
+    const annotations = extractAnnotations(fullText, ctx);
     sse(res, { type: 'content_done' });
     sse(res, { type: 'citations', citations: annotations });
     res.write('data: [DONE]\n\n');
