@@ -23,6 +23,7 @@ export type DocIndex = Record<string, { document_id: string; filename: string; v
 export async function buildDocContext(
   userId: string,
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
+  console.log('[buildDocContext] query start', { userId });
   const docStore: DocStore = new Map();
   const docIndex: DocIndex = {};
 
@@ -66,6 +67,7 @@ export async function buildDocContext(
     };
   }
 
+  console.log('[buildDocContext] query done', { count: docStore.size });
   return { docIndex, docStore };
 }
 
@@ -76,6 +78,7 @@ export async function buildDocContext(
 export async function buildProjectDocContext(
   projectId: string,
 ): Promise<{ docIndex: DocIndex; docStore: DocStore }> {
+  console.log('[buildProjectDocContext] query start', { projectId });
   const docStore: DocStore = new Map();
   const docIndex: DocIndex = {};
 
