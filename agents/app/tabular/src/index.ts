@@ -2,7 +2,7 @@ import express from 'express';
 import { extractAnnotations } from './lib/citations';
 import { buildTabularContext } from './lib/tabular-context';
 import { buildTabularSystemPrompt } from './system-prompt';
-import { createAgent } from './agent';
+import { createAgent, loadMessages } from './agent';
 
 const PORT = process.env.PORT ?? 8080;
 const app = express();
@@ -44,14 +44,18 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     return;
   }
 
-  const { reviewId, prompt, model } = body;
+  const { reviewId, chatId, prompt, model } = body;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const ctx = await buildTabularContext(reviewId, userId);
+    const [ctx, previousMessages] = await Promise.all([
+      buildTabularContext(reviewId, userId),
+      loadMessages(chatId),
+    ]);
+
     if (!ctx) {
       sse(res, { type: 'error', message: 'Review not found' });
       res.write('data: [DONE]\n\n');
@@ -60,7 +64,7 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     }
 
     const systemPrompt = buildTabularSystemPrompt(ctx, reviewId);
-    const agent = createAgent(userId, systemPrompt, model);
+    const agent = createAgent(userId, chatId, previousMessages, systemPrompt, model);
 
     let fullText = '';
     // Buffer tail to suppress <CITATIONS> block from streaming to frontend

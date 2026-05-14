@@ -20,7 +20,6 @@ import {
     getTabularChats,
     getTabularChatMessages,
     deleteTabularChat,
-    mapTRMessages,
     type TRChat,
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
@@ -663,7 +662,7 @@ export function TRChatPanel({
         if (!initialChatId) return;
         setIsLoadingMessages(true);
         getTabularChatMessages(reviewId, initialChatId)
-            .then((raw) => setMessages(mapTRMessages(raw) as TRMessage[]))
+            .then((msgs) => setMessages(msgs as TRMessage[]))
             .catch(() => {})
             .finally(() => setIsLoadingMessages(false));
     }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -928,8 +927,8 @@ export function TRChatPanel({
         setHistoryOpen(false);
         setIsLoadingMessages(true);
         try {
-            const raw = await getTabularChatMessages(reviewId, chatId);
-            setMessages(mapTRMessages(raw) as TRMessage[]);
+            const msgs = await getTabularChatMessages(reviewId, chatId);
+            setMessages(msgs as TRMessage[]);
         } catch {
             /* ignore */
         } finally {
@@ -1214,14 +1213,11 @@ export function TRChatPanel({
             // Persist turn to backend
             if (activeChatId) {
                 try {
-                    const assistantEvents = eventsRef.current as unknown[];
                     const persistResult = await persistTabularChatMessages(
                         reviewId,
                         activeChatId,
                         {
                             user_message: trimmed,
-                            assistant_events: assistantEvents,
-                            annotations: streamAnnotations as unknown[],
                             is_first_exchange: isFirstExchange,
                             review_title: reviewTitle ?? null,
                             project_name: projectName ?? null,

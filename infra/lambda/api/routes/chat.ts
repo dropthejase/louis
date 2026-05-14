@@ -17,41 +17,15 @@ import { checkProjectAccess } from "../lib/access";
 import {
     S3Client,
     ListObjectsV2Command,
-    GetObjectCommand,
     DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import type { SqlParameter } from "@aws-sdk/client-rds-data";
-
-// Lazy singleton S3 client for reading session snapshots.
-let _s3: S3Client | undefined;
-function getSessionS3(): S3Client {
-    if (!_s3) {
-        _s3 = new S3Client({ region: process.env.AWS_REGION ?? "eu-west-1" });
-    }
-    return _s3;
-}
-
-// ---------------------------------------------------------------------------
-// Types mirroring the Strands snapshot message format
-// ---------------------------------------------------------------------------
-interface SnapshotContentBlock {
-    // Flat Bedrock Converse format (type field present)
-    type?: string;
-    text?: string;
-    id?: string;
-    name?: string;
-    input?: unknown;
-    tool_use_id?: string;
-    content?: unknown;
-    // Nested Strands SDK snapshot format (no type field, nested objects)
-    toolUse?: { name: string; toolUseId: string; input?: unknown };
-    toolResult?: { toolUseId: string; status?: string; content?: unknown };
-    reasoning?: { text: string; signature?: string };
-}
-interface SnapshotMessage {
-    role: "user" | "assistant";
-    content: SnapshotContentBlock[];
-}
+import {
+    getSessionS3,
+    conversationKey,
+    readSessionMessages,
+    snapshotMessagesToSessionMessages,
+} from "../lib/sessions";
 
 // ---------------------------------------------------------------------------
 // Local types for the /messages endpoint output
@@ -90,219 +64,6 @@ interface MikeMessage {
     content: string;
     annotations?: MikeCitationAnnotation[];
     events?: MikeAssistantEvent[];
-}
-
-// Strip <CITATIONS>...</CITATIONS> from text blocks.
-function stripCitationsTag(text: string): string {
-    return text.replace(/<CITATIONS>[\s\S]*?<\/CITATIONS>/g, "").trim();
-}
-
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function extractCitationsFromText(
-    text: string,
-): MikeCitationAnnotation[] {
-    const match = text.match(/<CITATIONS>([\s\S]*?)<\/CITATIONS>/);
-    if (!match) return [];
-    try {
-        const parsed = JSON.parse(match[1]) as unknown;
-        if (!Array.isArray(parsed)) return [];
-        return (parsed as Record<string, unknown>[]).filter((c) => {
-            const valid =
-                typeof c.ref === 'number' &&
-                typeof c.document_id === 'string' &&
-                UUID_RE.test(c.document_id) &&
-                (typeof c.page === 'number' || typeof c.page === 'string') &&
-                typeof c.quote === 'string' &&
-                c.quote.length > 0;
-            if (!valid) console.warn('[chat] dropping malformed citation on history load', c);
-            return valid;
-        }) as unknown as MikeCitationAnnotation[];
-    } catch {
-        return [];
-    }
-}
-
-// Convert Strands snapshot messages into MikeMessage[].
-function snapshotMessagesToMikeMessages(
-    messages: SnapshotMessage[],
-): MikeMessage[] {
-    const result: MikeMessage[] = [];
-
-    // Build a map of tool_use_id -> tool result content for lookup.
-    // Handles both flat Bedrock format ({ type: "tool_result", tool_use_id })
-    // and nested Strands snapshot format ({ toolResult: { toolUseId, content } }).
-    const toolResults = new Map<string, unknown>();
-    for (const msg of messages) {
-        if (msg.role === "user") {
-            for (const block of msg.content) {
-                if (block.toolResult && typeof block.toolResult.toolUseId === "string") {
-                    toolResults.set(block.toolResult.toolUseId, block.toolResult.content);
-                } else if (block.type === "tool_result" && typeof block.tool_use_id === "string") {
-                    toolResults.set(block.tool_use_id, block.content);
-                }
-            }
-        }
-    }
-
-    for (const msg of messages) {
-        if (msg.role === "user") {
-            // Only include user text blocks (skip tool_result/toolResult blocks).
-            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text"; snapshot may omit type entirely — accept all.
-            // Exclude nested-format toolResult blocks which have no type but are not text.
-            const textBlocks = msg.content.filter(
-                (b) => !b.toolResult && !b.toolUse &&
-                    (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
-            );
-            if (textBlocks.length === 0) continue;
-            const content = textBlocks
-                .map((b) => b.text ?? "")
-                .join("\n")
-                .trim();
-            if (!content) continue;
-            result.push({ role: "user", content });
-        } else {
-            // assistant message
-            // Strands SDK uses type "textBlock"; Bedrock Converse uses "text"; snapshot may omit type entirely — accept all.
-            // Exclude nested-format blocks (toolUse/toolResult/reasoning) which have no type but are not text.
-            const textBlocks = msg.content.filter(
-                (b) => !b.toolUse && !b.toolResult && !b.reasoning &&
-                    (!b.type || b.type === "text" || b.type === "textBlock") && typeof b.text === "string",
-            );
-            // Handles nested Strands format ({ toolUse: {...} }) and flat Bedrock format ({ type: "tool_use"|"toolUse" })
-            const toolUseBlocks = msg.content.filter(
-                (b) => !!b.toolUse || b.type === "tool_use" || b.type === "toolUse",
-            );
-            // Reasoning blocks: nested Strands format ({ reasoning: { text, signature } })
-            const reasoningBlocks = msg.content.filter((b) => !!b.reasoning);
-
-            const fullText = textBlocks.map((b) => b.text ?? "").join("\n");
-            const content = stripCitationsTag(fullText);
-            const annotations = extractCitationsFromText(fullText);
-
-            const events: MikeAssistantEvent[] = [];
-
-            for (const rb of reasoningBlocks) {
-                if (rb.reasoning?.text) {
-                    events.push({ type: "reasoning", text: rb.reasoning.text });
-                }
-            }
-
-            if (content) {
-                events.push({ type: "content", text: content });
-            }
-
-            for (const toolUse of toolUseBlocks) {
-                // Support both nested ({ toolUse: { name, toolUseId } }) and flat ({ name, id }) formats
-                const toolName = (toolUse.toolUse?.name ?? toolUse.name) ?? "";
-                const toolId = (toolUse.toolUse?.toolUseId ?? toolUse.id) ?? "";
-                const resultRaw = toolResults.get(toolId);
-                let resultObj: Record<string, unknown> = {};
-                try {
-                    if (typeof resultRaw === "string") {
-                        resultObj = JSON.parse(resultRaw) as Record<
-                            string,
-                            unknown
-                        >;
-                    } else if (Array.isArray(resultRaw)) {
-                        // content array from tool_result
-                        const textEntry = (
-                            resultRaw as { type: string; text?: string }[]
-                        ).find((e) => (e.type === "text" || e.type === "textBlock") && e.text);
-                        if (textEntry?.text) {
-                            resultObj = JSON.parse(textEntry.text) as Record<
-                                string,
-                                unknown
-                            >;
-                        }
-                    }
-                } catch {
-                    // ignore parse errors
-                }
-
-                // For read_document, result is raw doc text (not JSON) — extract filename from metadata block.
-                let rawResultText = "";
-                if (Array.isArray(resultRaw)) {
-                    const textEntry = (resultRaw as { type?: string; text?: string }[])
-                        .find((e) => e.text);
-                    rawResultText = textEntry?.text ?? "";
-                }
-                const metaFilenameMatch = rawResultText.match(/^filename:\s*(.+)$/m);
-                const metaFilename = metaFilenameMatch?.[1]?.trim() ?? "";
-
-                switch (toolName) {
-                    case "read_document":
-                        events.push({
-                            type: "doc_read",
-                            filename: (resultObj.filename as string) || metaFilename,
-                        });
-                        break;
-                    case "find_in_document":
-                        events.push({
-                            type: "doc_find",
-                            filename: (resultObj.filename as string) ?? "",
-                            query: (resultObj.query as string) ?? "",
-                            total_matches:
-                                (resultObj.total_matches as number) ?? 0,
-                        });
-                        break;
-                    case "generate_docx":
-                        events.push({
-                            type: "doc_created",
-                            filename: (resultObj.filename as string) ?? "",
-                            download_url:
-                                (resultObj.download_url as string) ?? "",
-                            document_id:
-                                (resultObj.document_id as string) ?? undefined,
-                            version_id:
-                                (resultObj.version_id as string) ?? undefined,
-                        });
-                        break;
-                    case "edit_document":
-                        events.push({
-                            type: "doc_edited",
-                            filename: (resultObj.filename as string) ?? "",
-                            document_id:
-                                (resultObj.document_id as string) ?? "",
-                            version_id: (resultObj.version_id as string) ?? "",
-                            download_url:
-                                (resultObj.download_url as string) ?? "",
-                            annotations: Array.isArray(resultObj.annotations)
-                                ? (resultObj.annotations as MikeEditAnnotation[])
-                                : [],
-                        });
-                        break;
-                    case "replicate_document":
-                        events.push({
-                            type: "doc_replicated",
-                            filename: (resultObj.filename as string) ?? "",
-                            count: (resultObj.count as number) ?? 0,
-                            copies: Array.isArray(resultObj.copies)
-                                ? (resultObj.copies as {
-                                      new_filename: string;
-                                      document_id: string;
-                                      version_id: string;
-                                  }[])
-                                : undefined,
-                        });
-                        break;
-                    // list_documents, fetch_documents, read_table_cells,
-                    // list_workflows, read_workflow → no UI card, skip.
-                    default:
-                        break;
-                }
-            }
-
-            result.push({
-                role: "assistant",
-                content,
-                annotations: annotations.length ? annotations : undefined,
-                events,
-            });
-        }
-    }
-
-    return result;
 }
 
 export const chatRouter = Router();
@@ -566,31 +327,9 @@ chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
     if (chat.user_id !== userId)
         return void res.status(404).json({ detail: "Chat not found" });
 
-    const bucket = process.env.SESSIONS_BUCKET_NAME;
-    if (!bucket)
-        return void res.status(500).json({ detail: "Sessions bucket not configured" });
-
     try {
-        const s3 = getSessionS3();
-        const conversationKey = `conversations/${chatId}/messages.json`;
-
-        let rawMessages: SnapshotMessage[] = [];
-        try {
-            const getResult = await s3.send(new GetObjectCommand({ Bucket: bucket, Key: conversationKey }));
-            const chunks: Uint8Array[] = [];
-            for await (const chunk of getResult.Body as AsyncIterable<Uint8Array>) {
-                chunks.push(chunk);
-            }
-            rawMessages = JSON.parse(Buffer.concat(chunks).toString("utf-8")) as SnapshotMessage[];
-        } catch (err: unknown) {
-            const code = (err as { name?: string }).name;
-            if (code === "NoSuchKey" || code === "NoSuchBucket") {
-                return void res.json({ messages: [] });
-            }
-            throw err;
-        }
-
-        const messages = snapshotMessagesToMikeMessages(rawMessages);
+        const rawMessages = await readSessionMessages(chatId);
+        const messages = snapshotMessagesToSessionMessages(rawMessages) as MikeMessage[];
         res.json({ messages });
     } catch (err) {
         console.error("[chat/messages] error:", err);

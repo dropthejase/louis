@@ -20,6 +20,13 @@ import {
     ensureReviewAccess,
     listAccessibleProjectIds,
 } from "../lib/access";
+import { DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+    getSessionS3,
+    conversationKey,
+    readSessionMessages,
+    snapshotMessagesToSessionMessages,
+} from "../lib/sessions";
 
 function formatPromptSuffix(format?: string, tags?: string[]): string {
     switch (format) {
@@ -1164,6 +1171,18 @@ tabularRouter.delete(
                     { name: "userId", value: { stringValue: userId } },
                 ],
             );
+            // Best-effort S3 cleanup — don't fail the delete if S3 errors.
+            const bucket = process.env.SESSIONS_BUCKET_NAME;
+            if (bucket) {
+                try {
+                    await getSessionS3().send(new DeleteObjectCommand({
+                        Bucket: bucket,
+                        Key: conversationKey(chatId),
+                    }));
+                } catch (s3Err) {
+                    console.error("[tabular] DELETE /:reviewId/chats/:chatId S3 cleanup failed:", s3Err);
+                }
+            }
             res.status(204).send();
         } catch (err) {
             console.error("[tabular] DELETE /:reviewId/chats/:chatId error:", err);
@@ -1203,15 +1222,8 @@ tabularRouter.get(
             if (!chat || chat.review_id !== reviewId)
                 return void res.status(404).json({ detail: "Chat not found" });
 
-            const messages = await query(
-                `SELECT id, role, content, annotations, created_at
-                 FROM tabular_review_chat_messages
-                 WHERE chat_id = :chatId
-                 ORDER BY created_at ASC`,
-                [{ name: "chatId", value: { stringValue: chatId } }],
-            );
-
-            res.json(messages);
+            const rawMessages = await readSessionMessages(chatId);
+            res.json(snapshotMessagesToSessionMessages(rawMessages));
         } catch (err) {
             console.error("[tabular] GET /:reviewId/chats/:chatId/messages error:", err);
             res.status(500).json({ detail: "Internal server error" });
@@ -1261,7 +1273,8 @@ tabularRouter.post("/:reviewId/chats", requireAuth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /tabular-review/:reviewId/chats/:chatId/messages — persist assistant turn
+// POST /tabular-review/:reviewId/chats/:chatId/messages — generate chat title on first exchange.
+// Message persistence is handled by the tabular agent (AfterInvocationEvent writes to S3).
 // ---------------------------------------------------------------------------
 
 tabularRouter.post(
@@ -1274,15 +1287,11 @@ tabularRouter.post(
         const { reviewId, chatId } = req.params;
         const {
             user_message,
-            assistant_events,
-            annotations,
             is_first_exchange,
             review_title,
             project_name,
         } = req.body as {
             user_message: string;
-            assistant_events: unknown[];
-            annotations?: unknown[];
             is_first_exchange?: boolean;
             review_title?: string | null;
             project_name?: string | null;
@@ -1315,39 +1324,6 @@ tabularRouter.post(
         );
         if (!chat)
             return void res.status(404).json({ detail: "Chat not found" });
-
-        // Persist user message
-        await execute(
-            `INSERT INTO tabular_review_chat_messages (chat_id, role, content)
-             VALUES (:chatId, 'user', :content::jsonb)`,
-            [
-                { name: "chatId", value: { stringValue: chatId } },
-                { name: "content", value: { stringValue: JSON.stringify(user_message) } },
-            ],
-        );
-
-        // Persist assistant message
-        await execute(
-            `INSERT INTO tabular_review_chat_messages
-               (chat_id, role, content, annotations)
-             VALUES
-               (:chatId, 'assistant', :content::jsonb, :annotations::jsonb)`,
-            [
-                { name: "chatId", value: { stringValue: chatId } },
-                {
-                    name: "content",
-                    value: assistant_events?.length
-                        ? { stringValue: JSON.stringify(assistant_events) }
-                        : { isNull: true },
-                },
-                {
-                    name: "annotations",
-                    value: annotations?.length
-                        ? { stringValue: JSON.stringify(annotations) }
-                        : { isNull: true },
-                },
-            ],
-        );
 
         await execute(
             `UPDATE tabular_review_chats SET updated_at = NOW() WHERE id = :id`,

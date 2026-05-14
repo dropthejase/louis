@@ -597,8 +597,6 @@ export async function persistTabularChatMessages(
     chatId: string,
     payload: {
         user_message: string;
-        assistant_events: unknown[];
-        annotations?: unknown[];
         is_first_exchange?: boolean;
         review_title?: string | null;
         project_name?: string | null;
@@ -624,15 +622,6 @@ export interface TRCitationAnnotation {
     quote: string;
 }
 
-interface RawTRMessage {
-    id: string;
-    chat_id: string;
-    role: "user" | "assistant";
-    content: string | AssistantEvent[] | null;
-    annotations?: TRCitationAnnotation[] | null;
-    created_at: string;
-}
-
 export interface TRDisplayMessage {
     role: "user" | "assistant";
     content: string;
@@ -647,41 +636,6 @@ export interface TRChat {
     updated_at: string;
 }
 
-export function mapTRMessages(raw: RawTRMessage[]): TRDisplayMessage[] {
-    return raw.map((m) => {
-        // Aurora Data API returns jsonb columns as strings — parse if needed.
-        const parsedContent: AssistantEvent[] | string | null =
-            typeof m.content === "string"
-                ? (() => { try { return JSON.parse(m.content); } catch { return m.content; } })()
-                : m.content;
-        const parsedAnnotations: TRCitationAnnotation[] | null | undefined =
-            typeof m.annotations === "string"
-                ? (() => { try { return JSON.parse(m.annotations as string); } catch { return undefined; } })()
-                : m.annotations;
-
-        if (m.role === "user") {
-            return {
-                role: "user" as const,
-                content: typeof parsedContent === "string" ? parsedContent : "",
-            };
-        }
-        const events = Array.isArray(parsedContent)
-            ? (parsedContent as AssistantEvent[])
-            : undefined;
-        const content =
-            events
-                ?.filter((e) => e.type === "content")
-                .map((e) => (e as { type: "content"; text: string }).text)
-                .join("") ?? "";
-        return {
-            role: "assistant" as const,
-            content,
-            events,
-            annotations: parsedAnnotations ?? undefined,
-        };
-    });
-}
-
 export async function getTabularChats(reviewId: string): Promise<TRChat[]> {
     return apiRequest<TRChat[]>(`/tabular-review/${reviewId}/chats`);
 }
@@ -689,8 +643,8 @@ export async function getTabularChats(reviewId: string): Promise<TRChat[]> {
 export async function getTabularChatMessages(
     reviewId: string,
     chatId: string,
-): Promise<RawTRMessage[]> {
-    return apiRequest<RawTRMessage[]>(
+): Promise<TRDisplayMessage[]> {
+    return apiRequest<TRDisplayMessage[]>(
         `/tabular-review/${reviewId}/chats/${chatId}/messages`,
     );
 }
