@@ -167,7 +167,7 @@ function TreeLevel({ nodes, depth, onFileClick }: { nodes: TreeNode[]; depth: nu
                                     : <ChevronRight className="h-3 w-3 text-gray-400 shrink-0" />
                                 }
                                 <Folder className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-                                <span className="text-xs text-gray-600">{node.name}</span>
+                                <span className="text-sm text-gray-600">{node.name}</span>
                             </div>
                             {open && <TreeLevel nodes={node.children} depth={depth + 1} onFileClick={onFileClick} />}
                         </div>
@@ -181,7 +181,7 @@ function TreeLevel({ nodes, depth, onFileClick }: { nodes: TreeNode[]; depth: nu
                         onClick={() => onFileClick(node.path)}
                     >
                         <FileIcon path={node.path} />
-                        <span className="text-xs text-gray-600 truncate flex-1">{node.name}</span>
+                        <span className="text-sm text-gray-600 truncate flex-1">{node.name}</span>
                         <span className="text-xs text-gray-300 shrink-0 tabular-nums">
                             {node.size > 0 ? `${Math.ceil(node.size / 1024)} KB` : ""}
                         </span>
@@ -277,11 +277,11 @@ function SkillRow({ skill, onDelete, deleting }: SkillRowProps) {
         <>
             {/* Skill folder row */}
             <div
-                className="flex items-start px-8 py-2.5 border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer select-none group min-h-10"
+                className="flex items-center h-14 px-8 border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer select-none group"
                 onClick={toggleExpand}
                 onContextMenu={handleContextMenu}
             >
-                <div className="flex items-start gap-2 w-64 shrink-0 min-w-0 pt-0.5">
+                <div className="flex items-center gap-2 w-64 shrink-0 min-w-0">
                     <span className="text-gray-400 shrink-0">
                         {expanded
                             ? <ChevronDown className="h-3.5 w-3.5" />
@@ -293,7 +293,7 @@ function SkillRow({ skill, onDelete, deleting }: SkillRowProps) {
                 </div>
                 <div className="flex-1 min-w-0 pr-4">
                     {skill.description ? (
-                        <span className="text-xs text-gray-500 leading-snug">{skill.description}</span>
+                        <span className="text-sm text-gray-500 leading-snug line-clamp-2">{skill.description}</span>
                     ) : (
                         <span className="text-xs text-gray-300">—</span>
                     )}
@@ -471,14 +471,14 @@ setUploading(true);
             <div className="mx-8 mb-4 rounded-lg bg-gray-50 border border-gray-200 shrink-0 overflow-hidden">
                 <button
                     onClick={() => setInfoExpanded(v => !v)}
-                    className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-gray-500 hover:bg-gray-100 transition-colors text-left"
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-gray-500 hover:bg-gray-100 transition-colors text-left"
                 >
                     <Info className="h-3.5 w-3.5 shrink-0 text-gray-400" />
                     <span className="flex-1">Skills give the assistant on-demand access to specialised instructions and reference files.</span>
                     <ChevronDown className={`h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${infoExpanded ? "rotate-180" : ""}`} />
                 </button>
                 {infoExpanded && (
-                    <div className="px-4 pb-4 pt-1 text-xs text-gray-500 space-y-3 border-t border-gray-200">
+                    <div className="px-4 pb-4 pt-1 text-sm text-gray-500 space-y-3 border-t border-gray-200">
                         <p>
                             Upload a folder as a skill. The assistant discovers available skills automatically and loads their full instructions on demand — keeping the context window lean.
                         </p>
