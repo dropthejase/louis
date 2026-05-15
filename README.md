@@ -10,7 +10,7 @@ Louis is a fork of [MikeOSS](https://github.com/willchen96/mike) — an AWS-nati
 
 - **No vendor API keys** — Claude is accessed via Amazon Bedrock; model access is an IAM permission, not a stored secret
 - **No long-lived credentials** — short-lived STS credentials scoped per-user; Lambda and AgentCore assume IAM roles at runtime
-- **Per-user data isolation at the IAM layer** — S3 bucket policies scope each user to their own prefix via `${cognito-identity.amazonaws.com:sub}` (Identity Pool identity ID), enforced by AWS not application code
+- **AgentCore microVM isolation** — each agent invocation runs in an isolated microVM; session state is scoped per-user and never shared across tenants
 - **Serverless** — Amazon Aurora Serverless v2, AWS Lambda, pay-per-request Amazon DynamoDB; no servers to run or patch
 - **Built-in observability** — structured JSON logs, AWS X-Ray tracing, and Amazon CloudWatch metrics on every Lambda invocation via AWS Lambda Powertools. AWS CloudTrail tracks API calls.
 - [**Strands Agents SDK**](https://strandsagents.com/) — model-agnostic agentic framework; swap between Claude models (or any Bedrock-supported model) by changing a model ID, not rewriting agent logic
@@ -123,7 +123,6 @@ cp frontend/.env.example frontend/.env
 VITE_AWS_REGION=eu-west-1
 VITE_USER_POOL_ID=eu-west-1_XXXXXXXXX
 VITE_USER_POOL_CLIENT_ID=XXXXXXXXXXXXXXXXXXXXXXXXXX
-VITE_IDENTITY_POOL_ID=eu-west-1:XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 VITE_DOCS_BUCKET_NAME=your-docs-bucket-name
 VITE_API_URL=https://XXXXXXXXXX.execute-api.eu-west-1.amazonaws.com/prod
 

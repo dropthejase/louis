@@ -6,7 +6,6 @@ import { SiteLogo } from './components/site-logo';
 import { amplifyConfig } from './lib/aws/config';
 import { AuthProvider } from './contexts/AuthContext';
 import { UserProfileProvider } from './contexts/UserProfileContext';
-import { AwsProvider } from './contexts/AwsContext';
 import AppLayout from './components/AppLayout';
 import AssistantPage from './pages/assistant/AssistantPage';
 import AssistantChatPageWrapper from './pages/assistant/AssistantChatPage';
@@ -56,9 +55,8 @@ export default function App() {
       }}
     >
       {() => (
-        <AwsProvider>
-          <AuthProvider>
-            <UserProfileProvider>
+        <AuthProvider>
+          <UserProfileProvider>
               <BrowserRouter>
                 <Routes>
                   <Route path="/" element={<Navigate to="/assistant" replace />} />
@@ -90,9 +88,8 @@ export default function App() {
                   <Route path="*" element={<Navigate to="/assistant" replace />} />
                 </Routes>
               </BrowserRouter>
-            </UserProfileProvider>
-          </AuthProvider>
-        </AwsProvider>
+          </UserProfileProvider>
+        </AuthProvider>
       )}
     </Authenticator>
   );
