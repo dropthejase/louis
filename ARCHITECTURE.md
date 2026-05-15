@@ -312,7 +312,7 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 **`projects`**
 - `user_id` — owner
 - `name`, `cm_number`, `visibility` (`private`/`shared`)
-- `shared_with` (jsonb array of `{ userId, email, role }`) — GIN indexed
+- `shared_with` (jsonb array of lowercase email strings) — GIN indexed
 
 **`project_subfolders`** — self-referential (`parent_folder_id`) for nested folders within a project
 
@@ -360,12 +360,12 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 
 ## Models
 
-All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profiles. Model selectable per conversation.
+All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profiles. Model selectable per conversation. See [AWS Bedrock model cards](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html) for current IDs.
 
 | Label | Bedrock model ID |
 |---|---|
-| Claude Opus 4.7 | `eu.anthropic.claude-opus-4-7-20251101-v1:0` |
-| Claude Sonnet 4.6 (default) | `eu.anthropic.claude-sonnet-4-6-20250922-v1:0` |
+| Claude Opus 4.7 | `eu.anthropic.claude-opus-4-7` |
+| Claude Sonnet 4.6 (default) | `eu.anthropic.claude-sonnet-4-6` |
 | Claude Haiku 4.5 | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
 
 ---
@@ -397,7 +397,8 @@ All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profile
 **Known Gaps**
 - Security hardening not production-grade: no WAF, rate limiting, Bedrock Guardrails, or CloudTrail/GuardDuty.
 - Credit tracking live but enforcement gate (429) not yet implemented.
-- Cold start latency on Lambda + Aurora (no provisioned concurrency, Aurora min ACU = 0) - may need to refresh browser a few times after inactivity.
+- Cold start latency on Lambda + Aurora (no provisioned concurrency, Aurora min ACU = 0) — may need to refresh browser a few times after inactivity.
 - Route files use `console.log` — Lambda Powertools logger not yet injected into routes.
-- Project sharing / member management UI incomplete.
+- Project and tabular review sharing / member management UI enabled — email-array based, no invite notification sent.
 - Edit card status (accepted/rejected) not re-hydrated on chat history load — tracked changes in reloaded conversations always show as pending regardless of current DB state. Fix tracked in Issue 26.
+- Documents attached via drag-and-drop into the chat input are not re-rendered as attachments on history reload — the raw injection block (`USER-ATTACHED DOCUMENTS FOR THIS TURN: ...`) appears as plain text.

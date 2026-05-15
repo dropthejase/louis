@@ -27,6 +27,7 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       return await fn();
     } catch (err: any) {
       if (AURORA_RESUME_RE.test(err?.message ?? '') && attempt < delays.length) {
+        console.warn(`[db] Aurora resuming after auto-pause — retrying in ${delays[attempt]}ms (attempt ${attempt + 1}/${delays.length})`);
         await sleep(delays[attempt]);
       } else {
         throw err;

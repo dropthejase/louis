@@ -23,7 +23,10 @@ interface McpServerConfig {
 }
 
 async function loadMcpServers(): Promise<McpServerConfig[]> {
-  if (!ADMIN_CONFIG_BUCKET) return [];
+  if (!ADMIN_CONFIG_BUCKET) {
+    console.warn('[mcp] ADMIN_BUCKET_NAME not set — skipping MCP server load');
+    return [];
+  }
   try {
     const res = await s3.send(new GetObjectCommand({ Bucket: ADMIN_CONFIG_BUCKET, Key: "mcp.json" }));
     const body = await res.Body?.transformToString();
@@ -137,6 +140,7 @@ userRouter.delete("/account", requireAuth, async (_req, res) => {
     // Delete all user data synchronously before removing the Cognito account.
     // FK cascades handle child rows: subfolders, documents, versions, chats,
     // tabular_cells, workflow_shares, etc.
+    console.log('[user] DELETE /account — starting data purge', { userId });
     await execute(`DELETE FROM projects WHERE user_id = :userId`,
       [{ name: "userId", value: { stringValue: userId } }]);
     await execute(`DELETE FROM workflows WHERE user_id = :userId`,
@@ -147,12 +151,15 @@ userRouter.delete("/account", requireAuth, async (_req, res) => {
       [{ name: "userId", value: { stringValue: userId } }]);
     await execute(`DELETE FROM user_profiles WHERE user_id = :userId`,
       [{ name: "userId", value: { stringValue: userId } }]);
+    console.log('[user] DELETE /account — DB purge complete, deleting Cognito user', { userId });
 
     const cognito = new CognitoIdentityProviderClient({});
     try {
       await cognito.send(new AdminDeleteUserCommand({ UserPoolId: userPoolId, Username: userId }));
+      console.log('[user] DELETE /account — Cognito user deleted', { userId });
       res.status(204).send();
     } catch (err: unknown) {
+      console.error('[user] DELETE /account — Cognito deletion failed', { userId, err });
       const message = err instanceof Error ? err.message : "Failed to delete user";
       res.status(500).json({ detail: message });
     }

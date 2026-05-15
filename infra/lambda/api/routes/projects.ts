@@ -175,11 +175,12 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
     if (!project)
       return void res.status(404).json({ detail: "Project not found" });
 
+    const sharedWith: string[] = typeof project.shared_with === 'string'
+      ? JSON.parse(project.shared_with)
+      : (project.shared_with ?? []);
     const canAccess =
       project.user_id === userId ||
-      (userEmail &&
-        Array.isArray(project.shared_with) &&
-        project.shared_with.includes(userEmail));
+      (!!userEmail && sharedWith.includes(userEmail));
     if (!canAccess)
       return void res.status(404).json({ detail: "Project not found" });
 
@@ -233,10 +234,10 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
       return void res.status(404).json({ detail: "Project not found" });
 
     const isOwner = project.user_id === userId;
-    const sharedWith = (Array.isArray(project.shared_with)
-      ? project.shared_with
-      : []
-    ).map((e) => e.toLowerCase());
+    const sharedWith = (typeof project.shared_with === 'string'
+      ? JSON.parse(project.shared_with)
+      : (project.shared_with ?? [])
+    ).map((e: string) => e.toLowerCase());
     const isShared =
       !!userEmail && sharedWith.includes(userEmail.toLowerCase());
     if (!isOwner && !isShared)
@@ -529,8 +530,10 @@ projectsRouter.post(
           [{ name: "versionId", value: { stringValue: doc.current_version_id } }],
         );
         if (srcV?.storage_path) {
+          console.log(`[projects] copying doc bytes`, { srcDocId: doc.id, copyDocId: copy.id, srcPath: srcV.storage_path });
           const srcBytes = await downloadFile(srcV.storage_path);
           if (!srcBytes) {
+            console.error(`[projects] failed to read source bytes`, { srcPath: srcV.storage_path });
             return void res
               .status(500)
               .json({ detail: "Failed to read source document bytes" });
@@ -556,6 +559,8 @@ projectsRouter.post(
                 const newPdfKey = convertedPdfKey(userId, copy.id);
                 await uploadFile(newPdfKey, pdfBytes, "application/pdf");
                 newPdfPath = newPdfKey;
+              } else {
+                console.warn(`[projects] PDF rendition not found — copy will lack PDF preview`, { srcPdfPath: srcV.pdf_storage_path, copyDocId: copy.id });
               }
             }
           }

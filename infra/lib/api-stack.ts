@@ -18,6 +18,8 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as logs from 'aws-cdk-lib/aws-logs';
+import * as xray from 'aws-cdk-lib/aws-xray';
 import { Stage } from './shared/stage';
 
 interface ApiStackProps extends StackProps {
@@ -58,7 +60,7 @@ export class ApiStack extends Stack {
 
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream', 'bedrock:CountTokens'],
       resources: [
         'arn:aws:bedrock:*::foundation-model/*',
         `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
@@ -191,11 +193,28 @@ export class ApiStack extends Stack {
     });
 
     agentCoreRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'CloudWatchLogs',
+      sid: 'CloudWatchLogsGroups',
       effect: iam.Effect.ALLOW,
-      actions: ['logs:CreateLogGroup', 'logs:DescribeLogGroups', 'logs:DescribeLogStreams', 'logs:CreateLogStream', 'logs:PutLogEvents'],
+      actions: ['logs:CreateLogGroup', 'logs:DescribeLogStreams'],
       resources: [
         `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/bedrock-agentcore/runtimes/*`,
+      ],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchLogsStreams',
+      effect: iam.Effect.ALLOW,
+      actions: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+      resources: [
+        `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*`,
+      ],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'CloudWatchLogsDescribe',
+      effect: iam.Effect.ALLOW,
+      actions: ['logs:DescribeLogGroups'],
+      resources: [
         `arn:aws:logs:${this.region}:${this.account}:log-group:*`,
       ],
     }));
@@ -218,7 +237,7 @@ export class ApiStack extends Stack {
     agentCoreRole.addToPolicy(new iam.PolicyStatement({
       sid: 'BedrockModelAccess',
       effect: iam.Effect.ALLOW,
-      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream', 'bedrock:CountTokens'],
       resources: [
         'arn:aws:bedrock:*::foundation-model/*',
         `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
@@ -319,6 +338,36 @@ export class ApiStack extends Stack {
     new CfnOutput(this, 'CreditsTableArn', { value: creditsTable.tableArn });
 
     this.agentCoreExecutionRoleArn = agentCoreRole.roleArn;
+
+    // CloudWatch Transaction Search — lets X-Ray write OTEL spans to CloudWatch Logs for querying.
+    // Resource policy grants xray.amazonaws.com write access; CfnTransactionSearchConfig enables indexing.
+    // NOTE: if Transaction Search was previously enabled via the console, disable it there first
+    // before deploying — CloudFormation will error if it already owns the resource.
+    const txSearchLogPolicy = new logs.CfnResourcePolicy(this, 'TransactionSearchLogPolicy', {
+      policyName: 'TransactionSearchAccess',
+      policyDocument: JSON.stringify({
+        Version: '2012-10-17',
+        Statement: [{
+          Sid: 'TransactionSearchXRayAccess',
+          Effect: 'Allow',
+          Principal: { Service: 'xray.amazonaws.com' },
+          Action: 'logs:PutLogEvents',
+          Resource: [
+            `arn:aws:logs:${this.region}:${this.account}:log-group:aws/spans:*`,
+            `arn:aws:logs:${this.region}:${this.account}:log-group:/aws/application-signals/data:*`,
+          ],
+          Condition: {
+            ArnLike: { 'aws:SourceArn': `arn:aws:xray:${this.region}:${this.account}:*` },
+            StringEquals: { 'aws:SourceAccount': this.account },
+          },
+        }],
+      }),
+    });
+
+    const txSearchConfig = new xray.CfnTransactionSearchConfig(this, 'TransactionSearchConfig', {
+      indexingPercentage: 5,
+    });
+    txSearchConfig.addDependency(txSearchLogPolicy);
 
     new CfnOutput(this, 'ApiUrl', { value: this.api.url });
     new CfnOutput(this, 'ApiLambdaArn', { value: this.apiLambda.functionArn });

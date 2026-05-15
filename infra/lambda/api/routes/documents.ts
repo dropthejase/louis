@@ -1118,6 +1118,8 @@ documentsRouter.post(
     const raw = await downloadFile(latestPath);
     if (!raw) return void res.status(404).json({ detail: "Document bytes not available" });
 
+    console.log(`[resolve-batch] ${mode} ${edits.length} edits on doc ${documentId} (${editIds.length - edits.length} already resolved/skipped)`);
+
     // Apply all resolutions sequentially in memory — one S3 read, one write.
     let currentBytes = Buffer.from(raw);
     for (const edit of edits) {
@@ -1134,6 +1136,7 @@ documentsRouter.post(
       currentBytes.byteOffset + currentBytes.byteLength,
     ) as ArrayBuffer;
     await uploadFile(latestPath, ab, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+    console.log(`[resolve-batch] S3 write complete`, { documentId, latestPath, byteLength: ab.byteLength });
 
     const newStatus = mode === "accept" ? "accepted" : "rejected";
     if (edits.length > 0) {

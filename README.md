@@ -4,16 +4,16 @@ It's time to Litt up!
 
 Louis is a fork of [MikeOSS](https://github.com/willchen96/mike) — an AWS-native implementation of the same AI-powered legal document workspace. 
 
-**DEMO TO DO**
+<video src="assets/demo.mp4" controls width="100%"></video>
 
 ## Highlights
 
 - **No vendor API keys** — Claude is accessed via Amazon Bedrock; model access is an IAM permission, not a stored secret
 - **No long-lived credentials** — short-lived STS credentials scoped per-user; Lambda and AgentCore assume IAM roles at runtime
 - **Per-user data isolation at the IAM layer** — S3 bucket policies scope each user to their own prefix via `${cognito-identity.amazonaws.com:sub}` (Identity Pool identity ID), enforced by AWS not application code
-- **Serverless** — Aurora Serverless v2, Lambda, pay-per-request DynamoDB; no servers to run or patch
-- **Built-in observability** — structured JSON logs, X-Ray tracing, and CloudWatch metrics on every Lambda invocation via AWS Lambda Powertools
-- **Strands Agents SDK** — model-agnostic agentic framework; swap between Claude models (or any Bedrock-supported model) by changing a model ID, not rewriting agent logic
+- **Serverless** — Amazon Aurora Serverless v2, AWS Lambda, pay-per-request Amazon DynamoDB; no servers to run or patch
+- **Built-in observability** — structured JSON logs, AWS X-Ray tracing, and Amazon CloudWatch metrics on every Lambda invocation via AWS Lambda Powertools. AWS CloudTrail tracks API calls.
+- [**Strands Agents SDK**](https://strandsagents.com/) — model-agnostic agentic framework; swap between Claude models (or any Bedrock-supported model) by changing a model ID, not rewriting agent logic
 - **Bedrock cross-region inference** — automatic routing across EU regions for resilience and throughput; can be scoped to a single AWS region if needed
 
 ## Architecture
@@ -62,6 +62,8 @@ Before deploying, review these settings in `infra/`:
 - **Bedrock model IDs** — update model ID constants if you want to swap Claude versions or use a different model
 - **Aurora minimum ACU** — defaults to `0` (scales to zero). Set a non-zero minimum (e.g. `0.5`) to avoid cold-start latency on the first query after idle
 - **Lambda provisioned concurrency** — not configured by default; the API and agent Lambdas will cold-start after periods of inactivity. Add provisioned concurrency to `ApiStack` / agent function if you need consistent response times
+- **Transaction Search sampling** — defaults to `5%` (`indexingPercentage: 5` in `ApiStack`). Set to `100` for full trace coverage, `0` to disable. Higher percentages increase CloudWatch Logs ingest cost
+- **MFA** — TOTP (authenticator app) is enabled as optional (`cognito.Mfa.OPTIONAL`, `otp: true`). Change to `cognito.Mfa.REQUIRED` in `AuthStack` to enforce it for all users. SMS MFA is not configured (requires SNS sandbox approval)
 
 **Deletion policies — review before deploying to anything real:**
 
@@ -113,7 +115,7 @@ Builds, zips, uploads to S3, and creates/updates the agent runtime. Runtime IDs 
 ### 4. Configure frontend environment
 
 ```bash
-cp frontend/.env.local.example frontend/.env.local
+cp frontend/.env.example frontend/.env
 # Fill in values from CloudFormation outputs
 ```
 
@@ -164,17 +166,27 @@ AWS_REGION=eu-west-1 ./scripts/destroy-agent.sh louisTabular
 ```bash
 aws s3 rm s3://DOCS_BUCKET_NAME --recursive
 aws s3 rm s3://SESSIONS_BUCKET_NAME --recursive
+aws s3 rm s3://SKILLS_BUCKET_NAME --recursive
+aws s3 rm s3://ADMIN_BUCKET_NAME --recursive
 aws s3 rm s3://FRONTEND_BUCKET_NAME --recursive
 ```
 
-**3. Destroy CDK stacks**
+**3. Delete any Secrets Manager secrets** created for MCP server auth (not managed by CDK):
+
+```bash
+aws secretsmanager list-secrets --filters Key=name,Values=louis/mcp/ --query "SecretList[*].ARN" --output text \
+  | tr '\t' '\n' \
+  | xargs -I{} aws secretsmanager delete-secret --secret-id {} --force-delete-without-recovery
+```
+
+**4. Destroy CDK stacks**
 
 ```bash
 cd infra
-npx cdk destroy ConversionStack ApiStack AuthStack DatabaseStack StorageStack
+npx cdk destroy ConversionStack ApiStack AgentStack AuthStack DatabaseStack StorageStack
 ```
 
-**4. Clean up remaining resources manually if needed**
+**5. Clean up remaining resources manually if needed**
 
 - SSM parameters under `/louis/` — not managed by CDK stacks
 - Any CloudWatch log groups not deleted by the stack
@@ -188,13 +200,13 @@ The agent can fetch pages from a curated set of legal and regulatory websites: c
 
 ### Strands Skills
 
-Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` manifest + reference files) stored in S3. On session start the agent downloads them to `/tmp` and can read them on demand via `read_local_file`.
+Users can upload [**Skills**](https://skills.md/) via the UI, which saves them into S3. The repo seeds a sample [EU AI System Classifier](https://lawve.ai/en/skills/eu-ai-act-classification-werner-plutat) Skill by Werner Plutat. You can find many more on [Lawve AI](https://lawve.ai/en).
 
 **Limitations:** Skills are read-only. The agent cannot execute scripts — this is to reduce the risk of privilege escalation.
 
 ### MCP Servers
 
-The AWS administrator can connect approved [Model Context Protocol](https://modelcontextprotocol.io) servers to the agent by uploading `mcp.json` to the admin S3 bucket. Users can toggle individual servers on or off in Agent Settings. Only HTTP (StreamableHTTP) transport is supported.
+The AWS administrator can connect approved [Model Context Protocol](https://modelcontextprotocol.io) servers to the agent by uploading `mcp.json` to the admin S3 bucket. Users can toggle individual servers on or off in **Agent Settings** in their **Account Settings**. The repo seeds the [Lex API MCP Server](https://lex.lab.i.ai.gov.uk/).
 
 For authenticated servers, store the API key as an AWS Secrets Manager secret under the `louis/mcp/` prefix (e.g. `louis/mcp/my-server`) and reference it in `mcp.json`:
 
@@ -211,15 +223,24 @@ For authenticated servers, store the API key as an AWS Secrets Manager secret un
 
 The agent fetches the secret at cold start and sends it as a `Bearer` token. The key never appears in `mcp.json` or S3.
 
-**Limitations:** Only static Bearer token auth is supported. OAuth 2.0 / three-legged OAuth (3LO) flows are not supported — servers requiring interactive sign-in (e.g. GitHub/Google OAuth) cannot be used without AgentCore Gateway.
+**Limitations:**
 
-The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** — a public MCP server for UK legislation search, provided by i.AI (DSIT).
+- Only static Bearer token auth is supported. OAuth 2.0 / three-legged OAuth (3LO) flows are not supported — servers requiring interactive sign-in (e.g. GitHub/Google OAuth) cannot be used without AgentCore Gateway.
+- **Only HTTP (StreamableHTTP) transport is supported.**
+
+
+### Observability
+
+[**AgentCore Observability**](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-get-started.html) is turned on, allowing you to investigate traces. These are captured as X-Ray spans and indexed in CloudWatch via **Transaction Search** (5% sampling, configurable — see below).
+
+CloudWatch Logs capture structured runtime output under `/aws/bedrock-agentcore/runtimes/`. X-Ray service maps show latency across AgentCore, Bedrock, and downstream services.
 
 ---
 
 ## Ideas for Extension
 
 **Agents & AI**
+- **Migrate agents to Python** — the Strands Agents SDK is Python-native and receives more active development, richer documentation, and broader community support than the TypeScript port. The primary consideration is rewriting the DOCX tracked-changes logic (`docxTrackedChanges.ts`), which performs raw XML surgery and has no direct `python-docx` equivalent.
 - **Agentic Memory (STM and/or LTM)** — persist user/matter context across sessions using Amazon Bedrock AgentCore Memory
 - **Agentic RAG** — incorporate Bedrock Knowledge Bases; agents retrieve relevant clauses before responding rather than loading full documents into context
 - **AgentCore Gateway** — fully managed MCP-compatible gateway that converts Lambda functions and APIs into agent tools with semantic discovery, unified auth, and server-side tool execution; eliminates client-side orchestration loops
@@ -239,11 +260,15 @@ The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** �
 
 ## Disclaimer
 
-This project was built as a learning exercise and vibe-coded with [Claude Code](https://claude.ai/code). It is not production-ready and comes with no warranties.
+This project was built entirely in personal time, using personal AWS accounts and personal resources. It is not affiliated with, endorsed by, or connected to my employer in any way. Any views, decisions, or opinions reflected in this project are solely my own.
 
-**Not legal advice.** Nothing in this software or its outputs constitutes legal advice. Always consult a qualified lawyer.
+Nothing in this software or its outputs constitutes legal advice. The tool is designed to assist with document review and drafting, but it can and does make mistakes. Do not rely on anything it produces as a substitute for advice from a qualified lawyer.
 
-**Security notice.** This deployment is intentionally minimal. Depending on your threat model, you may or may not want to consider additions such as:
+This personal project was built as a learning exercise and vibe-coded with [Claude Code](https://claude.ai/code). It is not production-ready. Before deploying to any real environment, ensure you conduct appropriate security testing, review all permissions and data handling practices, and satisfy yourself that the software meets your technical requirements.
+
+## Security Notice
+
+This deployment is intentionally minimal. Depending on your threat model, you may or may not want to consider additions such as:
 
 - VPC with private subnets and VPC endpoints (S3, Bedrock, RDS, SSM) to keep traffic off the public internet
 - AWS WAF on CloudFront and API Gateway for OWASP rule sets and rate limiting
