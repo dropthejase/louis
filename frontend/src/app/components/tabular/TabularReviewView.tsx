@@ -522,14 +522,9 @@ export function TRView({ reviewId, projectId }: Props) {
                             <HeaderSearchBtn value={search} onChange={setSearch} placeholder="Search documents…" />
                             {!projectId && (
                                 <button
-                                    onClick={() => setPeopleModalOpen(true)}
-                                    disabled={loading}
-                                    className={`flex h-8 w-8 items-center justify-center text-sm transition-colors ${
-                                        loading
-                                            ? "text-gray-300 cursor-default"
-                                            : "text-gray-500 hover:text-gray-900 cursor-pointer"
-                                    }`}
-                                    title="People with access"
+                                    disabled
+                                    className="flex h-8 w-8 items-center justify-center text-sm text-gray-300 opacity-50 cursor-not-allowed"
+                                    title="Coming soon"
                                     aria-label="People with access"
                                 >
                                     <Users className="h-4 w-4" />
