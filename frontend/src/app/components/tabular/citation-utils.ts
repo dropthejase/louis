@@ -1,4 +1,3 @@
-"use client";
 
 const PAGE_CITATION_RE = /\[\[page:(\d+)\|\|(?:quote:)?((?:[^\[\]]|\[[^\]]*\])+)\]\]/gi;
 

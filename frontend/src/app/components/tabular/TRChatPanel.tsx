@@ -1,4 +1,3 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
@@ -16,10 +15,11 @@ import {
 import { MikeIcon } from "@/components/chat/mike-icon";
 import {
     streamTabularChat,
+    createTabularChat,
+    persistTabularChatMessages,
     getTabularChats,
     getTabularChatMessages,
     deleteTabularChat,
-    mapTRMessages,
     type TRChat,
     type TRCitationAnnotation,
 } from "@/app/lib/mikeApi";
@@ -29,14 +29,8 @@ import type {
     MikeDocument,
 } from "../shared/types";
 import { ModelToggle } from "../assistant/ModelToggle";
-import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
 import { PreResponseWrapper } from "../shared/PreResponseWrapper";
 import { useUserProfile } from "@/contexts/UserProfileContext";
-import {
-    getModelProvider,
-    isModelAvailable,
-    type ModelProvider,
-} from "@/app/lib/modelAvailability";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -446,14 +440,12 @@ function TRChatInput({
     onCancel,
     model,
     onModelChange,
-    apiKeys,
 }: {
     isLoading: boolean;
     onSubmit: (value: string) => void;
     onCancel: () => void;
     model: string;
     onModelChange: (id: string) => void;
-    apiKeys: { claudeApiKey: string | null; geminiApiKey: string | null };
 }) {
     const [value, setValue] = useState("");
     const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -495,7 +487,6 @@ function TRChatInput({
                     <ModelToggle
                         value={model}
                         onChange={onModelChange}
-                        apiKeys={apiKeys}
                     />
                     <button
                         type="button"
@@ -606,14 +597,8 @@ export function TRChatPanel({
     initialChatId,
     onChatIdChange,
 }: Props) {
-    const { profile, updateModelPreference } = useUserProfile();
-    const apiKeys = {
-        claudeApiKey: profile?.claudeApiKey ?? null,
-        geminiApiKey: profile?.geminiApiKey ?? null,
-    };
-    const currentModel = profile?.tabularModel ?? "gemini-3-flash-preview";
-    const [apiKeyModalProvider, setApiKeyModalProvider] =
-        useState<ModelProvider | null>(null);
+    const { profile, updateTabularModel } = useUserProfile();
+    const currentModel = profile?.tabularModel ?? "claude-sonnet-4-6";
     const [chats, setChats] = useState<TRChat[]>([]);
     const [currentChatId, setCurrentChatId] = useState<string | null>(
         initialChatId ?? null,
@@ -677,7 +662,7 @@ export function TRChatPanel({
         if (!initialChatId) return;
         setIsLoadingMessages(true);
         getTabularChatMessages(reviewId, initialChatId)
-            .then((raw) => setMessages(mapTRMessages(raw) as TRMessage[]))
+            .then((msgs) => setMessages(msgs as TRMessage[]))
             .catch(() => {})
             .finally(() => setIsLoadingMessages(false));
     }, [reviewId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -942,8 +927,8 @@ export function TRChatPanel({
         setHistoryOpen(false);
         setIsLoadingMessages(true);
         try {
-            const raw = await getTabularChatMessages(reviewId, chatId);
-            setMessages(mapTRMessages(raw) as TRMessage[]);
+            const msgs = await getTabularChatMessages(reviewId, chatId);
+            setMessages(msgs as TRMessage[]);
         } catch {
             /* ignore */
         } finally {
@@ -957,19 +942,8 @@ export function TRChatPanel({
 
     async function handleSubmit(trimmed: string) {
         if (!trimmed || isLoading) return;
-        if (!isModelAvailable(currentModel, apiKeys)) {
-            setApiKeyModalProvider(getModelProvider(currentModel));
-            return;
-        }
 
-        // Build messages array for backend (plain text history)
-        const history: { role: string; content: string }[] = messages.map(
-            (m) => ({
-                role: m.role,
-                content: m.content,
-            }),
-        );
-        const allMessages = [...history, { role: "user", content: trimmed }];
+        const isFirstExchange = messages.filter((m) => m.role === "user").length === 0;
 
         const userMsg: TRMessage = { role: "user", content: trimmed };
         const assistantMsg: TRMessage = {
@@ -1002,18 +976,40 @@ export function TRChatPanel({
         abortRef.current = controller;
 
         try {
+            // Pre-create chat record before streaming
+            let activeChatId = currentChatId;
+            if (!activeChatId) {
+                const created = await createTabularChat(reviewId);
+                activeChatId = created.chatId;
+                setCurrentChatId(activeChatId);
+                setChats((prev) =>
+                    prev.some((c) => c.id === activeChatId!)
+                        ? prev
+                        : [
+                              {
+                                  id: activeChatId!,
+                                  title: null,
+                                  created_at: new Date().toISOString(),
+                                  updated_at: new Date().toISOString(),
+                              },
+                              ...prev,
+                          ],
+                );
+            }
+
             const response = await streamTabularChat(
                 reviewId,
-                allMessages,
-                currentChatId,
+                activeChatId,
+                trimmed,
+                currentModel,
                 controller.signal,
-                { reviewTitle, projectName },
             );
             if (!response.body) throw new Error("No response body");
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             let buffer = "";
+            let streamAnnotations: TRCitationAnnotation[] = [];
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -1029,41 +1025,6 @@ export function TRChatPanel({
 
                     try {
                         const data = JSON.parse(dataStr);
-
-                        if (data.type === "chat_id") {
-                            const newId = data.chatId as string;
-                            setCurrentChatId(newId);
-                            setChats((prev) =>
-                                prev.some((c) => c.id === newId)
-                                    ? prev
-                                    : [
-                                          {
-                                              id: newId,
-                                              title: null,
-                                              created_at:
-                                                  new Date().toISOString(),
-                                              updated_at:
-                                                  new Date().toISOString(),
-                                          },
-                                          ...prev,
-                                      ],
-                            );
-                            continue;
-                        }
-
-                        if (data.type === "chat_title") {
-                            const { chatId, title } = data as {
-                                chatId: string;
-                                title: string;
-                            };
-                            setChats((prev) =>
-                                prev.map((c) =>
-                                    c.id === chatId ? { ...c, title } : c,
-                                ),
-                            );
-                            setCurrentChatTitle(title);
-                            continue;
-                        }
 
                         if (data.type === "reasoning_delta") {
                             const text = data.text as string;
@@ -1213,12 +1174,9 @@ export function TRChatPanel({
                         }
 
                         if (data.type === "citations") {
-                            // End-of-stream signal — scrub any lingering
-                            // placeholders so they don't persist into the
-                            // finalised message.
                             clearStreamingPlaceholders();
-                            const incoming = (data.citations ??
-                                []) as TRCitationAnnotation[];
+                            const incoming = (data.citations ?? []) as TRCitationAnnotation[];
+                            streamAnnotations = incoming;
                             setMessages((prev) => {
                                 const updated = [...prev];
                                 const last = updated[updated.length - 1];
@@ -1251,6 +1209,34 @@ export function TRChatPanel({
                 }
                 return updated;
             });
+
+            // Persist turn to backend
+            if (activeChatId) {
+                try {
+                    const persistResult = await persistTabularChatMessages(
+                        reviewId,
+                        activeChatId,
+                        {
+                            user_message: trimmed,
+                            is_first_exchange: isFirstExchange,
+                            review_title: reviewTitle ?? null,
+                            project_name: projectName ?? null,
+                        },
+                    );
+                    if (persistResult.title) {
+                        setCurrentChatTitle(persistResult.title);
+                        setChats((prev) =>
+                            prev.map((c) =>
+                                c.id === activeChatId
+                                    ? { ...c, title: persistResult.title! }
+                                    : c,
+                            ),
+                        );
+                    }
+                } catch {
+                    /* persist failure is non-fatal */
+                }
+            }
         } catch (err: unknown) {
             const isAbort = err instanceof Error && err.name === "AbortError";
             stopDrip();
@@ -1454,16 +1440,7 @@ export function TRChatPanel({
                 onSubmit={handleSubmit}
                 onCancel={handleCancel}
                 model={currentModel}
-                onModelChange={(id) =>
-                    updateModelPreference("tabularModel", id)
-                }
-                apiKeys={apiKeys}
-            />
-
-            <ApiKeyMissingModal
-                open={apiKeyModalProvider !== null}
-                provider={apiKeyModalProvider}
-                onClose={() => setApiKeyModalProvider(null)}
+                onModelChange={updateTabularModel}
             />
         </div>
     );

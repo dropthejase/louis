@@ -1,0 +1,21 @@
+{
+  "name": "mike-conversion-lambda",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@aws-lambda-powertools/logger": "^2.14.0",
+    "@aws-sdk/client-rds-data": "^3.1045.0",
+    "@aws-sdk/client-s3": "^3.758.0",
+    "jszip": "^3.10.1",
+    "libreoffice-convert": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.140",
+    "@types/node": "^20.0.0",
+    "typescript": "~5.4.0"
+  }
+}

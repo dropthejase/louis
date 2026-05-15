@@ -1,8 +1,8 @@
-"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { API_URL } from "@/lib/aws/config";
 import { Download, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { getIdToken } from "@/lib/aws/amplify-auth";
 import { applyOptimisticResolution } from "../assistant/EditCard";
 import { DocView } from "./DocView";
 import { DocxView } from "./DocxView";
@@ -355,20 +355,14 @@ function EditResolveButtons({
                 );
             }
             try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                const token = await getIdToken();
                 const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                    API_URL;
                 const resp = await fetch(
                     `${apiBase}/single-documents/${edit.document_id}/edits/${edit.edit_id}/${verb}`,
                     {
                         method: "POST",
-                        headers: token
-                            ? { Authorization: `Bearer ${token}` }
-                            : undefined,
+                        headers: { Authorization: `Bearer ${token}` },
                     },
                 );
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -457,31 +451,23 @@ function DownloadButton({
         if (busy || isReloading) return;
         setBusy(true);
         try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+            const token = await getIdToken();
+            const apiBase = API_URL;
             const qs = versionId
                 ? `?version_id=${encodeURIComponent(versionId)}`
                 : "";
             const resp = await fetch(
                 `${apiBase}/single-documents/${documentId}/docx${qs}`,
-                {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
-                },
+                { headers: { Authorization: `Bearer ${token}` } },
             );
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
-            const blobUrl = URL.createObjectURL(blob);
+            const { url } = await resp.json() as { url: string };
             const a = document.createElement("a");
-            a.href = blobUrl;
+            a.href = url;
             a.download = filename;
             document.body.appendChild(a);
             a.click();
             a.remove();
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
         } finally {
             setBusy(false);
         }

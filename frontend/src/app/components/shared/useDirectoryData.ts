@@ -1,4 +1,3 @@
-"use client";
 
 import { useEffect, useState } from "react";
 import { getProject, listProjects, listStandaloneDocuments } from "@/app/lib/mikeApi";

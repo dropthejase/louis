@@ -1,8 +1,8 @@
-"use client";
 
-import { useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { streamChat, streamProjectChat } from "@/app/lib/mikeApi";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { streamChat, apiRequest } from "@/app/lib/mikeApi";
+import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useGenerateChatTitle } from "./useGenerateChatTitle";
 import type {
@@ -15,6 +15,7 @@ interface UseAssistantChatOptions {
     initialMessages?: MikeMessage[];
     chatId?: string;
     projectId?: string;
+    initialRuntimeSessionId?: string;
 }
 
 function findLastContentIndex(events: AssistantEvent[]): number {
@@ -28,8 +29,9 @@ export function useAssistantChat({
     initialMessages = [],
     chatId: initialChatId,
     projectId,
+    initialRuntimeSessionId,
 }: UseAssistantChatOptions = {}) {
-    const router = useRouter();
+    const navigate = useNavigate();
     const {
         replaceChatId,
         loadChats,
@@ -45,12 +47,41 @@ export function useAssistantChat({
     const [chatId, setChatId] = useState<string | undefined>(initialChatId);
 
     const abortControllerRef = useRef<AbortController | null>(null);
+    const runtimeSessionIdRef = useRef<string | undefined>(initialRuntimeSessionId);
 
     const dripIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const dripTargetRef = useRef<string>("");
     const dripDisplayLenRef = useRef<number>(0);
     const eventsRef = useRef<AssistantEvent[]>([]);
     const DRIP_CHARS_PER_TICK = 8;
+
+    // Load runtimeSessionId and hydrate messages when opening an existing chat.
+    useEffect(() => {
+        if (!initialChatId) return;
+
+        // Load agentcore_session_id for multi-turn continuity.
+        apiRequest<{ agentcore_session_id: string | null }>(`/chat/${initialChatId}/session-id`)
+            .then(({ agentcore_session_id }) => {
+                if (agentcore_session_id) {
+                    runtimeSessionIdRef.current = agentcore_session_id;
+                }
+            })
+            .catch(() => {});
+
+        // Hydrate messages from S3 snapshot via backend only when no initial messages were provided.
+        if (initialMessages.length > 0) return;
+
+        apiRequest<{ messages: MikeMessage[] }>(`/chat/${initialChatId}/messages`)
+            .then(({ messages: loaded }) => {
+                if (loaded.length > 0) {
+                    setMessages(loaded);
+                }
+            })
+            .catch((err) => {
+                console.warn("[useAssistantChat] failed to load messages:", err);
+            });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialChatId]);
 
     const stopDrip = () => {
         if (dripIntervalRef.current !== null) {
@@ -95,12 +126,18 @@ export function useAssistantChat({
     const finalizeStreamingContent = () => {
         stopDrip();
         const events = eventsRef.current;
-        const last = events[events.length - 1];
-        if (last?.type === "content" && last.isStreaming) {
+        // Search backwards — a tool_call_start placeholder may sit after the
+        // content block if tool_call_start arrived before pushEvent finalized it.
+        const contentIdx = [...events].reverse().findIndex(
+            (e) => e.type === "content" && (e as { type: string; isStreaming?: boolean }).isStreaming
+        );
+        if (contentIdx !== -1) {
+            const idx = events.length - 1 - contentIdx;
             const finalText = dripTargetRef.current;
             eventsRef.current = [
-                ...events.slice(0, -1),
+                ...events.slice(0, idx),
                 { type: "content", text: finalText },
+                ...events.slice(idx + 1),
             ];
             const snapshot = [...eventsRef.current];
             setMessages((prev) => {
@@ -308,22 +345,21 @@ export function useAssistantChat({
             const controller = new AbortController();
             abortControllerRef.current = controller;
 
-            const apiMessages = newMessages.map((currentMessage) => ({
-                role: currentMessage.role,
-                content: currentMessage.content,
-                files: currentMessage.files,
-                workflow: currentMessage.workflow,
-            }));
+            // Ensure session ID is set before the first stream call.
+            if (!runtimeSessionIdRef.current && chatId) {
+                const uid = await getCurrentUserId().catch(() => 'unknown');
+                runtimeSessionIdRef.current = `${uid}-${chatId}`;
+            }
 
             const model = message.model;
+            const workflowMarker = message.workflow
+                ? `[Workflow: ${message.workflow.title} (id: ${message.workflow.id})]\n\n`
+                : "";
+            const prompt = workflowMarker + message.content;
 
             const displayedDoc = opts?.displayedDoc ?? null;
 
             // Pull the user's attachments from the just-submitted message.
-            // These are the files dragged into / picked from the chat input
-            // for this turn (separate from the running history of past
-            // attachments). Sent as a request-level field so the backend
-            // can call them out specifically in the system prompt.
             const attachedDocs = (
                 message.files?.filter((f) => !!f.document_id) ?? []
             ).map((f) => ({
@@ -331,28 +367,21 @@ export function useAssistantChat({
                 document_id: f.document_id as string,
             }));
 
-            const response = await (projectId
-                ? streamProjectChat({
-                      projectId,
-                      messages: apiMessages,
-                      chat_id: chatId,
-                      model,
-                      displayed_doc: displayedDoc
-                          ? {
-                                filename: displayedDoc.filename,
-                                document_id: displayedDoc.documentId,
-                            }
-                          : undefined,
-                      attached_documents:
-                          attachedDocs.length > 0 ? attachedDocs : undefined,
-                      signal: controller.signal,
-                  })
-                : streamChat({
-                      messages: apiMessages,
-                      chat_id: chatId,
-                      model,
-                      signal: controller.signal,
-                  }));
+            const response = await streamChat({
+                prompt,
+                chatId,
+                projectId,
+                model,
+                runtimeSessionId: runtimeSessionIdRef.current,
+                displayed_doc: displayedDoc
+                    ? {
+                          filename: displayedDoc.filename,
+                          document_id: displayedDoc.documentId,
+                      }
+                    : undefined,
+                attached_documents: attachedDocs.length > 0 ? attachedDocs : undefined,
+                signal: controller.signal,
+            });
 
             if (!response.ok) {
                 const errText = await response.text();
@@ -364,6 +393,8 @@ export function useAssistantChat({
 
             const decoder = new TextDecoder();
             let buffer = "";
+            let fullText = "";
+            let streamAnnotations: MikeCitationAnnotation[] = [];
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -387,6 +418,17 @@ export function useAssistantChat({
                             streamedChatId = data.chatId;
                             setChatId(data.chatId);
                             setCurrentChatId(data.chatId);
+                            // Persist session ID immediately — before AgentCore
+                            // runs — so a tab-close mid-stream still saves it.
+                            if (runtimeSessionIdRef.current) {
+                                void apiRequest(`/chat/${data.chatId}/session-id`, {
+                                    method: "PUT",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        agentcore_session_id: runtimeSessionIdRef.current,
+                                    }),
+                                }).catch(() => {});
+                            }
                             continue;
                         }
 
@@ -397,6 +439,7 @@ export function useAssistantChat({
 
                         if (data.type === "content_delta") {
                             const text = data.text as string;
+                            fullText += text;
 
                             // Real content is streaming — retire any
                             // "Thinking…" / "Running…" placeholders, and
@@ -525,16 +568,28 @@ export function useAssistantChat({
                         }
 
                         if (data.type === "tool_call_start") {
-                            // Transient placeholder so the client immediately
-                            // shows activity after Claude ends a turn with
-                            // tool_use. Replaced by the real tool event
-                            // (doc_edited_start, doc_read_start, …) if one
-                            // arrives; otherwise it lingers as a "Working…"
-                            // indicator until the next iteration streams.
-                            pushEvent({
+                            // Append placeholder WITHOUT finalizing the in-flight
+                            // content block. The model closes its text block before
+                            // opening a tool block, but network chunking means more
+                            // content_deltas may still be in-flight. Calling
+                            // pushEvent() here would prematurely close the content
+                            // block and create a second one after the tool accordion.
+                            // The real tool event (doc_edited_start etc.) goes through
+                            // pushEvent() and finalizes content at the right moment.
+                            const toolCallEvent: AssistantEvent = {
                                 type: "tool_call_start",
                                 name: (data.name as string) ?? "",
                                 isStreaming: true,
+                            };
+                            eventsRef.current = [...eventsRef.current, toolCallEvent];
+                            const snapshot = [...eventsRef.current];
+                            setMessages((prev) => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                if (last?.role === "assistant") {
+                                    updated[updated.length - 1] = { ...last, events: snapshot };
+                                }
+                                return updated;
                             });
                             continue;
                         }
@@ -763,6 +818,7 @@ export function useAssistantChat({
                             clearStreamingPlaceholders();
                             const incoming = (data.citations ??
                                 []) as MikeCitationAnnotation[];
+                            streamAnnotations = incoming;
                             setMessages((prev) => {
                                 const updated = [...prev];
                                 const last = updated[updated.length - 1];
@@ -804,7 +860,7 @@ export function useAssistantChat({
                 const chatBasePath = projectId
                     ? `/projects/${projectId}/assistant/chat`
                     : `/assistant/chat`;
-                router.replace(`${chatBasePath}/${finalChatId}`);
+                navigate(`${chatBasePath}/${finalChatId}`);
             }
 
             await loadChats();
@@ -918,6 +974,8 @@ export function useAssistantChat({
         if (newChatId) {
             setChatId(newChatId);
             setCurrentChatId(newChatId);
+            const userId = await getCurrentUserId().catch(() => "unknown");
+            runtimeSessionIdRef.current = `${userId}-${crypto.randomUUID()}`;
         }
 
         return newChatId;

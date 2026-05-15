@@ -9,6 +9,7 @@ build
 .env.*
 !.env.example
 !.env.local.example
+!.env.aws.example
 
 *.log
 *.tsbuildinfo
@@ -16,3 +17,21 @@ next-env.d.ts
 .DS_Store
 .vercel
 coverage
+
+# local mcp
+.mcp.json
+
+# local AI tool state
+.claude/
+.claire/
+
+# agent deployment ZIPs (created and deleted by deploy-agent.sh)
+*.zip
+
+# local test documents
+demo-docs/
+
+# internal docs — plans, specs, superpowers. ARCHITECTURE.md lives at repo root.
+docs/
+
+TEMP_TASKS.md

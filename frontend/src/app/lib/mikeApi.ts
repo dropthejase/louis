@@ -1,9 +1,13 @@
 /**
- * Mike API client — all requests to the Node.js backend.
- * Attaches the Supabase auth token for user authentication.
+ * Louis API client — all requests to the AWS backend.
+ * API Gateway calls use Cognito id token Bearer JWT (validated by native Cognito authorizer).
+ * AgentCore calls use the same Bearer JWT (AgentCore JWT inbound authorizer).
+ * File uploads go via multipart POST to API Gateway Lambda.
  */
 
-import { supabase } from "@/lib/supabase";
+import { getIdToken, getAccessToken } from "@/lib/aws/amplify-auth";
+import { API_URL, AGENTCORE_URL, AGENTCORE_TABULAR_URL } from "@/lib/aws/config";
+import { getCurrentUserId } from "@/lib/aws/amplify-auth";
 import type {
     AssistantEvent,
     MikeChat,
@@ -34,26 +38,42 @@ interface ServerChatDetailOut {
     messages: ServerMessage[];
 }
 
-const API_BASE =
-    process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+const API_BASE = API_URL;
 
-async function getAuthHeader(): Promise<Record<string, string>> {
-    const {
-        data: { session },
-    } = await supabase.auth.getSession();
-    if (!session?.access_token) return {};
-    return { Authorization: `Bearer ${session.access_token}` };
+async function getAuthHeader(): Promise<string> {
+    const token = await getIdToken();
+    return `Bearer ${token}`;
 }
 
-async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
-    const authHeaders = await getAuthHeader();
+async function uploadViaPresignedUrl(
+    url: string,
+    file: File,
+    onProgress?: (percent: number) => void,
+): Promise<void> {
+    await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("PUT", url);
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        if (onProgress) {
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+            };
+        }
+        xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error(`S3 upload failed: ${xhr.status}`)));
+        xhr.onerror = () => reject(new Error("S3 upload network error"));
+        xhr.send(file);
+    });
+}
+
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+    const authHeader = await getAuthHeader();
     const { headers: initHeaders, ...restInit } = init ?? {};
     const response = await fetch(`${API_BASE}${path}`, {
         cache: "no-store",
         ...restInit,
         headers: {
             Accept: "application/json",
-            ...authHeaders,
+            Authorization: authHeader,
             ...(initHeaders as Record<string, string> | undefined),
         },
     });
@@ -244,17 +264,13 @@ export async function uploadDocumentVersion(
     file: File,
     displayName?: string,
 ): Promise<MikeDocumentVersion> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     const form = new FormData();
     form.append("file", file);
     if (displayName) form.append("display_name", displayName);
     const response = await fetch(
         `${API_BASE}/single-documents/${documentId}/versions`,
-        {
-            method: "POST",
-            headers: { ...authHeaders },
-            body: form,
-        },
+        { method: "POST", body: form, headers: { Authorization: authHeader } },
     );
     if (!response.ok) throw new Error(await response.text());
     return response.json() as Promise<MikeDocumentVersion>;
@@ -278,35 +294,52 @@ export async function renameDocumentVersion(
 export async function uploadProjectDocument(
     projectId: string,
     file: File,
+    onProgress?: (percent: number) => void,
 ): Promise<MikeDocument> {
-    const authHeaders = await getAuthHeader();
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(
-        `${API_BASE}/projects/${projectId}/documents`,
-        {
-            method: "POST",
-            headers: { ...authHeaders },
-            body: form,
-        },
-    );
-    if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<MikeDocument>;
+    const authHeader = await getAuthHeader();
+
+    const prepareRes = await fetch(`${API_BASE}/projects/${projectId}/documents/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ filename: file.name, size_bytes: file.size }),
+    });
+    if (!prepareRes.ok) throw new Error(await prepareRes.text());
+    const { docId, uploadKey, uploadUrl } = await prepareRes.json() as { docId: string; uploadKey: string; uploadUrl: string };
+
+    await uploadViaPresignedUrl(uploadUrl, file, onProgress);
+
+    const registerRes = await fetch(`${API_BASE}/projects/${projectId}/documents/${docId}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ upload_key: uploadKey }),
+    });
+    if (!registerRes.ok) throw new Error(await registerRes.text());
+    return registerRes.json() as Promise<MikeDocument>;
 }
 
 export async function uploadStandaloneDocument(
     file: File,
+    onProgress?: (percent: number) => void,
 ): Promise<MikeDocument> {
-    const authHeaders = await getAuthHeader();
-    const form = new FormData();
-    form.append("file", file);
-    const response = await fetch(`${API_BASE}/single-documents`, {
+    const authHeader = await getAuthHeader();
+
+    const prepareRes = await fetch(`${API_BASE}/single-documents/prepare`, {
         method: "POST",
-        headers: { ...authHeaders },
-        body: form,
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ filename: file.name, size_bytes: file.size }),
     });
-    if (!response.ok) throw new Error(await response.text());
-    return response.json() as Promise<MikeDocument>;
+    if (!prepareRes.ok) throw new Error(await prepareRes.text());
+    const { docId, uploadKey, uploadUrl } = await prepareRes.json() as { docId: string; uploadKey: string; uploadUrl: string };
+
+    await uploadViaPresignedUrl(uploadUrl, file, onProgress);
+
+    const registerRes = await fetch(`${API_BASE}/single-documents/${docId}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify({ upload_key: uploadKey }),
+    });
+    if (!registerRes.ok) throw new Error(await registerRes.text());
+    return registerRes.json() as Promise<MikeDocument>;
 }
 
 export async function listStandaloneDocuments(): Promise<MikeDocument[]> {
@@ -330,14 +363,11 @@ export async function getDocumentUrl(
 export async function downloadDocumentsZip(
     documentIds: string[],
 ): Promise<Blob> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     const response = await fetch(`${API_BASE}/single-documents/download-zip`, {
         method: "POST",
         cache: "no-store",
-        headers: {
-            "Content-Type": "application/json",
-            ...authHeaders,
-        },
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
         body: JSON.stringify({ document_ids: documentIds }),
     });
     if (!response.ok) {
@@ -370,31 +400,11 @@ export async function listProjectChats(projectId: string): Promise<MikeChat[]> {
 }
 
 export async function getChat(chatId: string): Promise<MikeChatDetailOut> {
-    const raw = await apiRequest<ServerChatDetailOut>(`/chat/${chatId}`);
-    const messages: MikeMessage[] = raw.messages.map((m) => {
-        if (m.role === "user") {
-            return {
-                role: "user",
-                content: typeof m.content === "string" ? m.content : "",
-                files: m.files ?? undefined,
-                workflow: m.workflow ?? undefined,
-            };
-        }
-        const events = Array.isArray(m.content)
-            ? (m.content as AssistantEvent[])
-            : undefined;
-        return {
-            role: "assistant",
-            content:
-                events
-                    ?.filter((e) => e.type === "content")
-                    .map((e) => (e as { type: "content"; text: string }).text)
-                    .join("") ?? "",
-            annotations: m.annotations ?? undefined,
-            events,
-        };
-    });
-    return { chat: raw.chat, messages };
+    const [chatRes, messagesRes] = await Promise.all([
+        apiRequest<{ chat: MikeChat }>(`/chat/${chatId}`),
+        apiRequest<{ messages: MikeMessage[] }>(`/chat/${chatId}/messages`),
+    ]);
+    return { chat: chatRes.chat, messages: messagesRes.messages };
 }
 
 export async function renameChat(chatId: string, title: string): Promise<void> {
@@ -421,57 +431,26 @@ export async function generateChatTitle(
 }
 
 export async function streamChat(payload: {
-    messages: {
-        role: string;
-        content: string;
-        files?: { filename: string; document_id?: string }[];
-        workflow?: { id: string; title: string };
-    }[];
-    chat_id?: string;
-    project_id?: string;
+    prompt: string;
+    chatId?: string;
+    projectId?: string;
     model?: string;
-    signal?: AbortSignal;
-}): Promise<Response> {
-    const { signal, ...body } = payload;
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Accept: "text/event-stream",
-            ...authHeaders,
-        },
-        body: JSON.stringify(body),
-        signal,
-    });
-}
-
-type StreamChatMessage = {
-    role: string;
-    content: string;
-    files?: { filename: string; document_id?: string }[];
-    workflow?: { id: string; title: string };
-};
-
-export async function streamProjectChat(payload: {
-    projectId: string;
-    messages: StreamChatMessage[];
-    chat_id?: string;
-    model?: string;
+    runtimeSessionId?: string;
     displayed_doc?: { filename: string; document_id: string };
     attached_documents?: { filename: string; document_id: string }[];
     signal?: AbortSignal;
 }): Promise<Response> {
-    const { projectId, signal, ...body } = payload;
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/projects/${projectId}/chat`, {
+    const { signal, ...rest } = payload;
+    const [token, userId] = await Promise.all([getAccessToken(), getCurrentUserId()]);
+    return fetch(AGENTCORE_URL, {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
             Accept: "text/event-stream",
-            ...authHeaders,
+            Authorization: `Bearer ${token}`,
+            "X-Amzn-Bedrock-AgentCore-Runtime-User-Id": userId,
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ ...rest, userId }),
         signal,
     });
 }
@@ -579,32 +558,58 @@ export async function deleteTabularReview(reviewId: string): Promise<void> {
 export async function streamTabularGeneration(
     reviewId: string,
 ): Promise<Response> {
-    const authHeaders = await getAuthHeader();
+    const authHeader = await getAuthHeader();
     return fetch(`${API_BASE}/tabular-review/${reviewId}/generate`, {
         method: "POST",
-        headers: { ...authHeaders },
+        headers: { Authorization: authHeader },
+    });
+}
+
+export async function createTabularChat(reviewId: string): Promise<{ chatId: string }> {
+    return apiRequest<{ chatId: string }>(`/tabular-review/${reviewId}/chats`, {
+        method: "POST",
     });
 }
 
 export async function streamTabularChat(
     reviewId: string,
-    messages: { role: string; content: string }[],
-    chat_id?: string | null,
+    chatId: string,
+    prompt: string,
+    model?: string,
     signal?: AbortSignal,
-    context?: { reviewTitle?: string | null; projectName?: string | null },
 ): Promise<Response> {
-    const authHeaders = await getAuthHeader();
-    return fetch(`${API_BASE}/tabular-review/${reviewId}/chat`, {
+    const [token, userId] = await Promise.all([getAccessToken(), getCurrentUserId()]);
+    return fetch(AGENTCORE_TABULAR_URL, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({
-            messages,
-            chat_id: chat_id ?? undefined,
-            review_title: context?.reviewTitle ?? undefined,
-            project_name: context?.projectName ?? undefined,
-        }),
+        headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+            Authorization: `Bearer ${token}`,
+            "X-Amzn-Bedrock-AgentCore-Runtime-User-Id": userId,
+        },
+        body: JSON.stringify({ reviewId, chatId, prompt, model }),
         signal: signal ?? undefined,
     });
+}
+
+export async function persistTabularChatMessages(
+    reviewId: string,
+    chatId: string,
+    payload: {
+        user_message: string;
+        is_first_exchange?: boolean;
+        review_title?: string | null;
+        project_name?: string | null;
+    },
+): Promise<{ title: string | null }> {
+    return apiRequest<{ title: string | null }>(
+        `/tabular-review/${reviewId}/chats/${chatId}/messages`,
+        {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        },
+    );
 }
 
 export interface TRCitationAnnotation {
@@ -615,15 +620,6 @@ export interface TRCitationAnnotation {
     col_name: string;
     doc_name: string;
     quote: string;
-}
-
-interface RawTRMessage {
-    id: string;
-    chat_id: string;
-    role: "user" | "assistant";
-    content: string | AssistantEvent[] | null;
-    annotations?: TRCitationAnnotation[] | null;
-    created_at: string;
 }
 
 export interface TRDisplayMessage {
@@ -640,31 +636,6 @@ export interface TRChat {
     updated_at: string;
 }
 
-export function mapTRMessages(raw: RawTRMessage[]): TRDisplayMessage[] {
-    return raw.map((m) => {
-        if (m.role === "user") {
-            return {
-                role: "user" as const,
-                content: typeof m.content === "string" ? m.content : "",
-            };
-        }
-        const events = Array.isArray(m.content)
-            ? (m.content as AssistantEvent[])
-            : undefined;
-        const content =
-            events
-                ?.filter((e) => e.type === "content")
-                .map((e) => (e as { type: "content"; text: string }).text)
-                .join("") ?? "";
-        return {
-            role: "assistant" as const,
-            content,
-            events,
-            annotations: m.annotations ?? undefined,
-        };
-    });
-}
-
 export async function getTabularChats(reviewId: string): Promise<TRChat[]> {
     return apiRequest<TRChat[]>(`/tabular-review/${reviewId}/chats`);
 }
@@ -672,8 +643,8 @@ export async function getTabularChats(reviewId: string): Promise<TRChat[]> {
 export async function getTabularChatMessages(
     reviewId: string,
     chatId: string,
-): Promise<RawTRMessage[]> {
-    return apiRequest<RawTRMessage[]>(
+): Promise<TRDisplayMessage[]> {
+    return apiRequest<TRDisplayMessage[]>(
         `/tabular-review/${reviewId}/chats/${chatId}/messages`,
     );
 }
@@ -814,4 +785,52 @@ export async function deleteWorkflowShare(
     await apiRequest(`/workflows/${workflowId}/shares/${shareId}`, {
         method: "DELETE",
     });
+}
+
+export interface MikeSkill {
+    skillName: string;
+    name: string;
+    description: string;
+}
+
+export async function listSkills(): Promise<MikeSkill[]> {
+    const data = await apiRequest<{ skills: MikeSkill[] }>("/skills");
+    return data.skills;
+}
+
+export async function getSkillUploadUrl(
+    skillName: string,
+    filePath: string,
+    contentType: string,
+): Promise<{ url: string; key: string }> {
+    return apiRequest<{ url: string; key: string }>("/skills/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skillName, filePath, contentType }),
+    });
+}
+
+export async function deleteSkill(skillName: string): Promise<void> {
+    await apiRequest(`/skills/${encodeURIComponent(skillName)}`, {
+        method: "DELETE",
+    });
+}
+
+export interface MikeSkillFile {
+    path: string;
+    size: number;
+}
+
+export async function listSkillFiles(skillName: string): Promise<MikeSkillFile[]> {
+    const data = await apiRequest<{ files: MikeSkillFile[] }>(
+        `/skills/${encodeURIComponent(skillName)}/files`,
+    );
+    return data.files;
+}
+
+export async function getSkillFileUrl(skillName: string, filePath: string): Promise<string> {
+    const data = await apiRequest<{ url: string }>(
+        `/skills/${encodeURIComponent(skillName)}/file?path=${encodeURIComponent(filePath)}`,
+    );
+    return data.url;
 }

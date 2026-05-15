@@ -1,4 +1,3 @@
-"use client";
 
 import { useState } from "react";
 import { Folder, Search, X } from "lucide-react";

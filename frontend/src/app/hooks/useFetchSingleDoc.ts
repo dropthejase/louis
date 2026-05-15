@@ -1,7 +1,7 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { API_URL } from "@/lib/aws/config";
+import { getIdToken } from "@/lib/aws/amplify-auth";
 
 /**
  * /display returns either PDF bytes (when the active version has a PDF
@@ -37,39 +37,31 @@ export function useFetchSingleDoc(
 
         (async () => {
             try {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
+                const token = await getIdToken();
                 if (cancelled) return;
 
-                const apiBase =
-                    process.env.NEXT_PUBLIC_API_BASE_URL ??
-                    "http://localhost:3001";
+                const apiBase = API_URL;
                 const qs = versionId
                     ? `?version_id=${encodeURIComponent(versionId)}`
                     : "";
-                const response = await fetch(
+
+                // Step 1: get presigned URL + type from API
+                const metaResp = await fetch(
                     `${apiBase}/single-documents/${documentId}/display${qs}`,
-                    {
-                        headers: token
-                            ? { Authorization: `Bearer ${token}` }
-                            : {},
-                    },
+                    { headers: token ? { Authorization: `Bearer ${token}` } : {} },
                 );
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                if (!metaResp.ok) throw new Error(`HTTP ${metaResp.status}`);
                 if (cancelled) return;
 
-                const contentType =
-                    response.headers.get("content-type") ?? "";
-                if (contentType.includes("application/pdf")) {
-                    const buffer = await response.arrayBuffer();
+                const { url, type } = await metaResp.json() as { url: string; type: string; filename: string };
+
+                if (type === "pdf") {
+                    // Step 2: fetch PDF bytes directly from S3 (presigned URL is self-authenticating)
+                    const pdfResp = await fetch(url);
+                    if (!pdfResp.ok) throw new Error(`S3 fetch HTTP ${pdfResp.status}`);
+                    const buffer = await pdfResp.arrayBuffer();
                     if (!cancelled) setResult({ type: "pdf", buffer });
                 } else {
-                    // Drain the body so the connection is reusable, but the
-                    // bytes are useless to the PDF viewer — the caller will
-                    // fall back to DocxView, which fetches `/docx` itself.
-                    await response.arrayBuffer().catch(() => {});
                     if (!cancelled) setResult({ type: "docx" });
                 }
             } catch {

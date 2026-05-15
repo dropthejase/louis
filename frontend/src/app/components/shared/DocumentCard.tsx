@@ -1,4 +1,3 @@
-"use client";
 
 import { FileText, File, X, AlertCircle, Loader2 } from "lucide-react";
 import type { MikeDocument } from "./types";

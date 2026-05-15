@@ -1,6 +1,6 @@
-"use client";
 
 import { useId, useRef, useEffect, useState } from "react";
+import { API_URL } from "@/lib/aws/config";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
@@ -16,7 +16,7 @@ import type {
 } from "../shared/types";
 import { EditCard, applyOptimisticResolution } from "./EditCard";
 import { PreResponseWrapper } from "../shared/PreResponseWrapper";
-import { supabase } from "@/lib/supabase";
+import { getIdToken } from "@/lib/aws/amplify-auth";
 
 /**
  * Card rendered above the per-edit EditCards when a message produced
@@ -74,83 +74,76 @@ function BulkEditActions({
         if (busy) return;
         setBusy(verb);
         setProgress({ done: 0, total: pending.length });
-        try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            const apiBase =
-                process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
 
-            // Sequential so the per-document version counter advances in a
-            // predictable order and the viewer doesn't race between bumps.
+        // Optimistically update all cards immediately.
+        const reverts: Array<() => void> = [];
+        for (const { annotation } of pending) {
+            onResolveStart?.({ editId: annotation.edit_id, documentId: annotation.document_id, verb });
+            try {
+                const revert = applyOptimisticResolution(annotation, verb);
+                if (revert) reverts.push(revert);
+            } catch (e) {
+                console.error("[BulkEditActions] optimistic update threw", e);
+            }
+        }
+
+        try {
+            const token = await getIdToken();
+            // Group by documentId (all pending edits may span multiple docs).
+            const byDoc = new Map<string, typeof pending>();
+            for (const item of pending) {
+                const docId = item.annotation.document_id;
+                if (!byDoc.has(docId)) byDoc.set(docId, []);
+                byDoc.get(docId)!.push(item);
+            }
+
             let done = 0;
-            for (const { annotation } of pending) {
-                onResolveStart?.({
-                    editId: annotation.edit_id,
-                    documentId: annotation.document_id,
-                    verb,
-                });
-                // Optimistically mutate the DOM so the viewer reflects the
-                // resolution immediately. Revert if the backend call fails.
-                let revert: (() => void) | null = null;
-                try {
-                    revert = applyOptimisticResolution(annotation, verb);
-                } catch (e) {
-                    console.error(
-                        "[BulkEditActions] optimistic update threw",
-                        e,
-                    );
-                }
+            for (const [documentId, items] of byDoc) {
+                const editIds = items.map((i) => i.annotation.edit_id);
                 try {
                     const resp = await fetch(
-                        `${apiBase}/single-documents/${annotation.document_id}/edits/${annotation.edit_id}/${verb}`,
+                        `${API_URL}/single-documents/${documentId}/edits/resolve-batch`,
                         {
                             method: "POST",
-                            headers: token
-                                ? { Authorization: `Bearer ${token}` }
-                                : undefined,
+                            headers: {
+                                "Content-Type": "application/json",
+                                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+                            },
+                            body: JSON.stringify({ editIds, mode: verb }),
                         },
                     );
                     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                     const data = (await resp.json()) as {
                         ok: boolean;
-                        status?: "accepted" | "rejected";
                         version_id: string | null;
                         download_url: string | null;
                     };
-                    const nextStatus =
-                        data.status ??
-                        (verb === "accept" ? "accepted" : "rejected");
-                    onResolved?.({
-                        editId: annotation.edit_id,
-                        documentId: annotation.document_id,
-                        status: nextStatus,
-                        versionId: data.version_id,
-                        downloadUrl: data.download_url,
-                    });
-                } catch (e) {
-                    console.error("[BulkEditActions] resolve failed", e);
-                    try {
-                        revert?.();
-                    } catch (revertErr) {
-                        console.error(
-                            "[BulkEditActions] revert threw",
-                            revertErr,
-                        );
+                    const nextStatus = verb === "accept" ? "accepted" : "rejected";
+                    for (const { annotation } of items) {
+                        onResolved?.({
+                            editId: annotation.edit_id,
+                            documentId,
+                            status: nextStatus,
+                            versionId: data.version_id,
+                            downloadUrl: data.download_url,
+                        });
+                        done++;
+                        setProgress({ done, total: pending.length });
                     }
-                    onError?.({
-                        editId: annotation.edit_id,
-                        documentId: annotation.document_id,
-                        versionId: annotation.version_id ?? null,
-                        message:
-                            verb === "accept"
+                } catch (e) {
+                    console.error("[BulkEditActions] resolve-batch failed", e);
+                    for (const revert of reverts) { try { revert(); } catch {} }
+                    for (const { annotation } of items) {
+                        onError?.({
+                            editId: annotation.edit_id,
+                            documentId,
+                            versionId: annotation.version_id ?? null,
+                            message: verb === "accept"
                                 ? "Couldn't save one or more accepts."
                                 : "Couldn't save one or more rejects.",
-                    });
+                        });
+                    }
                 }
-                done++;
-                setProgress({ done, total: pending.length });
             }
         } finally {
             setBusy(null);
@@ -249,6 +242,11 @@ function EditCardsSection({
     const [isOpen, setIsOpen] = useState(true);
     if (cards.length === 0) return null;
 
+    // Auto-collapse when all edits are resolved.
+    useEffect(() => {
+        if (pending.length === 0) setIsOpen(false);
+    }, [pending.length]);
+
     const docCount = filenameByDocId.size;
     const summary =
         pending.length > 0
@@ -345,11 +343,11 @@ function ResponseStatus({ status }: { status: StatusState }) {
 // ---------------------------------------------------------------------------
 
 const THINKING_PHRASES = [
-    "Thinking...",
-    "Pondering...",
-    "Analyzing...",
-    "Reviewing...",
-    "Reasoning...",
+    "Litting it up...",
+    "Mudbathing...",
+    "Redoing Harold's work...",
+    "Delegating to Katrina...",
+    "Finding Rick...",
 ];
 
 function ReasoningBlock({
@@ -367,7 +365,7 @@ function ReasoningBlock({
     useEffect(() => {
         if (!isStreaming) return;
         const interval = setInterval(() => {
-            setThinkingIndex((i) => (i + 1) % THINKING_PHRASES.length);
+            setThinkingIndex(() => Math.floor(Math.random() * THINKING_PHRASES.length));
         }, 2000);
         return () => clearInterval(interval);
     }, [isStreaming]);
@@ -417,6 +415,25 @@ function ReasoningBlock({
                     </ReactMarkdown>
                 </div>
             )}
+        </div>
+    );
+}
+
+function ThinkingBlock({ showConnector }: { showConnector?: boolean }) {
+    const [idx, setIdx] = useState(() => Math.floor(Math.random() * THINKING_PHRASES.length));
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setIdx(() => Math.floor(Math.random() * THINKING_PHRASES.length));
+        }, 2000);
+        return () => clearInterval(interval);
+    }, []);
+    return (
+        <div className="flex items-center text-sm font-serif text-gray-500 relative">
+            {showConnector && (
+                <div className="absolute bottom-0 w-[1px] bg-gray-300 top-[13px] left-[2.5px] h-[calc(100%+11px)]" />
+            )}
+            <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
+            <span className="ml-2">{THINKING_PHRASES[idx]}</span>
         </div>
     );
 }
@@ -606,7 +623,8 @@ function DocDownloadBlock({
     // the user's bearer token, so any absolute URL from tool output is
     // refused to keep the token from leaking off-origin.
     const API_BASE =
-        process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+        API_URL;
+    const isPresigned = download_url.startsWith("https://");
     const isSafeHref = download_url.startsWith("/");
     const href = isSafeHref ? `${API_BASE}${download_url}` : null;
     const [busy, setBusy] = useState(false);
@@ -617,26 +635,34 @@ function DocDownloadBlock({
     }) => {
         e?.stopPropagation?.();
         e?.preventDefault?.();
-        if (busy || isReloading || !href) return;
-        setBusy(true);
-        try {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-            const token = session?.access_token;
-            const resp = await fetch(href, {
-                headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
-            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            const blob = await resp.blob();
-            const blobUrl = URL.createObjectURL(blob);
+        if (busy || isReloading) return;
+        // Presigned S3 URL (generate_docx) — open directly, no auth fetch needed
+        if (isPresigned) {
             const a = document.createElement("a");
-            a.href = blobUrl;
+            a.href = download_url;
             a.download = filename;
             document.body.appendChild(a);
             a.click();
             a.remove();
-            setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+            return;
+        }
+        if (!href) return;
+        setBusy(true);
+        try {
+            const token = await getIdToken();
+            // Fetch presigned S3 URL from API
+            const resp = await fetch(href, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const { url } = await resp.json() as { url: string };
+            // Open presigned URL directly — browser downloads from S3, bypassing APIGW
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
         } finally {
             setBusy(false);
         }
@@ -1188,7 +1214,7 @@ export function AssistantMessage({
     const hasContentAfter = (groupIdx: number): boolean => {
         for (let i = groupIdx + 1; i < groups.length; i++) {
             const g = groups[i];
-            if (g.kind === "content" && g.event.text.length > 0) return true;
+            if (g.kind === "content" && (g.event.text.length > 0 || !!g.event.isStreaming)) return true;
         }
         return false;
     };
@@ -1245,18 +1271,7 @@ export function AssistantMessage({
             );
         }
         if (event.type === "thinking") {
-            return (
-                <div
-                    key={globalIdx}
-                    className="flex items-center text-sm font-serif text-gray-500 relative"
-                >
-                    {showConnector && (
-                        <div className="absolute bottom-0 w-[1px] bg-gray-300 top-[13px] left-[2.5px] h-[calc(100%+11px)]" />
-                    )}
-                    <div className="w-1.5 h-1.5 rounded-full border border-gray-400 border-t-transparent animate-spin shrink-0" />
-                    <span className="ml-2">Thinking...</span>
-                </div>
-            );
+            return <ThinkingBlock key={globalIdx} showConnector={showConnector} />;
         }
         if (event.type === "doc_read") {
             const ann = annotations.find((a) => a.filename === event.filename);

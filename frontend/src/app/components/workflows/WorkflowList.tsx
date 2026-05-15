@@ -1,7 +1,6 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import {
     Plus,
     Library,
@@ -41,7 +40,7 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export function WorkflowList() {
-    const router = useRouter();
+    const navigate = useNavigate();
     const { user } = useAuth();
     const [custom, setCustom] = useState<MikeWorkflow[]>([]);
     const [loading, setLoading] = useState(true);
@@ -536,7 +535,7 @@ export function WorkflowList() {
                                     {wf.is_system ? (
                                         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600">
                                             <MikeIcon size={14} />
-                                            Mike
+                                            Louis
                                         </span>
                                     ) : wf.user_id === user?.id ? (
                                         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600">
@@ -602,7 +601,7 @@ export function WorkflowList() {
                 onCreated={(wf) => {
                     setCustom((prev) => [wf, ...prev]);
                     setNewModalOpen(false);
-                    router.push(`/workflows/${wf.id}`);
+                    navigate(`/workflows/${wf.id}`);
                 }}
             />
         </div>

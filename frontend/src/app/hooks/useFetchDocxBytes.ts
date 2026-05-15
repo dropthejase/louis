@@ -1,7 +1,7 @@
-"use client";
 
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { API_URL } from "@/lib/aws/config";
+import { getIdToken } from "@/lib/aws/amplify-auth";
 
 export interface FetchDocxResult {
     bytes: ArrayBuffer | null;
@@ -64,7 +64,7 @@ export function useFetchDocxBytes(
 
         const key = cacheKey(documentId, versionId, refetchKey);
         const apiBase =
-            process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3001";
+            API_URL;
         const qs = versionId
             ? `?version_id=${encodeURIComponent(versionId)}`
             : "";
@@ -87,16 +87,16 @@ export function useFetchDocxBytes(
         const pending =
             inFlight.get(key) ??
             (async () => {
-                const {
-                    data: { session },
-                } = await supabase.auth.getSession();
-                const token = session?.access_token;
-                // Stream bytes through the backend (avoids CORS on R2
-                // signed URLs).
-                const bin = await fetch(url, {
-                    headers: token ? { Authorization: `Bearer ${token}` } : {},
+                const token = await getIdToken();
+                // Step 1: get presigned URL from API
+                const metaResp = await fetch(url, {
+                    headers: { Authorization: `Bearer ${token}` },
                 });
-                if (!bin.ok) throw new Error(`HTTP ${bin.status}`);
+                if (!metaResp.ok) throw new Error(`HTTP ${metaResp.status}`);
+                const { url: s3Url } = await metaResp.json() as { url: string; filename: string; version_id: string };
+                // Step 2: fetch DOCX bytes directly from S3 (presigned URL is self-authenticating)
+                const bin = await fetch(s3Url);
+                if (!bin.ok) throw new Error(`S3 fetch HTTP ${bin.status}`);
                 const buf = await bin.arrayBuffer();
                 bytesCache.set(key, buf);
                 return buf;

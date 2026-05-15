@@ -1,4 +1,3 @@
-"use client";
 
 import { forwardRef, useImperativeHandle, useRef } from "react";
 import { Plus, Table2 } from "lucide-react";

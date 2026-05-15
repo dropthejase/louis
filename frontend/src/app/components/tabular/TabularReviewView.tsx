@@ -1,7 +1,6 @@
-"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Loader2, Play, ChevronDown, MessageSquare, Download, Users } from "lucide-react";
 import { HeaderSearchBtn } from "../shared/HeaderSearchBtn";
 
@@ -26,15 +25,8 @@ import { AddDocumentsModal } from "../shared/AddDocumentsModal";
 import { AddProjectDocsModal } from "../shared/AddProjectDocsModal";
 import { PeopleModal } from "../shared/PeopleModal";
 import { OwnerOnlyModal } from "../shared/OwnerOnlyModal";
-import { ApiKeyMissingModal } from "../shared/ApiKeyMissingModal";
 import { RenameableTitle } from "../shared/RenameableTitle";
 import { useAuth } from "@/contexts/AuthContext";
-import { useUserProfile } from "@/contexts/UserProfileContext";
-import {
-    getModelProvider,
-    isModelAvailable,
-    type ModelProvider,
-} from "@/app/lib/modelAvailability";
 import { TRSidePanel } from "./TRSidePanel";
 import { TRTable } from "./TRTable";
 import type { TRTableHandle } from "./TRTable";
@@ -70,7 +62,7 @@ export function TRView({ reviewId, projectId }: Props) {
     const [selectedDocIds, setSelectedDocIds] = useState<string[]>([]);
     const [actionsOpen, setActionsOpen] = useState(false);
     const [search, setSearch] = useState("");
-    const searchParams = useSearchParams();
+    const [searchParams] = useSearchParams();
     const initialChatParamRef = useRef<string | null>(
         searchParams.get("chat"),
     );
@@ -81,17 +73,9 @@ export function TRView({ reviewId, projectId }: Props) {
             : null,
     );
     const [highlightedCell, setHighlightedCell] = useState<{ colIdx: number; rowIdx: number } | null>(null);
-    const [apiKeyModalProvider, setApiKeyModalProvider] =
-        useState<ModelProvider | null>(null);
     const actionsRef = useRef<HTMLDivElement>(null);
     const tableRef = useRef<TRTableHandle>(null);
-    const router = useRouter();
-    const { profile } = useUserProfile();
-    const apiKeys = {
-        claudeApiKey: profile?.claudeApiKey ?? null,
-        geminiApiKey: profile?.geminiApiKey ?? null,
-    };
-    const tabularModel = profile?.tabularModel ?? "gemini-3-flash-preview";
+    const navigate = useNavigate();
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -168,10 +152,6 @@ export function TRView({ reviewId, projectId }: Props) {
             ...toAdd.map((d) => d.id),
         ];
 
-        await updateTabularReview(reviewId, {
-            document_ids: allIds,
-            columns_config: columns,
-        });
         setDocuments((prev) => [...prev, ...toAdd]);
         if (columns.length > 0) {
             setCells((prev) => [
@@ -188,6 +168,17 @@ export function TRView({ reviewId, projectId }: Props) {
                     })),
                 ),
             ]);
+        }
+
+        try {
+            await updateTabularReview(reviewId, {
+                document_ids: allIds,
+                columns_config: columns,
+            });
+        } catch (err) {
+            console.error("Failed to add documents:", err);
+            setDocuments((prev) => prev.filter((d) => !toAdd.some((t) => t.id === d.id)));
+            setCells((prev) => prev.filter((c) => !toAdd.some((t) => t.id === c.document_id)));
         }
     }
 
@@ -242,11 +233,6 @@ export function TRView({ reviewId, projectId }: Props) {
 
         // If columns changed since last save, update the review first
         if (columns.length === 0) return;
-
-        if (!isModelAvailable(tabularModel, apiKeys)) {
-            setApiKeyModalProvider(getModelProvider(tabularModel));
-            return;
-        }
 
         setGenerating(true);
 
@@ -475,7 +461,7 @@ export function TRView({ reviewId, projectId }: Props) {
                         {projectId && (
                             <>
                                 <button
-                                    onClick={() => router.push("/projects")}
+                                    onClick={() => navigate("/projects")}
                                     className="text-gray-500 hover:text-gray-700 transition-colors"
                                 >
                                     Projects
@@ -483,7 +469,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                 <span className="text-gray-300">›</span>
                                 <button
                                     onClick={() =>
-                                        router.push(`/projects/${projectId}`)
+                                        navigate(`/projects/${projectId}`)
                                     }
                                     className="text-gray-500 hover:text-gray-700 transition-colors"
                                 >
@@ -503,7 +489,7 @@ export function TRView({ reviewId, projectId }: Props) {
                                 <span className="text-gray-300">›</span>
                                 <button
                                     onClick={() =>
-                                        router.push(
+                                        navigate(
                                             `/projects/${projectId}?tab=reviews`,
                                         )
                                     }
@@ -515,7 +501,7 @@ export function TRView({ reviewId, projectId }: Props) {
                         )}
                         {!projectId && (
                             <button
-                                onClick={() => router.push("/tabular-reviews")}
+                                onClick={() => navigate("/tabular-reviews")}
                                 className="text-gray-500 hover:text-gray-700 transition-colors"
                             >
                                 Tabular Reviews
@@ -536,14 +522,9 @@ export function TRView({ reviewId, projectId }: Props) {
                             <HeaderSearchBtn value={search} onChange={setSearch} placeholder="Search documents…" />
                             {!projectId && (
                                 <button
-                                    onClick={() => setPeopleModalOpen(true)}
-                                    disabled={loading}
-                                    className={`flex h-8 w-8 items-center justify-center text-sm transition-colors ${
-                                        loading
-                                            ? "text-gray-300 cursor-default"
-                                            : "text-gray-500 hover:text-gray-900 cursor-pointer"
-                                    }`}
-                                    title="People with access"
+                                    disabled
+                                    className="flex h-8 w-8 items-center justify-center text-sm text-gray-300 opacity-50 cursor-not-allowed"
+                                    title="Coming soon"
                                     aria-label="People with access"
                                 >
                                     <Users className="h-4 w-4" />
@@ -843,11 +824,6 @@ export function TRView({ reviewId, projectId }: Props) {
                 onClose={() => setOwnerOnlyAction(null)}
             />
 
-            <ApiKeyMissingModal
-                open={apiKeyModalProvider !== null}
-                provider={apiKeyModalProvider}
-                onClose={() => setApiKeyModalProvider(null)}
-            />
         </div>
     );
 }

@@ -1,4 +1,3 @@
-"use client";
 
 import { useRef, useState } from "react";
 import { PlusIcon, Upload, LayoutGridIcon, Loader2Icon } from "lucide-react";

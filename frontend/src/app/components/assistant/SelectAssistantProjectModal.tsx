@@ -1,9 +1,8 @@
-"use client";
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import { useChatHistoryContext } from "@/app/contexts/ChatHistoryContext";
 import { useDirectoryData } from "../shared/useDirectoryData";
 import { ProjectPicker } from "../shared/ProjectPicker";
@@ -16,7 +15,7 @@ interface Props {
 export function SelectAssistantProjectModal({ open, onClose }: Props) {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [creating, setCreating] = useState(false);
-    const router = useRouter();
+    const navigate = useNavigate();
     const { saveChat } = useChatHistoryContext();
     const { loading, projects } = useDirectoryData(open);
 
@@ -34,7 +33,7 @@ export function SelectAssistantProjectModal({ open, onClose }: Props) {
             const chatId = await saveChat(selectedId);
             if (!chatId) return;
             onClose();
-            router.push(`/projects/${selectedId}/assistant/chat/${chatId}`);
+            navigate(`/projects/${selectedId}/assistant/chat/${chatId}`);
         } finally {
             setCreating(false);
         }
