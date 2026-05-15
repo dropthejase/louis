@@ -1,16 +1,18 @@
 # Louis
 
-It's time to Litt up!
+## It's time to Litt up!
 
 Louis is a fork of [MikeOSS](https://github.com/willchen96/mike) — an AWS-native implementation of the same AI-powered legal document workspace. 
 
 <video src="assets/demo.mp4" controls width="100%"></video>
 
+`00:00` Document interaction · `00:13` Redlining · `00:33` Tabular Review · `00:46` Web Search · `00:59` Web Search allowlist block · `01:07` Skills · `01:37` MCP
+
 ## Highlights
 
 - **No vendor API keys** — Claude is accessed via Amazon Bedrock; model access is an IAM permission, not a stored secret
 - **No long-lived credentials** — short-lived STS credentials scoped per-user; Lambda and AgentCore assume IAM roles at runtime
-- **AgentCore microVM isolation** — each agent invocation runs in an isolated microVM; session state is scoped per-user and never shared across tenants
+- [**Bedrock AgentCore Runtime microVM isolation**](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-sessions.html) — each agent invocation runs in an isolated microVM; session state is scoped per-user and never shared across tenants
 - **Serverless** — Amazon Aurora Serverless v2, AWS Lambda, pay-per-request Amazon DynamoDB; no servers to run or patch
 - **Built-in observability** — structured JSON logs, AWS X-Ray tracing, and Amazon CloudWatch metrics on every Lambda invocation via AWS Lambda Powertools. AWS CloudTrail tracks API calls.
 - [**Strands Agents SDK**](https://strandsagents.com/) — model-agnostic agentic framework; swap between Claude models (or any Bedrock-supported model) by changing a model ID, not rewriting agent logic
