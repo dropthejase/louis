@@ -393,3 +393,4 @@ All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profile
 - Route files use `console.log` — Lambda Powertools logger not yet injected into routes.
 - Project sharing / member management UI incomplete.
 - `chat_messages` table and `document_edits.chat_message_id` are dead schema — pending cleanup.
+- Edit card status (accepted/rejected) not re-hydrated on chat history load — tracked changes in reloaded conversations always show as pending regardless of current DB state. Fix tracked in Issue 26.

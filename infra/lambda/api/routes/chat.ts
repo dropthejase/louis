@@ -173,13 +173,7 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
         if (!canView)
             return void res.status(404).json({ detail: "Chat not found" });
 
-        const messages = await query<Record<string, unknown>>(
-            `SELECT * FROM chat_messages WHERE chat_id = :chatId ORDER BY created_at ASC`,
-            [{ name: "chatId", value: { stringValue: chatId } }],
-        );
-
-        const hydrated = await hydrateEditStatuses(messages);
-        res.json({ chat, messages: hydrated });
+        res.json({ chat });
     } catch (err) {
         console.error("[chat] GET /:chatId error:", err);
         res.status(500).json({ detail: "Internal server error" });
@@ -188,129 +182,6 @@ chatRouter.get("/:chatId", requireAuth, async (req, res) => {
 
 // Stored message annotations/events capture the `status` at the time the
 // assistant produced the edit (always "pending"). If the user later accepts
-// or rejects, `document_edits.status` is updated but the stored message
-// annotation is not. On chat load we merge the current DB status in so
-// EditCards render with the real state.
-async function hydrateEditStatuses(
-    messages: Record<string, unknown>[],
-): Promise<Record<string, unknown>[]> {
-    const editIds = new Set<string>();
-    const versionIds = new Set<string>();
-    const collectFromAnnList = (list: unknown) => {
-        if (!Array.isArray(list)) return;
-        for (const a of list as Record<string, unknown>[]) {
-            if (typeof a?.edit_id === "string") editIds.add(a.edit_id);
-            if (typeof a?.version_id === "string")
-                versionIds.add(a.version_id);
-        }
-    };
-    for (const m of messages) {
-        collectFromAnnList(m.annotations);
-        const content = m.content;
-        if (Array.isArray(content)) {
-            for (const ev of content as Record<string, unknown>[]) {
-                if (ev?.type === "doc_edited") {
-                    collectFromAnnList(ev.annotations);
-                    if (typeof ev.version_id === "string")
-                        versionIds.add(ev.version_id);
-                }
-            }
-        }
-    }
-    if (editIds.size === 0 && versionIds.size === 0) return messages;
-
-    // Edit status patch.
-    const statusById = new Map<string, "pending" | "accepted" | "rejected">();
-    if (editIds.size > 0) {
-        const idArr = Array.from(editIds);
-        const placeholders = idArr.map((_, i) => `:eid${i}::uuid`).join(", ");
-        const rows = await query<{ id: string; status: string }>(
-            `SELECT id, status FROM document_edits WHERE id IN (${placeholders})`,
-            idArr.map((id, i) => ({
-                name: `eid${i}`,
-                value: { stringValue: id },
-            })),
-        );
-        for (const r of rows) {
-            if (
-                r.status === "pending" ||
-                r.status === "accepted" ||
-                r.status === "rejected"
-            ) {
-                statusById.set(r.id, r.status);
-            }
-        }
-    }
-
-    // Version-number patch — old stored events don't carry `version_number`
-    // because they predate the schema change. Look it up from
-    // document_versions so the UI can render "V3" chips + download filenames.
-    const versionNumberById = new Map<string, number | null>();
-    if (versionIds.size > 0) {
-        const idArr = Array.from(versionIds);
-        const placeholders = idArr.map((_, i) => `:vid${i}::uuid`).join(", ");
-        const vrows = await query<{
-            id: string;
-            version_number: number | null;
-        }>(
-            `SELECT id, version_number FROM document_versions WHERE id IN (${placeholders})`,
-            idArr.map((id, i) => ({
-                name: `vid${i}`,
-                value: { stringValue: id },
-            })),
-        );
-        for (const r of vrows) {
-            versionNumberById.set(r.id, r.version_number ?? null);
-        }
-    }
-
-    const patchAnnList = (list: unknown): unknown => {
-        if (!Array.isArray(list)) return list;
-        return (list as Record<string, unknown>[]).map((a) => {
-            let next = a;
-            if (typeof a?.edit_id === "string" && statusById.has(a.edit_id)) {
-                next = { ...next, status: statusById.get(a.edit_id) };
-            }
-            if (
-                typeof a?.version_id === "string" &&
-                versionNumberById.has(a.version_id)
-            ) {
-                next = {
-                    ...next,
-                    version_number: versionNumberById.get(a.version_id) ?? null,
-                };
-            }
-            return next;
-        });
-    };
-    return messages.map((m) => {
-        const next: Record<string, unknown> = { ...m };
-        next.annotations = patchAnnList(m.annotations);
-        if (Array.isArray(m.content)) {
-            next.content = (m.content as Record<string, unknown>[]).map(
-                (ev) => {
-                    if (ev?.type !== "doc_edited") return ev;
-                    let patched: Record<string, unknown> = {
-                        ...ev,
-                        annotations: patchAnnList(ev.annotations),
-                    };
-                    if (
-                        typeof ev.version_id === "string" &&
-                        versionNumberById.has(ev.version_id)
-                    ) {
-                        patched = {
-                            ...patched,
-                            version_number:
-                                versionNumberById.get(ev.version_id) ?? null,
-                        };
-                    }
-                    return patched;
-                },
-            );
-        }
-        return next;
-    });
-}
 
 // GET /chat/:chatId/messages — read conversation history from S3
 chatRouter.get("/:chatId/messages", requireAuth, async (req, res) => {
