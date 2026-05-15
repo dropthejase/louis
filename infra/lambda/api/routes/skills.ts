@@ -65,7 +65,11 @@ skillsRouter.get("/", requireAuth, async (req, res) => {
         const content = await obj.Body?.transformToString() ?? '';
         const { name, description } = parseSkillMd(content);
         return { skillName, name: name || skillName, description };
-      } catch {
+      } catch (err: any) {
+        // NoSuchKey = SKILL.md missing — skill folder may be partially uploaded
+        if (err?.name !== 'NoSuchKey') {
+          console.warn(`[skills] failed to read SKILL.md for skill '${skillName}'`, err);
+        }
         return { skillName, name: skillName, description: '' };
       }
     }));

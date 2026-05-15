@@ -33,7 +33,11 @@ export async function readSessionMessages(chatId: string): Promise<SnapshotMessa
         const body = await result.Body?.transformToString();
         if (!body) return [];
         return JSON.parse(body) as SnapshotMessage[];
-    } catch {
+    } catch (err: any) {
+        // NoSuchKey = new chat with no history yet — not an error
+        if (err?.name !== 'NoSuchKey') {
+            console.error(`[sessions] failed to read session messages`, { chatId, err });
+        }
         return [];
     }
 }

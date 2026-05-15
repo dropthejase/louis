@@ -529,8 +529,10 @@ projectsRouter.post(
           [{ name: "versionId", value: { stringValue: doc.current_version_id } }],
         );
         if (srcV?.storage_path) {
+          console.log(`[projects] copying doc bytes`, { srcDocId: doc.id, copyDocId: copy.id, srcPath: srcV.storage_path });
           const srcBytes = await downloadFile(srcV.storage_path);
           if (!srcBytes) {
+            console.error(`[projects] failed to read source bytes`, { srcPath: srcV.storage_path });
             return void res
               .status(500)
               .json({ detail: "Failed to read source document bytes" });
@@ -556,6 +558,8 @@ projectsRouter.post(
                 const newPdfKey = convertedPdfKey(userId, copy.id);
                 await uploadFile(newPdfKey, pdfBytes, "application/pdf");
                 newPdfPath = newPdfKey;
+              } else {
+                console.warn(`[projects] PDF rendition not found — copy will lack PDF preview`, { srcPdfPath: srcV.pdf_storage_path, copyDocId: copy.id });
               }
             }
           }
