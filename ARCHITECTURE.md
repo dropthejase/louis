@@ -360,12 +360,12 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 
 ## Models
 
-All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profiles. Model selectable per conversation.
+All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profiles. Model selectable per conversation. See [AWS Bedrock model cards](https://docs.aws.amazon.com/bedrock/latest/userguide/model-cards.html) for current IDs.
 
 | Label | Bedrock model ID |
 |---|---|
-| Claude Opus 4.7 | `eu.anthropic.claude-opus-4-7-20251101-v1:0` |
-| Claude Sonnet 4.6 (default) | `eu.anthropic.claude-sonnet-4-6-20250922-v1:0` |
+| Claude Opus 4.7 | `eu.anthropic.claude-opus-4-7` |
+| Claude Sonnet 4.6 (default) | `eu.anthropic.claude-sonnet-4-6` |
 | Claude Haiku 4.5 | `eu.anthropic.claude-haiku-4-5-20251001-v1:0` |
 
 ---

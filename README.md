@@ -113,7 +113,7 @@ Builds, zips, uploads to S3, and creates/updates the agent runtime. Runtime IDs 
 ### 4. Configure frontend environment
 
 ```bash
-cp frontend/.env.local.example frontend/.env.local
+cp frontend/.env.example frontend/.env
 # Fill in values from CloudFormation outputs
 ```
 
@@ -164,17 +164,27 @@ AWS_REGION=eu-west-1 ./scripts/destroy-agent.sh louisTabular
 ```bash
 aws s3 rm s3://DOCS_BUCKET_NAME --recursive
 aws s3 rm s3://SESSIONS_BUCKET_NAME --recursive
+aws s3 rm s3://SKILLS_BUCKET_NAME --recursive
+aws s3 rm s3://ADMIN_BUCKET_NAME --recursive
 aws s3 rm s3://FRONTEND_BUCKET_NAME --recursive
 ```
 
-**3. Destroy CDK stacks**
+**3. Delete any Secrets Manager secrets** created for MCP server auth (not managed by CDK):
+
+```bash
+aws secretsmanager list-secrets --filters Key=name,Values=louis/mcp/ --query "SecretList[*].ARN" --output text \
+  | tr '\t' '\n' \
+  | xargs -I{} aws secretsmanager delete-secret --secret-id {} --force-delete-without-recovery
+```
+
+**4. Destroy CDK stacks**
 
 ```bash
 cd infra
-npx cdk destroy ConversionStack ApiStack AuthStack DatabaseStack StorageStack
+npx cdk destroy ConversionStack ApiStack AgentStack AuthStack DatabaseStack StorageStack
 ```
 
-**4. Clean up remaining resources manually if needed**
+**5. Clean up remaining resources manually if needed**
 
 - SSM parameters under `/louis/` â€” not managed by CDK stacks
 - Any CloudWatch log groups not deleted by the stack
@@ -239,9 +249,11 @@ The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** â€
 
 ## Disclaimer
 
-This project was built as a learning exercise and vibe-coded with [Claude Code](https://claude.ai/code). It is not production-ready and comes with no warranties.
+This project was built entirely in personal time, using personal AWS accounts and personal resources. It is not affiliated with, endorsed by, or connected to my employer in any way. Any views, decisions, or opinions reflected in this project are solely my own.
 
-**Not legal advice.** Nothing in this software or its outputs constitutes legal advice. Always consult a qualified lawyer.
+Nothing in this software or its outputs constitutes legal advice. The tool is designed to assist with document review and drafting, but it can and does make mistakes. Do not rely on anything it produces as a substitute for advice from a qualified lawyer.
+
+This personal project was built as a learning exercise and vibe-coded with [Claude Code](https://claude.ai/code). It is not production-ready. Before deploying to any real environment, ensure you conduct appropriate security testing, review all permissions and data handling practices, and satisfy yourself that the software meets your technical requirements.
 
 **Security notice.** This deployment is intentionally minimal. Depending on your threat model, you may or may not want to consider additions such as:
 
