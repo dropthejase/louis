@@ -7,7 +7,6 @@ function required(key: string): string {
 }
 
 export const AWS_REGION = required('VITE_AWS_REGION');
-export const IDENTITY_POOL_ID = required('VITE_IDENTITY_POOL_ID');
 export const DOCS_BUCKET_NAME = required('VITE_DOCS_BUCKET_NAME');
 export const API_URL = required('VITE_API_URL').replace(/\/$/, '');
 export const USER_POOL_ID = required('VITE_USER_POOL_ID');
@@ -28,23 +27,12 @@ function buildAgentCoreUrl(arn: string): string {
 export const AGENTCORE_URL = AGENTCORE_MAIN_ARN ? buildAgentCoreUrl(AGENTCORE_MAIN_ARN) : '';
 export const AGENTCORE_TABULAR_URL = AGENTCORE_TABULAR_ARN ? buildAgentCoreUrl(AGENTCORE_TABULAR_ARN) : '';
 
-// Cognito logins key for Identity Pool
-export const COGNITO_LOGINS_KEY =
-  `cognito-idp.${AWS_REGION}.amazonaws.com/${USER_POOL_ID}`;
-
 // Amplify configuration — single source of truth used in App.tsx
 export const amplifyConfig = {
   Auth: {
     Cognito: {
       userPoolId: USER_POOL_ID,
       userPoolClientId: USER_POOL_CLIENT_ID,
-      identityPoolId: IDENTITY_POOL_ID,
-    },
-  },
-  Storage: {
-    S3: {
-      bucket: DOCS_BUCKET_NAME,
-      region: AWS_REGION,
     },
   },
 };
