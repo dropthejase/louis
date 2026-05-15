@@ -4,16 +4,16 @@ It's time to Litt up!
 
 Louis is a fork of [MikeOSS](https://github.com/willchen96/mike) — an AWS-native implementation of the same AI-powered legal document workspace. 
 
-**DEMO TO DO**
+<video src="assets/demo.mp4" controls width="100%"></video>
 
 ## Highlights
 
 - **No vendor API keys** — Claude is accessed via Amazon Bedrock; model access is an IAM permission, not a stored secret
 - **No long-lived credentials** — short-lived STS credentials scoped per-user; Lambda and AgentCore assume IAM roles at runtime
 - **Per-user data isolation at the IAM layer** — S3 bucket policies scope each user to their own prefix via `${cognito-identity.amazonaws.com:sub}` (Identity Pool identity ID), enforced by AWS not application code
-- **Serverless** — Aurora Serverless v2, Lambda, pay-per-request DynamoDB; no servers to run or patch
-- **Built-in observability** — structured JSON logs, X-Ray tracing, and CloudWatch metrics on every Lambda invocation via AWS Lambda Powertools
-- **Strands Agents SDK** — model-agnostic agentic framework; swap between Claude models (or any Bedrock-supported model) by changing a model ID, not rewriting agent logic
+- **Serverless** — Amazon Aurora Serverless v2, AWS Lambda, pay-per-request Amazon DynamoDB; no servers to run or patch
+- **Built-in observability** — structured JSON logs, AWS X-Ray tracing, and Amazon CloudWatch metrics on every Lambda invocation via AWS Lambda Powertools. AWS CloudTrail tracks API calls.
+- [**Strands Agents SDK**](https://strandsagents.com/) — model-agnostic agentic framework; swap between Claude models (or any Bedrock-supported model) by changing a model ID, not rewriting agent logic
 - **Bedrock cross-region inference** — automatic routing across EU regions for resilience and throughput; can be scoped to a single AWS region if needed
 
 ## Architecture
@@ -200,13 +200,13 @@ The agent can fetch pages from a curated set of legal and regulatory websites: c
 
 ### Strands Skills
 
-Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` manifest + reference files) stored in S3. On session start the agent downloads them to `/tmp` and can read them on demand via `read_local_file`.
+Users can upload [**Skills**](https://skills.md/) via the UI, which saves them into S3. The repo seeds a sample [EU AI System Classifier](https://lawve.ai/en/skills/eu-ai-act-classification-werner-plutat) Skill by Werner Plutat. You can find many more on [Lawve AI](https://lawve.ai/en).
 
 **Limitations:** Skills are read-only. The agent cannot execute scripts — this is to reduce the risk of privilege escalation.
 
 ### MCP Servers
 
-The AWS administrator can connect approved [Model Context Protocol](https://modelcontextprotocol.io) servers to the agent by uploading `mcp.json` to the admin S3 bucket. Users can toggle individual servers on or off in Agent Settings. Only HTTP (StreamableHTTP) transport is supported.
+The AWS administrator can connect approved [Model Context Protocol](https://modelcontextprotocol.io) servers to the agent by uploading `mcp.json` to the admin S3 bucket. Users can toggle individual servers on or off in **Agent Settings** in their **Account Settings**. The repo seeds the [Lex API MCP Server](https://lex.lab.i.ai.gov.uk/).
 
 For authenticated servers, store the API key as an AWS Secrets Manager secret under the `louis/mcp/` prefix (e.g. `louis/mcp/my-server`) and reference it in `mcp.json`:
 
@@ -223,13 +223,15 @@ For authenticated servers, store the API key as an AWS Secrets Manager secret un
 
 The agent fetches the secret at cold start and sends it as a `Bearer` token. The key never appears in `mcp.json` or S3.
 
-**Limitations:** Only static Bearer token auth is supported. OAuth 2.0 / three-legged OAuth (3LO) flows are not supported — servers requiring interactive sign-in (e.g. GitHub/Google OAuth) cannot be used without AgentCore Gateway.
+**Limitations:**
 
-The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** — a public MCP server for UK legislation search, provided by i.AI (DSIT).
+- Only static Bearer token auth is supported. OAuth 2.0 / three-legged OAuth (3LO) flows are not supported — servers requiring interactive sign-in (e.g. GitHub/Google OAuth) cannot be used without AgentCore Gateway.
+- **Only HTTP (StreamableHTTP) transport is supported.**
+
 
 ### Observability
 
-AgentCore Observability auto-instruments every agent invocation — LLM calls, tool executions, cycle counts, token usage, and error paths are captured as X-Ray spans and indexed in CloudWatch via **Transaction Search** (5% sampling, configurable — see below).
+[**AgentCore Observability**](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/observability-get-started.html) is turned on, allowing you to investigate traces. These are captured as X-Ray spans and indexed in CloudWatch via **Transaction Search** (5% sampling, configurable — see below).
 
 CloudWatch Logs capture structured runtime output under `/aws/bedrock-agentcore/runtimes/`. X-Ray service maps show latency across AgentCore, Bedrock, and downstream services.
 
@@ -264,7 +266,9 @@ Nothing in this software or its outputs constitutes legal advice. The tool is de
 
 This personal project was built as a learning exercise and vibe-coded with [Claude Code](https://claude.ai/code). It is not production-ready. Before deploying to any real environment, ensure you conduct appropriate security testing, review all permissions and data handling practices, and satisfy yourself that the software meets your technical requirements.
 
-**Security notice.** This deployment is intentionally minimal. Depending on your threat model, you may or may not want to consider additions such as:
+## Security Notice
+
+This deployment is intentionally minimal. Depending on your threat model, you may or may not want to consider additions such as:
 
 - VPC with private subnets and VPC endpoints (S3, Bedrock, RDS, SSM) to keep traffic off the public internet
 - AWS WAF on CloudFront and API Gateway for OWASP rule sets and rate limiting
