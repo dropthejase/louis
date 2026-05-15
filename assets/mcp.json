@@ -1,7 +1,7 @@
 {
   "mcpServers": {
-    "datagouv": {
-      "url": "https://mcp.data.gouv.fr/mcp"
+    "lex": {
+      "url": "https://lex.lab.i.ai.gov.uk/mcp"
     }
   }
 }
