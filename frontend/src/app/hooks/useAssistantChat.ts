@@ -126,12 +126,18 @@ export function useAssistantChat({
     const finalizeStreamingContent = () => {
         stopDrip();
         const events = eventsRef.current;
-        const last = events[events.length - 1];
-        if (last?.type === "content" && last.isStreaming) {
+        // Search backwards — a tool_call_start placeholder may sit after the
+        // content block if tool_call_start arrived before pushEvent finalized it.
+        const contentIdx = [...events].reverse().findIndex(
+            (e) => e.type === "content" && (e as { type: string; isStreaming?: boolean }).isStreaming
+        );
+        if (contentIdx !== -1) {
+            const idx = events.length - 1 - contentIdx;
             const finalText = dripTargetRef.current;
             eventsRef.current = [
-                ...events.slice(0, -1),
+                ...events.slice(0, idx),
                 { type: "content", text: finalText },
+                ...events.slice(idx + 1),
             ];
             const snapshot = [...eventsRef.current];
             setMessages((prev) => {
@@ -562,16 +568,28 @@ export function useAssistantChat({
                         }
 
                         if (data.type === "tool_call_start") {
-                            // Transient placeholder so the client immediately
-                            // shows activity after Claude ends a turn with
-                            // tool_use. Replaced by the real tool event
-                            // (doc_edited_start, doc_read_start, …) if one
-                            // arrives; otherwise it lingers as a "Working…"
-                            // indicator until the next iteration streams.
-                            pushEvent({
+                            // Append placeholder WITHOUT finalizing the in-flight
+                            // content block. The model closes its text block before
+                            // opening a tool block, but network chunking means more
+                            // content_deltas may still be in-flight. Calling
+                            // pushEvent() here would prematurely close the content
+                            // block and create a second one after the tool accordion.
+                            // The real tool event (doc_edited_start etc.) goes through
+                            // pushEvent() and finalizes content at the right moment.
+                            const toolCallEvent: AssistantEvent = {
                                 type: "tool_call_start",
                                 name: (data.name as string) ?? "",
                                 isStreaming: true,
+                            };
+                            eventsRef.current = [...eventsRef.current, toolCallEvent];
+                            const snapshot = [...eventsRef.current];
+                            setMessages((prev) => {
+                                const updated = [...prev];
+                                const last = updated[updated.length - 1];
+                                if (last?.role === "assistant") {
+                                    updated[updated.length - 1] = { ...last, events: snapshot };
+                                }
+                                return updated;
                             });
                             continue;
                         }
