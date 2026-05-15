@@ -14,6 +14,7 @@ import { tabularRouter } from "./routes/tabular";
 import { workflowsRouter } from "./routes/workflows";
 import { userRouter } from "./routes/user";
 import { downloadsRouter } from "./routes/downloads";
+import { skillsRouter } from "./routes/skills";
 
 export const app = express();
 
@@ -39,6 +40,7 @@ app.use("/workflows", workflowsRouter);
 app.use("/user", userRouter);
 app.use("/users", userRouter);
 app.use("/download", downloadsRouter);
+app.use("/skills", skillsRouter);
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 

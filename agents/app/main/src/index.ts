@@ -15,6 +15,7 @@ import { buildDocContext, buildProjectDocContext, DocIndex } from './lib/doc-con
 import { extractAnnotations } from './lib/citations';
 import { execute } from './lib/db';
 import { createAgent, loadMessages } from './agent';
+import { ensureSkillsDownloaded, skillsLocalBase } from './lib/skills';
 
 const PORT = process.env.PORT ?? 8080;
 const app = express();
@@ -69,9 +70,10 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     const [{ docIndex, docStore }, previousMessages] = await Promise.all([
       projectId ? buildProjectDocContext(projectId) : buildDocContext(userId),
       loadMessages(chatId),
+      ensureSkillsDownloaded(userId).catch(err => console.error('[skills] download failed:', err)),
     ]);
 
-    const agent = createAgent(userId, docStore, docIndex, chatId, previousMessages, projectId, model);
+    const agent = createAgent(userId, docStore, docIndex, chatId, previousMessages, skillsLocalBase(userId), projectId, model);
 
     let fullText = '';
     // Buffer tail to suppress <CITATIONS> block from streaming to frontend

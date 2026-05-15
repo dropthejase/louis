@@ -15,6 +15,8 @@
  * This ensures the system prompt is always fresh from code, never from a snapshot.
  */
 import { Agent, BedrockModel, AfterModelCallEvent, AfterInvocationEvent } from '@strands-agents/sdk';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { AgentSkills } = require('@strands-agents/sdk/vended-plugins/skills');
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { DynamoDBClient, UpdateItemCommand } from '@aws-sdk/client-dynamodb';
 import type { MessageData } from '@strands-agents/sdk';
@@ -29,6 +31,7 @@ import { makeEditDocumentTool } from './tools/edit-document';
 import { makeReplicateDocumentTool } from './tools/replicate-document';
 import { makeListWorkflowsTool } from './tools/list-workflows';
 import { makeReadWorkflowTool } from './tools/read-workflow';
+import { makeReadLocalFileTool } from './tools/read-local-file';
 
 // Validated Bedrock cross-region inference profile IDs for eu-west-1.
 const BEDROCK_MODEL_IDS: Record<string, string> = {
@@ -79,6 +82,7 @@ export function createAgent(
   docIndex: DocIndex,
   chatId: string,
   previousMessages: MessageData[],
+  skillsBase: string,
   projectId?: string,
   modelId?: string,
 ): Agent {
@@ -100,10 +104,13 @@ export function createAgent(
     makeEditDocumentTool(userId, docStore, docIndex),
     makeListWorkflowsTool(userId),
     makeReadWorkflowTool(userId),
+    makeReadLocalFileTool(userId),
     ...(projectId ? [makeReplicateDocumentTool(userId, projectId, docStore, docIndex)] : []),
   ];
 
-  const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, messages: previousMessages, printer: false });
+  const skillsPlugin = new AgentSkills({ skills: [skillsBase] });
+
+  const agent = new Agent({ model, systemPrompt: SYSTEM_PROMPT, tools, plugins: [skillsPlugin], messages: previousMessages, printer: false });
 
   agent.addHook(AfterInvocationEvent, async () => {
     try {
