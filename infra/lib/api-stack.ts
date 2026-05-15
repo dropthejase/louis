@@ -27,6 +27,8 @@ interface ApiStackProps extends StackProps {
   sessionsBucket: s3.Bucket;
   skillsBucket: s3.Bucket;
   agentDeployBucket: s3.Bucket;
+  browserArn: string;
+  adminBucket: s3.Bucket;
   frontendUrl: string;
   dbClusterArn: string;
   dbSecretArn: string;
@@ -128,6 +130,8 @@ export class ApiStack extends Stack {
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
         SKILLS_BUCKET_NAME: props.skillsBucket.bucketName,
+        BROWSER_ARN: props.browserArn,
+        ADMIN_BUCKET_NAME: props.adminBucket.bucketName,
         USER_POOL_ID: props.userPool.userPoolId,
         FRONTEND_URL: props.frontendUrl,
         CREDITS_TABLE_NAME: creditsTable.tableName,
@@ -296,6 +300,26 @@ export class ApiStack extends Stack {
       effect: iam.Effect.ALLOW,
       actions: ['s3:ListBucket'],
       resources: [props.docsBucket.bucketArn],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3AdminBucketRead',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject'],
+      resources: [`${props.adminBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'AgentCoreBrowser',
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'bedrock-agentcore:StartBrowserSession',
+        'bedrock-agentcore:StopBrowserSession',
+        'bedrock-agentcore:GetBrowserSession',
+        'bedrock-agentcore:ConnectBrowserAutomationStream',
+        'bedrock-agentcore:UpdateBrowserStream',
+      ],
+      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:browser/*`],
     }));
 
     new CfnOutput(this, 'CreditsTableArn', { value: creditsTable.tableArn });

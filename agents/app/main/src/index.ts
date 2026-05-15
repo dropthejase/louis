@@ -178,6 +178,9 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
             sse(res, { type: 'doc_replicate_start', filename, count: 1 });
             break;
           }
+          case 'browse_web':
+            sse(res, { type: 'browser_navigate_start', url: (input as { url?: string }).url ?? '' });
+            break;
         }
         continue;
       }
@@ -220,6 +223,9 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
             sse(res, { type: 'doc_replicated', filename: sourceFilename, count: result.count ?? 0, copies: result.copies });
             break;
           }
+          case 'browse_web':
+            sse(res, { type: 'browser_navigate', url: (event.toolUse.input as { url?: string }).url ?? '', error: result.error as string | undefined });
+            break;
         }
         continue;
       }
