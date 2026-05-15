@@ -60,7 +60,7 @@ export class ApiStack extends Stack {
 
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
-      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream', 'bedrock:CountTokens'],
       resources: [
         'arn:aws:bedrock:*::foundation-model/*',
         `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
@@ -237,7 +237,7 @@ export class ApiStack extends Stack {
     agentCoreRole.addToPolicy(new iam.PolicyStatement({
       sid: 'BedrockModelAccess',
       effect: iam.Effect.ALLOW,
-      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream'],
+      actions: ['bedrock:InvokeModel', 'bedrock:InvokeModelWithResponseStream', 'bedrock:CountTokens'],
       resources: [
         'arn:aws:bedrock:*::foundation-model/*',
         `arn:aws:bedrock:*:${this.account}:inference-profile/*`,
