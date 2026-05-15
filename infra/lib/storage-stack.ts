@@ -1,11 +1,12 @@
 /**
  * CDK stack: S3 buckets (docs, sessions, frontend) + CloudFront distribution.
  *
- * Three buckets are created here:
+ * Four buckets are created here:
  *   - docsBucket: stores user documents and generated files; per-user prefix access
  *     is enforced via IAM (AuthStack). `eventBridgeEnabled: true` lets ConversionStack
  *     subscribe via EventBridge rules rather than direct S3 notifications.
  *   - sessionsBucket: stores Strands agent conversation snapshots (S3-backed sessions).
+ *   - skillsBucket: stores user-uploaded Strands Skills folders; keyed <userId>/<skillName>/.
  *   - frontendBucket: private; served exclusively via CloudFront OAC.
  *
  * CORS on docsBucket is applied via the CFN escape hatch after the CloudFront distribution
@@ -27,6 +28,7 @@ interface StorageStackProps extends StackProps {
 export class StorageStack extends Stack {
   public readonly docsBucket: s3.Bucket;
   public readonly sessionsBucket: s3.Bucket;
+  public readonly skillsBucket: s3.Bucket;
   public readonly frontendBucket: s3.Bucket;
   public readonly agentDeployBucket: s3.Bucket;
   public readonly distribution: cloudfront.Distribution;
@@ -48,6 +50,15 @@ export class StorageStack extends Stack {
 
     // Sessions bucket — private, stores Strands agent conversation snapshots
     this.sessionsBucket = new s3.Bucket(this, 'SessionsBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      versioned: false,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
+
+    // Skills bucket — stores user-uploaded Strands Skills folders; keyed <userId>/<skillName>/
+    this.skillsBucket = new s3.Bucket(this, 'SkillsBucket', {
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
       encryption: s3.BucketEncryption.S3_MANAGED,
       versioned: false,
@@ -119,8 +130,21 @@ export class StorageStack extends Stack {
       ],
     };
 
+    const cfnSkillsBucket = this.skillsBucket.node.defaultChild as s3.CfnBucket;
+    cfnSkillsBucket.corsConfiguration = {
+      corsRules: [
+        {
+          allowedMethods: ['GET', 'HEAD', 'PUT'],
+          allowedOrigins: [`https://${this.distribution.distributionDomainName}`],
+          allowedHeaders: ['*'],
+          maxAge: 3000,
+        },
+      ],
+    };
+
     new CfnOutput(this, 'DocsBucketName', { value: this.docsBucket.bucketName });
     new CfnOutput(this, 'SessionsBucketName', { value: this.sessionsBucket.bucketName });
+    new CfnOutput(this, 'SkillsBucketName', { value: this.skillsBucket.bucketName });
     new CfnOutput(this, 'FrontendBucketName', { value: this.frontendBucket.bucketName });
     new CfnOutput(this, 'AgentDeployBucketName', { value: this.agentDeployBucket.bucketName });
     new CfnOutput(this, 'DistributionDomainName', { value: this.distribution.distributionDomainName });

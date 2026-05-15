@@ -57,10 +57,11 @@ DB_SECRET_ARN=$(cfn_output "${DATABASE_STACK}" "SecretArn")
 DB_NAME=$(cfn_output "${DATABASE_STACK}" "DatabaseName")
 DOCS_BUCKET=$(cfn_output "${STORAGE_STACK}" "DocsBucketName")
 SESSIONS_BUCKET=$(cfn_output "${STORAGE_STACK}" "SessionsBucketName")
+SKILLS_BUCKET=$(cfn_output "${STORAGE_STACK}" "SkillsBucketName")
 CREDITS_TABLE=$(cfn_output "${API_STACK}" "CreditsTableName")
 API_URL=$(cfn_output "${API_STACK}" "ApiUrl")
 
-for var in ROLE_ARN DEPLOY_BUCKET USER_POOL_ID USER_POOL_CLIENT_ID DB_CLUSTER_ARN DB_SECRET_ARN DB_NAME DOCS_BUCKET SESSIONS_BUCKET CREDITS_TABLE API_URL; do
+for var in ROLE_ARN DEPLOY_BUCKET USER_POOL_ID USER_POOL_CLIENT_ID DB_CLUSTER_ARN DB_SECRET_ARN DB_NAME DOCS_BUCKET SESSIONS_BUCKET SKILLS_BUCKET CREDITS_TABLE API_URL; do
   val="${!var}"
   if [[ -z "${val}" || "${val}" == "None" ]]; then
     echo "ERROR: Could not read ${var} from CloudFormation. Deploy CDK stacks first."
@@ -129,6 +130,7 @@ ENV_VARS=$(node -e "
     DB_NAME: '${DB_NAME}',
     DOCS_BUCKET_NAME: '${DOCS_BUCKET}',
     SESSIONS_BUCKET_NAME: '${SESSIONS_BUCKET}',
+    SKILLS_BUCKET_NAME: '${SKILLS_BUCKET}',
     CREDITS_TABLE_NAME: '${CREDITS_TABLE}',
     API_BASE_URL: '${API_URL}',
     AWS_REGION: '${REGION}',

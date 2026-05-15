@@ -25,6 +25,7 @@ interface ApiStackProps extends StackProps {
   userPool: cognito.UserPool;
   docsBucket: s3.Bucket;
   sessionsBucket: s3.Bucket;
+  skillsBucket: s3.Bucket;
   agentDeployBucket: s3.Bucket;
   frontendUrl: string;
   dbClusterArn: string;
@@ -51,6 +52,7 @@ export class ApiStack extends Stack {
 
     props.docsBucket.grantReadWrite(lambdaRole);
     props.sessionsBucket.grantReadWrite(lambdaRole);
+    props.skillsBucket.grantReadWrite(lambdaRole);
 
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
@@ -125,6 +127,7 @@ export class ApiStack extends Stack {
         DB_NAME: props.dbName,
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
+        SKILLS_BUCKET_NAME: props.skillsBucket.bucketName,
         USER_POOL_ID: props.userPool.userPoolId,
         FRONTEND_URL: props.frontendUrl,
         CREDITS_TABLE_NAME: creditsTable.tableName,
@@ -272,6 +275,20 @@ export class ApiStack extends Stack {
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject'],
       resources: [`${props.agentDeployBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3SkillsRead',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:GetObject'],
+      resources: [`${props.skillsBucket.bucketArn}/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'S3SkillsList',
+      effect: iam.Effect.ALLOW,
+      actions: ['s3:ListBucket'],
+      resources: [props.skillsBucket.bucketArn],
     }));
 
     agentCoreRole.addToPolicy(new iam.PolicyStatement({

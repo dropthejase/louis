@@ -20,6 +20,7 @@ import WorkflowsPage from './pages/workflows/WorkflowsPage';
 import WorkflowPage from './pages/workflows/WorkflowPage';
 import AccountPage from './pages/account/AccountPage';
 import AccountModelsPage from './pages/account/AccountModelsPage';
+import SkillsPage from './pages/skills/SkillsPage';
 
 // Configure Amplify once at app startup — single source of truth
 Amplify.configure(amplifyConfig);
@@ -81,6 +82,7 @@ export default function App() {
                     <Route path="/tabular-reviews/:id" element={<TabularReviewPage />} />
                     <Route path="/workflows" element={<WorkflowsPage />} />
                     <Route path="/workflows/:id" element={<WorkflowPage />} />
+                    <Route path="/skills" element={<SkillsPage />} />
                     <Route path="/account" element={<AccountPage />}>
                       <Route path="models" element={<AccountModelsPage />} />
                     </Route>

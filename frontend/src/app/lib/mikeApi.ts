@@ -786,3 +786,51 @@ export async function deleteWorkflowShare(
         method: "DELETE",
     });
 }
+
+export interface MikeSkill {
+    skillName: string;
+    name: string;
+    description: string;
+}
+
+export async function listSkills(): Promise<MikeSkill[]> {
+    const data = await apiRequest<{ skills: MikeSkill[] }>("/skills");
+    return data.skills;
+}
+
+export async function getSkillUploadUrl(
+    skillName: string,
+    filePath: string,
+    contentType: string,
+): Promise<{ url: string; key: string }> {
+    return apiRequest<{ url: string; key: string }>("/skills/prepare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ skillName, filePath, contentType }),
+    });
+}
+
+export async function deleteSkill(skillName: string): Promise<void> {
+    await apiRequest(`/skills/${encodeURIComponent(skillName)}`, {
+        method: "DELETE",
+    });
+}
+
+export interface MikeSkillFile {
+    path: string;
+    size: number;
+}
+
+export async function listSkillFiles(skillName: string): Promise<MikeSkillFile[]> {
+    const data = await apiRequest<{ files: MikeSkillFile[] }>(
+        `/skills/${encodeURIComponent(skillName)}/files`,
+    );
+    return data.files;
+}
+
+export async function getSkillFileUrl(skillName: string, filePath: string): Promise<string> {
+    const data = await apiRequest<{ url: string }>(
+        `/skills/${encodeURIComponent(skillName)}/file?path=${encodeURIComponent(filePath)}`,
+    );
+    return data.url;
+}
