@@ -181,6 +181,10 @@ npx cdk destroy ConversionStack ApiStack AuthStack DatabaseStack StorageStack
 
 ## Additional Features
 
+### Web Search
+
+The agent can fetch pages from a curated set of legal and regulatory websites: curia.europa.eu, eur-lex.europa.eu, www.bailii.org, www.edpb.europa.eu, www.ico.org.uk, www.fca.org.uk, find.companieshouse.gov.uk. The allowlist is configurable via `browse-allowlist.json` in the admin S3 bucket — no redeployment needed.
+
 ### Strands Skills
 
 Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` manifest + reference files) stored in S3. On session start the agent downloads them to `/tmp` and can read them on demand via `read_local_file`.
