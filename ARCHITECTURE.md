@@ -399,6 +399,6 @@ All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profile
 - Credit tracking live but enforcement gate (429) not yet implemented.
 - Cold start latency on Lambda + Aurora (no provisioned concurrency, Aurora min ACU = 0) — may need to refresh browser a few times after inactivity.
 - Route files use `console.log` — Lambda Powertools logger not yet injected into routes.
-- Project and tabular review sharing / member management UI incomplete — sharing buttons disabled in UI pending full implementation.
+- Project and tabular review sharing / member management UI enabled — email-array based, no invite notification sent.
 - Edit card status (accepted/rejected) not re-hydrated on chat history load — tracked changes in reloaded conversations always show as pending regardless of current DB state. Fix tracked in Issue 26.
 - Documents attached via drag-and-drop into the chat input are not re-rendered as attachments on history reload — the raw injection block (`USER-ATTACHED DOCUMENTS FOR THIS TURN: ...`) appears as plain text.

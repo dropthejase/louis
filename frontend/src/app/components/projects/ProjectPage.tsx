@@ -1276,9 +1276,9 @@ export function ProjectPage({ projectId }: Props) {
                 <div className="flex items-center gap-2">
                     <HeaderSearchBtn value={search} onChange={setSearch} placeholder="Search…" />
                     <button
-                        disabled
-                        className="flex h-8 w-8 items-center justify-center text-sm text-gray-300 opacity-50 cursor-not-allowed"
-                        title="Coming soon"
+                        onClick={() => setPeopleModalOpen(true)}
+                        className="flex h-8 w-8 items-center justify-center text-sm text-gray-500 hover:text-gray-900 transition-colors"
+                        title="People with access"
                         aria-label="People with access"
                     >
                         <Users className="h-4 w-4" />
