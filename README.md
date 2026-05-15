@@ -225,11 +225,20 @@ The agent fetches the secret at cold start and sends it as a `Bearer` token. The
 
 The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** — a public MCP server for UK legislation search, provided by i.AI (DSIT).
 
+### Observability
+
+Agent invocations are traced end-to-end via OpenTelemetry. The AgentCore runtime auto-instruments traces using the `opentelemetry-instrument` entrypoint — no agent code changes required.
+
+Traces are exported to AWS X-Ray and indexed in CloudWatch via **Transaction Search** (5% sampling). This gives span-level visibility into every agent invocation: LLM calls, tool executions, cycle counts, token usage, and error paths — queryable directly in the CloudWatch console.
+
+CloudWatch Logs capture structured runtime output under `/aws/bedrock-agentcore/runtimes/`. X-Ray service maps show latency across AgentCore, Bedrock, and downstream services.
+
 ---
 
 ## Ideas for Extension
 
 **Agents & AI**
+- **Migrate agents to Python** — the Strands Agents SDK is Python-native and receives more active development, richer documentation, and broader community support than the TypeScript port. The primary consideration is rewriting the DOCX tracked-changes logic (`docxTrackedChanges.ts`), which performs raw XML surgery and has no direct `python-docx` equivalent.
 - **Agentic Memory (STM and/or LTM)** — persist user/matter context across sessions using Amazon Bedrock AgentCore Memory
 - **Agentic RAG** — incorporate Bedrock Knowledge Bases; agents retrieve relevant clauses before responding rather than loading full documents into context
 - **AgentCore Gateway** — fully managed MCP-compatible gateway that converts Lambda functions and APIs into agent tools with semantic discovery, unified auth, and server-side tool execution; eliminates client-side orchestration loops
