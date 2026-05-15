@@ -32,6 +32,7 @@ import { makeReplicateDocumentTool } from './tools/replicate-document';
 import { makeListWorkflowsTool } from './tools/list-workflows';
 import { makeReadWorkflowTool } from './tools/read-workflow';
 import { makeReadLocalFileTool } from './tools/read-local-file';
+import { browseWebTool } from './tools/browse-web';
 
 // Validated Bedrock cross-region inference profile IDs for eu-west-1.
 const BEDROCK_MODEL_IDS: Record<string, string> = {
@@ -105,6 +106,7 @@ export function createAgent(
     makeListWorkflowsTool(userId),
     makeReadWorkflowTool(userId),
     makeReadLocalFileTool(userId),
+    browseWebTool,
     ...(projectId ? [makeReplicateDocumentTool(userId, projectId, docStore, docIndex)] : []),
   ];
 

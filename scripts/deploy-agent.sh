@@ -60,8 +60,9 @@ SESSIONS_BUCKET=$(cfn_output "${STORAGE_STACK}" "SessionsBucketName")
 SKILLS_BUCKET=$(cfn_output "${STORAGE_STACK}" "SkillsBucketName")
 CREDITS_TABLE=$(cfn_output "${API_STACK}" "CreditsTableName")
 API_URL=$(cfn_output "${API_STACK}" "ApiUrl")
+ADMIN_BUCKET=$(cfn_output "AgentStack" "AdminBucketName")
 
-for var in ROLE_ARN DEPLOY_BUCKET USER_POOL_ID USER_POOL_CLIENT_ID DB_CLUSTER_ARN DB_SECRET_ARN DB_NAME DOCS_BUCKET SESSIONS_BUCKET SKILLS_BUCKET CREDITS_TABLE API_URL; do
+for var in ROLE_ARN DEPLOY_BUCKET USER_POOL_ID USER_POOL_CLIENT_ID DB_CLUSTER_ARN DB_SECRET_ARN DB_NAME DOCS_BUCKET SESSIONS_BUCKET SKILLS_BUCKET CREDITS_TABLE API_URL ADMIN_BUCKET; do
   val="${!var}"
   if [[ -z "${val}" || "${val}" == "None" ]]; then
     echo "ERROR: Could not read ${var} from CloudFormation. Deploy CDK stacks first."
@@ -133,6 +134,7 @@ ENV_VARS=$(node -e "
     SKILLS_BUCKET_NAME: '${SKILLS_BUCKET}',
     CREDITS_TABLE_NAME: '${CREDITS_TABLE}',
     API_BASE_URL: '${API_URL}',
+    ADMIN_BUCKET_NAME: '${ADMIN_BUCKET}',
     AWS_REGION: '${REGION}',
   };
   if ('${TABULAR_AGENT_ARN}') env.TABULAR_AGENT_ARN = '${TABULAR_AGENT_ARN}';
