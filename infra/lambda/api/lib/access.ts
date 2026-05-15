@@ -38,7 +38,9 @@ export async function checkProjectAccess(
   );
   if (!project) return { ok: false };
   if (project.user_id === userId) return { ok: true, isOwner: true, project };
-  const sharedWith = Array.isArray(project.shared_with) ? project.shared_with : [];
+  const sharedWith: string[] = typeof project.shared_with === 'string'
+    ? JSON.parse(project.shared_with)
+    : (project.shared_with ?? []);
   const email = (userEmail ?? "").toLowerCase();
   if (email && sharedWith.some((e) => (e ?? "").toLowerCase() === email)) {
     return { ok: true, isOwner: false, project };

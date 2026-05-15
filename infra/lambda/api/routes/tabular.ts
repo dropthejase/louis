@@ -508,9 +508,10 @@ tabularRouter.get("/:reviewId/people", requireAuth, async (req, res) => {
         if (!access.ok)
             return void res.status(404).json({ detail: "Review not found" });
 
-        const sharedWith: string[] = (
-            Array.isArray(review.shared_with) ? review.shared_with : []
-        ).map((e) => (e ?? "").toLowerCase());
+        const sharedWith: string[] = (typeof review.shared_with === 'string'
+            ? JSON.parse(review.shared_with)
+            : (review.shared_with ?? [])
+        ).map((e: string) => (e ?? "").toLowerCase());
 
         const ownerProfile = await queryOne<{ display_name: string | null }>(
             `SELECT display_name FROM user_profiles WHERE user_id = :userId`,

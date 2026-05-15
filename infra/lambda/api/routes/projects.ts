@@ -175,11 +175,12 @@ projectsRouter.get("/:projectId", requireAuth, async (req, res) => {
     if (!project)
       return void res.status(404).json({ detail: "Project not found" });
 
+    const sharedWith: string[] = typeof project.shared_with === 'string'
+      ? JSON.parse(project.shared_with)
+      : (project.shared_with ?? []);
     const canAccess =
       project.user_id === userId ||
-      (userEmail &&
-        Array.isArray(project.shared_with) &&
-        project.shared_with.includes(userEmail));
+      (!!userEmail && sharedWith.includes(userEmail));
     if (!canAccess)
       return void res.status(404).json({ detail: "Project not found" });
 
@@ -233,10 +234,10 @@ projectsRouter.get("/:projectId/people", requireAuth, async (req, res) => {
       return void res.status(404).json({ detail: "Project not found" });
 
     const isOwner = project.user_id === userId;
-    const sharedWith = (Array.isArray(project.shared_with)
-      ? project.shared_with
-      : []
-    ).map((e) => e.toLowerCase());
+    const sharedWith = (typeof project.shared_with === 'string'
+      ? JSON.parse(project.shared_with)
+      : (project.shared_with ?? [])
+    ).map((e: string) => e.toLowerCase());
     const isShared =
       !!userEmail && sharedWith.includes(userEmail.toLowerCase());
     if (!isOwner && !isShared)
