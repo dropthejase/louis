@@ -62,6 +62,7 @@ Before deploying, review these settings in `infra/`:
 - **Bedrock model IDs** — update model ID constants if you want to swap Claude versions or use a different model
 - **Aurora minimum ACU** — defaults to `0` (scales to zero). Set a non-zero minimum (e.g. `0.5`) to avoid cold-start latency on the first query after idle
 - **Lambda provisioned concurrency** — not configured by default; the API and agent Lambdas will cold-start after periods of inactivity. Add provisioned concurrency to `ApiStack` / agent function if you need consistent response times
+- **Transaction Search sampling** — defaults to `5%` (`indexingPercentage: 5` in `ApiStack`). Set to `100` for full trace coverage, `0` to disable. Higher percentages increase CloudWatch Logs ingest cost
 
 **Deletion policies — review before deploying to anything real:**
 
@@ -227,9 +228,7 @@ The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** �
 
 ### Observability
 
-Agent invocations are traced end-to-end via OpenTelemetry. The AgentCore runtime auto-instruments traces using the `opentelemetry-instrument` entrypoint — no agent code changes required.
-
-Traces are exported to AWS X-Ray and indexed in CloudWatch via **Transaction Search** (5% sampling). This gives span-level visibility into every agent invocation: LLM calls, tool executions, cycle counts, token usage, and error paths — queryable directly in the CloudWatch console.
+AgentCore Observability auto-instruments every agent invocation — LLM calls, tool executions, cycle counts, token usage, and error paths are captured as X-Ray spans and indexed in CloudWatch via **Transaction Search** (5% sampling, configurable — see below).
 
 CloudWatch Logs capture structured runtime output under `/aws/bedrock-agentcore/runtimes/`. X-Ray service maps show latency across AgentCore, Bedrock, and downstream services.
 
