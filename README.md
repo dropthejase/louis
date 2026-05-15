@@ -80,7 +80,7 @@ Change `RemovalPolicy.DESTROY` → `RemovalPolicy.RETAIN` (or `SNAPSHOT` for Aur
 
 ```bash
 cd infra && npm install
-npx cdk deploy StorageStack DatabaseStack AuthStack ApiStack
+npx cdk deploy StorageStack DatabaseStack AuthStack AgentStack ApiStack
 ```
 
 For `ConversionStack`, Finch must be running:
@@ -142,7 +142,8 @@ Runs `vite build`, syncs the output to S3, and invalidates the CloudFront cache.
 
 | What changed | Command |
 |---|---|
-| CDK stack | `cd infra && npx cdk deploy <STACK>` |
+| CDK stack (general) | `cd infra && npx cdk deploy <STACK>` |
+| Admin config (MCP, Chrome policy) | `cd infra && npx cdk deploy AgentStack` |
 | Agents | `AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain` (or `louisTabular`) |
 | Frontend | `AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh` |
 | ConversionStack | `finch vm start && export CDK_DOCKER=finch && npx cdk deploy ConversionStack && finch vm stop` |
@@ -190,6 +191,14 @@ The agent can fetch pages from a curated set of legal and regulatory websites: c
 Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` manifest + reference files) stored in S3. On session start the agent downloads them to `/tmp` and can read them on demand via `read_local_file`.
 
 **Limitations:** Skills are read-only. The agent cannot execute scripts — this is to reduce the risk of privilege escalation.
+
+### MCP Servers
+
+The AWS administrator can connect approved [Model Context Protocol](https://modelcontextprotocol.io) servers to the agent by uploading `mcp.json` to the admin S3 bucket. Users can toggle individual servers on or off in Agent Settings. Only HTTP (StreamableHTTP) transport is supported.
+
+**Limitations:** Authentication headers are not currently supported — only unauthenticated HTTP MCP endpoints can be used.
+
+The default configuration includes **[data.gouv.fr](https://mcp.data.gouv.fr/mcp)** — a public MCP server exposing French open government data.
 
 ---
 

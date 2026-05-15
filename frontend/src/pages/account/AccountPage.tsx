@@ -9,7 +9,7 @@ import { deleteAccount } from '@/app/lib/mikeApi';
 
 const TABS = [
   { id: 'general', label: 'General', href: '/account' },
-  { id: 'models', label: 'Models', href: '/account/models' },
+  { id: 'models', label: 'Agent', href: '/account/models' },
 ];
 
 export default function AccountPage() {

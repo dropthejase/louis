@@ -15,6 +15,7 @@ interface UserProfile {
     organisation: string | null;
     tabularModel: string;
     tier: string;
+    disabledMcpServers: string[];
 }
 
 interface UserProfileContextType {
@@ -23,6 +24,7 @@ interface UserProfileContextType {
     updateDisplayName: (name: string) => Promise<boolean>;
     updateOrganisation: (organisation: string) => Promise<boolean>;
     updateTabularModel: (modelId: string) => Promise<boolean>;
+    updateDisabledMcpServers: (ids: string[]) => Promise<boolean>;
     reloadProfile: () => Promise<void>;
 }
 
@@ -44,12 +46,14 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 organisation: string | null;
                 tabular_model: string | null;
                 tier: string | null;
+                disabled_mcp_servers: string[] | null;
             }>("/user/profile");
             setProfile({
                 displayName: data?.display_name ?? null,
                 organisation: data?.organisation ?? null,
                 tabularModel: data?.tabular_model ?? DEFAULT_TABULAR_MODEL,
                 tier: data?.tier ?? "Free",
+                disabledMcpServers: data?.disabled_mcp_servers ?? [],
             });
         } catch {
             setProfile({
@@ -57,6 +61,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 organisation: null,
                 tabularModel: DEFAULT_TABULAR_MODEL,
                 tier: "Free",
+                disabledMcpServers: [],
             });
         } finally {
             setLoading(false);
@@ -128,6 +133,25 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
         [],
     );
 
+    const updateDisabledMcpServers = useCallback(
+        async (disabledMcpServers: string[]): Promise<boolean> => {
+            try {
+                await apiRequest("/user/profile", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ disabled_mcp_servers: disabledMcpServers }),
+                });
+                setProfile((prev) =>
+                    prev ? { ...prev, disabledMcpServers } : null,
+                );
+                return true;
+            } catch {
+                return false;
+            }
+        },
+        [],
+    );
+
     const reloadProfile = useCallback(async () => {
         await loadProfile();
     }, [loadProfile]);
@@ -140,6 +164,7 @@ export function UserProfileProvider({ children }: { children: ReactNode }) {
                 updateDisplayName,
                 updateOrganisation,
                 updateTabularModel,
+                updateDisabledMcpServers,
                 reloadProfile,
             }}
         >
