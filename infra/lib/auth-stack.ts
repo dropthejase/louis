@@ -55,7 +55,8 @@ export class AuthStack extends Stack {
         requireDigits: true,
         requireSymbols: true,
       },
-      mfa: cognito.Mfa.OFF,
+      mfa: cognito.Mfa.OPTIONAL,
+      mfaSecondFactor: { sms: false, otp: true },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
       removalPolicy: RemovalPolicy.DESTROY,
     });
