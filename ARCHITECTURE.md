@@ -312,7 +312,7 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 **`projects`**
 - `user_id` — owner
 - `name`, `cm_number`, `visibility` (`private`/`shared`)
-- `shared_with` (jsonb array of `{ userId, email, role }`) — GIN indexed
+- `shared_with` (jsonb array of lowercase email strings) — GIN indexed
 
 **`project_subfolders`** — self-referential (`parent_folder_id`) for nested folders within a project
 
