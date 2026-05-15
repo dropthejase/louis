@@ -346,7 +346,10 @@ export function useAssistantChat({
             }
 
             const model = message.model;
-            const prompt = message.content;
+            const workflowMarker = message.workflow
+                ? `[Workflow: ${message.workflow.title} (id: ${message.workflow.id})]\n\n`
+                : "";
+            const prompt = workflowMarker + message.content;
 
             const displayedDoc = opts?.displayedDoc ?? null;
 

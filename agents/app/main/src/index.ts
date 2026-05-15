@@ -59,7 +59,9 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
     return;
   }
 
-  const { chatId, prompt, projectId, model } = body;
+  const { chatId, projectId, model } = body;
+  const attachedDocuments: { filename: string; document_id: string }[] =
+    Array.isArray((body as any).attached_documents) ? (body as any).attached_documents : [];
   const sessionId = body.runtimeSessionId ?? `${userId}-${crypto.randomUUID()}`;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -72,6 +74,16 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       loadMessages(chatId),
       ensureSkillsDownloaded(userId).catch(err => console.error('[skills] download failed:', err)),
     ]);
+
+    let prompt: string = body.prompt;
+    if (attachedDocuments.length > 0) {
+      const byDocumentId = new Map(Object.entries(docIndex).map(([slug, d]) => [d.document_id, slug]));
+      const lines = attachedDocuments.map(d => {
+        const slug = byDocumentId.get(d.document_id);
+        return slug ? `- ${slug}: ${d.filename}` : `- ${d.filename}`;
+      });
+      prompt = `USER-ATTACHED DOCUMENTS FOR THIS TURN:\nThe user has attached the following document(s) directly to their message. Treat these as the primary focus of the request unless their message clearly says otherwise.\n${lines.join('\n')}\n\n${prompt}`;
+    }
 
     const agent = createAgent(userId, docStore, docIndex, chatId, previousMessages, skillsLocalBase(userId), projectId, model);
 

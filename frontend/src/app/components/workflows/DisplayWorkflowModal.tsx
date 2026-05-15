@@ -366,6 +366,7 @@ export function DisplayWorkflowModal({ workflows, workflow, onClose }: Props) {
                     role: "user",
                     content,
                     files: files.length > 0 ? files : undefined,
+                    workflow: { id: wf.id, title: wf.title },
                 },
             ]);
             handleClose();
