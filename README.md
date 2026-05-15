@@ -179,6 +179,16 @@ npx cdk destroy ConversionStack ApiStack AuthStack DatabaseStack StorageStack
 - Any CloudWatch log groups not deleted by the stack
 - Verify S3 buckets are gone in the console (deletion can fail silently if not empty)
 
+## Additional Features
+
+### Strands Skills
+
+Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` manifest + reference files) stored in S3. On session start the agent downloads them to `/tmp` and can read them on demand via `read_local_file`.
+
+**Limitations:** Skills are read-only. The agent cannot execute scripts — this is to reduce the risk of privilege escalation.
+
+---
+
 ## Ideas for Extension
 
 **Agents & AI**
