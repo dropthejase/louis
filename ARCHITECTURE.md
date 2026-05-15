@@ -38,9 +38,10 @@ All stacks in `infra/`, region `eu-west-1`. Deploy order matters; cross-stack va
 
 | Stack | Provisions | Key outputs |
 |---|---|---|
-| `StorageStack` | S3: docs bucket (EventBridge enabled, CORS), sessions bucket, frontend bucket, agent deploy bucket; CloudFront + OAC; SPA 404→200 fallback | `DocsBucketName`, `SessionsBucketName`, `AgentDeployBucketName`, `DistributionDomainName` |
+| `StorageStack` | S3: docs bucket (EventBridge enabled, CORS), sessions bucket, skills bucket, frontend bucket, agent deploy bucket; CloudFront + OAC; SPA 404→200 fallback | `DocsBucketName`, `SessionsBucketName`, `SkillsBucketName`, `AgentDeployBucketName`, `DistributionDomainName` |
 | `DatabaseStack` | Aurora Serverless v2 PostgreSQL 16.3 — 0–1 ACU, auto-pause, RDS Data API, VPC isolated subnets | `ClusterArn`, `SecretArn` |
 | `AuthStack` | Cognito User Pool (SRP, email verification, no MFA); Post-Confirmation Lambda; Identity Pool (per-user S3 prefix IAM) | `UserPoolId`, `UserPoolClientId`, `IdentityPoolId` |
+| `AgentStack` | S3 admin config bucket (private); seeds `mcp.json` and `browse-allowlist.json` | `AdminBucketName` |
 | `ApiStack` | API Gateway (Cognito authorizer); API Lambda (ARM64, 1024 MB, 29 s); DynamoDB credits table; Amazon Bedrock AgentCore Runtime execution IAM role | `ApiUrl`, `AgentCoreExecutionRoleArn` |
 | `ConversionStack` | Conversion Lambda (x86_64, 2048 MB, 5 min); EventBridge rule on `documents/*.docx`, `.doc`, `.pdf` | `ConversionLambdaArn` |
 
@@ -72,7 +73,7 @@ Base URL: `https://{api-gateway-domain}`. All routes require `Authorization: Bea
 |---|---|---|
 | GET | `/chat` | List user's chats |
 | POST | `/chat/create` | Create chat session |
-| GET | `/chat/:chatId` | Fetch chat + messages |
+| GET | `/chat/:chatId` | Fetch chat metadata |
 | GET | `/chat/:chatId/messages` | Read conversation history from S3 snapshots |
 | PUT | `/chat/:chatId/session-id` | Persist AgentCore session ID (idempotent, first turn) |
 | GET | `/chat/:chatId/session-id` | Fetch persisted AgentCore session ID |
@@ -158,8 +159,9 @@ Base URL: `https://{api-gateway-domain}`. All routes require `Authorization: Bea
 | Method | Path | Description |
 |---|---|---|
 | GET | `/user/profile` | Fetch current user profile |
-| PUT | `/user/profile` | Update profile (display_name, organisation, tabular_model) |
+| PUT | `/user/profile` | Update profile (display_name, organisation, tabular_model, disabled_mcp_servers) |
 | POST | `/user/profile` | Create profile (migration fallback) |
+| GET | `/user/mcp-servers` | List MCP servers configured in admin bucket |
 | DELETE | `/user/account` | Hard delete account + all data |
 
 ### Misc
@@ -195,6 +197,13 @@ Each implements a raw Express HTTP server with `GET /ping` and `POST /invocation
 | `read_table_cells` | Read tabular review cell data |
 | `list_workflows` | List workflows (user's + system) |
 | `read_workflow` | Fetch a workflow definition |
+| `browse_web` | Fetch a page from an admin-allowlisted domain (`browse-allowlist.json`) |
+| `read_local_file` | Read a skill file from `/tmp` (Skills feature) |
+| MCP tools | Dynamic — loaded from enabled MCP servers at cold start |
+
+**Skills:** On session start, the agent downloads user-uploaded Skill folders from S3 to `/tmp/<userId>/skills/`. Each skill has a `SKILL.md` manifest; the agent discovers and reads skill files on demand via `read_local_file`.
+
+**MCP servers:** Admin uploads `mcp.json` to the admin S3 bucket (Claude Code format). Agent loads and caches MCP server configs at cold start, wires `McpClient[]` filtered by the user's `disabled_mcp_servers` preference. Only StreamableHTTP transport supported. Optional per-server `authSecretName` resolves a Bearer token from Secrets Manager (`louis/mcp/*` prefix).
 
 ### louisTabular Tools
 
@@ -202,7 +211,7 @@ Each implements a raw Express HTTP server with `GET /ping` and `POST /invocation
 |---|---|
 | `read_table_cells` | Read extracted cells for a review |
 
-System prompt built per-request with review title, column manifest, and document list. Stateless — no S3 session persistence.
+System prompt built per-request with review title, column manifest, and document list. S3-backed session persistence — same pattern as louisMain (`conversations/{chatId}/messages.json`).
 
 ### Credits Metering
 
@@ -259,12 +268,14 @@ Strands `AfterModelCallEvent` hook increments `credits_used` in DynamoDB (`PK=us
 
 ### Amazon S3
 
-Four buckets, all `blockPublicAccess: BLOCK_ALL`:
+Six buckets, all `blockPublicAccess: BLOCK_ALL`:
 
 | Bucket | Access | Purpose |
 |---|---|---|
 | **Docs** | API Lambda (presigned URLs); Identity Pool (per-user prefix, read only) | User document uploads, converted PDFs, agent-generated DOCX |
 | **Sessions** | API Lambda + AgentCore only | AgentCore conversation snapshots (JSON); lazy-loaded per chat on demand |
+| **Skills** | API Lambda (presigned upload URLs); AgentCore read | User-uploaded Skill folders downloaded to `/tmp` at session start |
+| **Admin** | API Lambda (read); AgentCore (read); AWS admin (write directly) | `mcp.json`, `browse-allowlist.json` — admin-managed config, no app writes |
 | **Frontend** | CloudFront OAC only (SigV4) | React SPA static assets |
 | **Agent Deploy** | API Lambda (upload); AgentCore Runtime | Agent ZIP packages (`louisMain/`, `louisTabular/` prefixes) |
 
@@ -296,6 +307,7 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 **`user_profiles`** — one row per Cognito user (created by Post-Confirmation Lambda)
 - `user_id` (text, unique) — Cognito sub
 - `email`, `display_name`, `organisation`, `tier`, `tabular_model`
+- `disabled_mcp_servers` (jsonb, default `[]`) — array of MCP server IDs the user has toggled off
 
 **`projects`**
 - `user_id` — owner
@@ -317,7 +329,7 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 - `version_number`, `display_name`
 
 **`document_edits`** — tracked changes from agent edits; one row per change
-- `document_id`, `version_id`, `chat_message_id`
+- `document_id`, `version_id`
 - `change_id`, `del_w_id`, `ins_w_id` — Word revision IDs
 - `deleted_text`, `inserted_text`, `context_before`, `context_after`
 - `status` enum: `pending | accepted | rejected`
@@ -334,8 +346,6 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 - `project_id` (nullable — standalone chats), `user_id`, `title`
 - `agentcore_session_id` — persisted after first turn for session continuity
 
-**`chat_messages`** — dead; never written to in either branch. History lives in S3 snapshots. To remove: table + index, `document_edits.chat_message_id` column + index + FK constraint, and the `chat_messages` SELECT in `GET /chat/:chatId`.
-
 **`tabular_reviews`**
 - `project_id` (nullable), `user_id`, `title`
 - `columns_config` (jsonb), `workflow_id`, `practice`
@@ -345,8 +355,6 @@ Schema: `infra/migrations/000_one_shot_schema.sql` — single idempotent file, s
 - `content` (text), `citations` (jsonb), `status`
 
 **`tabular_review_chats`** — chats scoped to a tabular review
-
-**`tabular_review_chat_messages`** — `role`, `content` (jsonb), `annotations` (jsonb)
 
 ---
 
@@ -392,5 +400,4 @@ All LLM calls via Bedrock Converse API, eu-west-1 cross-region inference profile
 - Cold start latency on Lambda + Aurora (no provisioned concurrency, Aurora min ACU = 0) - may need to refresh browser a few times after inactivity.
 - Route files use `console.log` — Lambda Powertools logger not yet injected into routes.
 - Project sharing / member management UI incomplete.
-- `chat_messages` table and `document_edits.chat_message_id` are dead schema — pending cleanup.
 - Edit card status (accepted/rejected) not re-hydrated on chat history load — tracked changes in reloaded conversations always show as pending regardless of current DB state. Fix tracked in Issue 26.
