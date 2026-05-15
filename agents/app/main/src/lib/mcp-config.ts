@@ -6,23 +6,29 @@
  * Admin uploads mcp.json to the admin config bucket; if absent or
  * malformed the agent starts with no MCP servers.
  *
+ * Optional per-server auth: set "authSecretName" to a Secrets Manager secret
+ * under the louis/mcp/* prefix. The secret value is used as a Bearer token.
+ *
  * buildMcpClients() returns only servers NOT in the user's disabledServerIds.
  */
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { SecretsManagerClient, GetSecretValueCommand } from '@aws-sdk/client-secrets-manager';
 import { McpClient } from '@strands-agents/sdk';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const s3 = new S3Client({ region: process.env.AWS_REGION ?? 'eu-west-1' });
+const secretsManager = new SecretsManagerClient({ region: process.env.AWS_REGION ?? 'eu-west-1' });
 const ADMIN_CONFIG_BUCKET = process.env.ADMIN_BUCKET_NAME;
 const MCP_CONFIG_KEY = 'mcp.json';
 
 export interface McpServerConfig {
   id: string;
   url: string;
+  authSecretName?: string;
 }
 
 interface McpJson {
-  mcpServers: Record<string, { url: string }>;
+  mcpServers: Record<string, { url: string; authSecretName?: string }>;
 }
 
 // Module-level cache — populated on first call, reused for container lifetime.
@@ -40,7 +46,7 @@ async function loadServerConfigs(): Promise<McpServerConfig[]> {
     if (!body) { cachedServers = []; return cachedServers; }
     const parsed = JSON.parse(body) as McpJson;
     cachedServers = parsed.mcpServers
-      ? Object.entries(parsed.mcpServers).map(([id, cfg]) => ({ id, url: cfg.url }))
+      ? Object.entries(parsed.mcpServers).map(([id, cfg]) => ({ id, url: cfg.url, authSecretName: cfg.authSecretName }))
       : [];
   } catch (err) {
     console.warn('[mcp] failed to load mcp.json — no MCP servers will be available:', err);
@@ -49,12 +55,29 @@ async function loadServerConfigs(): Promise<McpServerConfig[]> {
   return cachedServers;
 }
 
+async function resolveAuthHeader(secretName: string): Promise<string | undefined> {
+  try {
+    const res = await secretsManager.send(new GetSecretValueCommand({ SecretId: secretName }));
+    const value = res.SecretString;
+    if (!value) return undefined;
+    return `Bearer ${value}`;
+  } catch (err) {
+    console.warn(`[mcp] failed to fetch secret ${secretName}:`, err);
+    return undefined;
+  }
+}
+
 export async function buildMcpClients(disabledServerIds: string[]): Promise<McpClient[]> {
   const servers = await loadServerConfigs();
   const disabled = new Set(disabledServerIds);
-  return servers
-    .filter(s => !disabled.has(s.id))
-    .map(s => new McpClient({
-      transport: new StreamableHTTPClientTransport(new URL(s.url)),
-    }));
+  const enabled = servers.filter(s => !disabled.has(s.id));
+
+  return Promise.all(enabled.map(async (s) => {
+    const authHeader = s.authSecretName ? await resolveAuthHeader(s.authSecretName) : undefined;
+    return new McpClient({
+      transport: new StreamableHTTPClientTransport(new URL(s.url), {
+        requestInit: authHeader ? { headers: { Authorization: authHeader } } : undefined,
+      }),
+    });
+  }));
 }

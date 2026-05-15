@@ -196,9 +196,24 @@ Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` m
 
 The AWS administrator can connect approved [Model Context Protocol](https://modelcontextprotocol.io) servers to the agent by uploading `mcp.json` to the admin S3 bucket. Users can toggle individual servers on or off in Agent Settings. Only HTTP (StreamableHTTP) transport is supported.
 
-**Limitations:** Authentication headers are not currently supported — only unauthenticated HTTP MCP endpoints can be used.
+For authenticated servers, store the API key as an AWS Secrets Manager secret under the `louis/mcp/` prefix (e.g. `louis/mcp/my-server`) and reference it in `mcp.json`:
 
-The default configuration includes **[data.gouv.fr](https://mcp.data.gouv.fr/mcp)** — a public MCP server exposing French open government data.
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "url": "https://example.com/mcp",
+      "authSecretName": "louis/mcp/my-server"
+    }
+  }
+}
+```
+
+The agent fetches the secret at cold start and sends it as a `Bearer` token. The key never appears in `mcp.json` or S3.
+
+**Limitations:** Only static Bearer token auth is supported. OAuth 2.0 / three-legged OAuth (3LO) flows are not supported — servers requiring interactive sign-in (e.g. GitHub/Google OAuth) cannot be used without AgentCore Gateway.
+
+The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** — a public MCP server for UK legislation search, provided by i.AI (DSIT).
 
 ---
 
@@ -214,6 +229,7 @@ The default configuration includes **[data.gouv.fr](https://mcp.data.gouv.fr/mcp
 **Platform & Scale**
 - **Decoupling** — with SQS
 - **Usage analytics** — with Amazon Quick
+- **Structured logging** — replace `console.log/error` in Lambda route files with AWS Lambda Powertools Logger for consistent JSON logs, correlation IDs, and CloudWatch Insights compatibility
 
 **Auth & Multi-tenancy**
 - **Firm-level tenancy** — add an `organisation_id` tier; Cognito user groups + IAM permission boundaries to enforce firm isolation at the AWS level

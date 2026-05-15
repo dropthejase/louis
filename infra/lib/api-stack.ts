@@ -253,6 +253,13 @@ export class ApiStack extends Stack {
     }));
 
     agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SecretsManagerMcp',
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:louis/mcp/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
       sid: 'S3DocsAccess',
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],

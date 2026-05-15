@@ -73,15 +73,17 @@ export default function AccountModelsPage() {
             </div>
             {mcpHelpOpen && (
               <div className="rounded-md bg-gray-50 border border-gray-200 p-3 text-sm text-gray-600 space-y-1.5">
-                <p>MCP servers extend the agent with additional tools. Only your AWS administrator can add approved servers.</p>
-                <p>Servers are configured in <code className="font-mono bg-gray-100 px-1 rounded">config/mcp.json</code> in the admin S3 bucket using the following format:</p>
+                <p>MCP servers extend the agent with additional tools. Only your AWS administrator can add approved servers by uploading <code className="font-mono bg-gray-100 px-1 rounded">mcp.json</code> to the admin S3 bucket.</p>
                 <pre className="font-mono bg-gray-100 rounded p-2 text-[11px] overflow-x-auto">{`{
   "mcpServers": {
     "server-id": {
-      "url": "https://example.com/mcp"
+      "url": "https://example.com/mcp",
+      "authSecretName": "louis/mcp/server-id"
     }
   }
 }`}</pre>
+                <p><code className="font-mono bg-gray-100 px-1 rounded">authSecretName</code> is optional. If set, the agent fetches the value from AWS Secrets Manager and sends it as a Bearer token. By convention, use <code className="font-mono bg-gray-100 px-1 rounded">louis/mcp/&lt;server-id&gt;</code> to match the server key.</p>
+                <p>Only static Bearer token auth is supported. OAuth / three-legged auth flows are not supported.</p>
               </div>
             )}
             {mcpServers.length === 0 ? (
