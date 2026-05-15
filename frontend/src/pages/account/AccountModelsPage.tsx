@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Check, ChevronDown } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Check, ChevronDown, HelpCircle } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,28 +9,107 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useUserProfile } from '@/contexts/UserProfileContext';
 import { MODELS } from '@/app/components/assistant/ModelToggle';
+import { apiRequest } from '@/app/lib/mikeApi';
 
 const TABULAR_MODELS = MODELS.filter((m) =>
   ['claude-sonnet-4-6', 'claude-haiku-4-5'].includes(m.id),
 );
 
+interface McpServer {
+  id: string;
+  url: string;
+}
+
 export default function AccountModelsPage() {
-  const { profile, updateTabularModel } = useUserProfile();
+  const { profile, updateTabularModel, updateDisabledMcpServers } = useUserProfile();
+  const [mcpServers, setMcpServers] = useState<McpServer[]>([]);
+  const [mcpHelpOpen, setMcpHelpOpen] = useState(false);
+
+  useEffect(() => {
+    apiRequest<{ servers: McpServer[] }>('/user/mcp-servers')
+      .then((data) => setMcpServers(data?.servers ?? []))
+      .catch(() => setMcpServers([]));
+  }, []);
+
+  const handleMcpToggle = async (serverId: string, enabled: boolean) => {
+    if (!profile) return;
+    const updated = enabled
+      ? profile.disabledMcpServers.filter((id) => id !== serverId)
+      : [...profile.disabledMcpServers, serverId];
+    await updateDisabledMcpServers(updated);
+  };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-8">
       <div className="pb-6">
-        <h2 className="text-2xl font-medium font-serif mb-4">Model Preferences</h2>
-        <div className="space-y-4 max-w-md">
-          <div>
-            <label className="text-sm text-gray-600 block mb-2">Tabular review model</label>
-            <TabularModelDropdown
-              value={profile?.tabularModel ?? 'claude-sonnet-4-6'}
-              onChange={updateTabularModel}
-            />
-            <p className="text-xs text-gray-400 mt-1.5">
-              Sonnet is more thorough; Haiku is faster and cheaper.
-            </p>
+        <h2 className="text-2xl font-medium font-serif mb-4">Agent Settings</h2>
+
+        <div className="space-y-6">
+          <div className="space-y-4 max-w-md">
+            <h3 className="text-sm font-medium text-gray-700">Model preferences</h3>
+            <div>
+              <label className="text-sm text-gray-600 block mb-2">Tabular review model</label>
+              <TabularModelDropdown
+                value={profile?.tabularModel ?? 'claude-sonnet-4-6'}
+                onChange={updateTabularModel}
+              />
+              <p className="text-xs text-gray-400 mt-1.5">
+                Sonnet is more thorough; Haiku is faster and cheaper.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-3 max-w-md">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-medium text-gray-700">MCP servers</h3>
+              <button
+                type="button"
+                onClick={() => setMcpHelpOpen((v) => !v)}
+                className="text-gray-400 hover:text-gray-600 focus:outline-none"
+                aria-label="MCP server help"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            {mcpHelpOpen && (
+              <div className="rounded-md bg-gray-50 border border-gray-200 p-3 text-sm text-gray-600 space-y-1.5">
+                <p>MCP servers extend the agent with additional tools. Only your AWS administrator can add approved servers by uploading <code className="font-mono bg-gray-100 px-1 rounded">mcp.json</code> to the admin S3 bucket.</p>
+                <pre className="font-mono bg-gray-100 rounded p-2 text-[11px] overflow-x-auto">{`{
+  "mcpServers": {
+    "server-id": {
+      "url": "https://example.com/mcp",
+      "authSecretName": "louis/mcp/server-id"
+    }
+  }
+}`}</pre>
+                <p><code className="font-mono bg-gray-100 px-1 rounded">authSecretName</code> is optional. If set, the agent fetches the value from AWS Secrets Manager and sends it as a Bearer token. By convention, use <code className="font-mono bg-gray-100 px-1 rounded">louis/mcp/&lt;server-id&gt;</code> to match the server key.</p>
+                <p>Only static Bearer token auth is supported. OAuth / three-legged auth flows are not supported.</p>
+              </div>
+            )}
+            {mcpServers.length === 0 ? (
+              <p className="text-sm text-gray-400">No MCP servers configured by your administrator.</p>
+            ) : (
+              <div className="space-y-2">
+                {mcpServers.map((server) => {
+                  const isEnabled = !profile?.disabledMcpServers.includes(server.id);
+                  return (
+                    <div key={server.id} className="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                      <p className="text-sm text-gray-900">{server.id}</p>
+                      <button
+                        type="button"
+                        onClick={() => handleMcpToggle(server.id, !isEnabled)}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-black/10 ${isEnabled ? 'bg-gray-900' : 'bg-gray-200'}`}
+                        role="switch"
+                        aria-checked={isEnabled}
+                      >
+                        <span className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ${isEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <p className="text-xs text-gray-400">Changes take effect on your next conversation.</p>
           </div>
         </div>
       </div>

@@ -13,9 +13,10 @@
 import express from 'express';
 import { buildDocContext, buildProjectDocContext, DocIndex } from './lib/doc-context';
 import { extractAnnotations } from './lib/citations';
-import { execute } from './lib/db';
+import { execute, queryOne } from './lib/db';
 import { createAgent, loadMessages } from './agent';
 import { ensureSkillsDownloaded, skillsLocalBase } from './lib/skills';
+import { buildMcpClients } from './lib/mcp-config';
 
 const PORT = process.env.PORT ?? 8080;
 const app = express();
@@ -69,10 +70,18 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   try {
-    const [{ docIndex, docStore }, previousMessages] = await Promise.all([
+    const [{ docIndex, docStore }, previousMessages, , mcpClients] = await Promise.all([
       projectId ? buildProjectDocContext(projectId) : buildDocContext(userId),
       loadMessages(chatId),
       ensureSkillsDownloaded(userId).catch(err => console.error('[skills] download failed:', err)),
+      queryOne<{ disabled_mcp_servers: string | string[] }>(
+        'SELECT disabled_mcp_servers FROM user_profiles WHERE user_id = :userId',
+        [{ name: 'userId', value: { stringValue: userId } }],
+      ).then(row => {
+        const raw = row?.disabled_mcp_servers ?? [];
+        const ids: string[] = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        return buildMcpClients(ids);
+      }).catch(err => { console.error('[mcp] failed to build clients:', err); return []; }),
     ]);
 
     let prompt: string = body.prompt;
@@ -85,7 +94,7 @@ app.post('/invocations', express.raw({ type: '*/*' }), async (req, res) => {
       prompt = `USER-ATTACHED DOCUMENTS FOR THIS TURN:\nThe user has attached the following document(s) directly to their message. Treat these as the primary focus of the request unless their message clearly says otherwise.\n${lines.join('\n')}\n\n${prompt}`;
     }
 
-    const agent = createAgent(userId, docStore, docIndex, chatId, previousMessages, skillsLocalBase(userId), projectId, model);
+    const agent = createAgent(userId, docStore, docIndex, chatId, previousMessages, skillsLocalBase(userId), mcpClients ?? [], projectId, model);
 
     let fullText = '';
     // Buffer tail to suppress <CITATIONS> block from streaming to frontend

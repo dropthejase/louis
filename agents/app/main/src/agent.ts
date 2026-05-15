@@ -14,7 +14,7 @@
  * from S3 before each turn; AfterInvocationEvent writes agent.messages back.
  * This ensures the system prompt is always fresh from code, never from a snapshot.
  */
-import { Agent, BedrockModel, AfterModelCallEvent, AfterInvocationEvent } from '@strands-agents/sdk';
+import { Agent, BedrockModel, AfterModelCallEvent, AfterInvocationEvent, McpClient } from '@strands-agents/sdk';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { AgentSkills } = require('@strands-agents/sdk/vended-plugins/skills');
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
@@ -84,6 +84,7 @@ export function createAgent(
   chatId: string,
   previousMessages: MessageData[],
   skillsBase: string,
+  mcpClients: McpClient[],
   projectId?: string,
   modelId?: string,
 ): Agent {
@@ -108,6 +109,7 @@ export function createAgent(
     makeReadLocalFileTool(userId),
     browseWebTool,
     ...(projectId ? [makeReplicateDocumentTool(userId, projectId, docStore, docIndex)] : []),
+    ...mcpClients,
   ];
 
   const skillsPlugin = new AgentSkills({ skills: [skillsBase] });

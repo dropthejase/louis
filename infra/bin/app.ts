@@ -40,7 +40,6 @@ const apiStack = new ApiStack(app, 'ApiStack', {
   dbClusterArn: databaseStack.clusterArn,
   dbSecretArn: databaseStack.secretArn,
   dbName: databaseStack.databaseName,
-  browserArn: agentStack.browserArn,
   adminBucket: agentStack.adminBucket,
 });
 apiStack.addDependency(authStack);

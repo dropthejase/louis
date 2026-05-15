@@ -27,7 +27,6 @@ interface ApiStackProps extends StackProps {
   sessionsBucket: s3.Bucket;
   skillsBucket: s3.Bucket;
   agentDeployBucket: s3.Bucket;
-  browserArn: string;
   adminBucket: s3.Bucket;
   frontendUrl: string;
   dbClusterArn: string;
@@ -55,6 +54,7 @@ export class ApiStack extends Stack {
     props.docsBucket.grantReadWrite(lambdaRole);
     props.sessionsBucket.grantReadWrite(lambdaRole);
     props.skillsBucket.grantReadWrite(lambdaRole);
+    props.adminBucket.grantRead(lambdaRole);
 
     lambdaRole.addToPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
@@ -130,7 +130,6 @@ export class ApiStack extends Stack {
         DOCS_BUCKET_NAME: props.docsBucket.bucketName,
         SESSIONS_BUCKET_NAME: props.sessionsBucket.bucketName,
         SKILLS_BUCKET_NAME: props.skillsBucket.bucketName,
-        BROWSER_ARN: props.browserArn,
         ADMIN_BUCKET_NAME: props.adminBucket.bucketName,
         USER_POOL_ID: props.userPool.userPoolId,
         FRONTEND_URL: props.frontendUrl,
@@ -254,6 +253,13 @@ export class ApiStack extends Stack {
     }));
 
     agentCoreRole.addToPolicy(new iam.PolicyStatement({
+      sid: 'SecretsManagerMcp',
+      effect: iam.Effect.ALLOW,
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:louis/mcp/*`],
+    }));
+
+    agentCoreRole.addToPolicy(new iam.PolicyStatement({
       sid: 'S3DocsAccess',
       effect: iam.Effect.ALLOW,
       actions: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject'],
@@ -309,18 +315,6 @@ export class ApiStack extends Stack {
       resources: [`${props.adminBucket.bucketArn}/*`],
     }));
 
-    agentCoreRole.addToPolicy(new iam.PolicyStatement({
-      sid: 'AgentCoreBrowser',
-      effect: iam.Effect.ALLOW,
-      actions: [
-        'bedrock-agentcore:StartBrowserSession',
-        'bedrock-agentcore:StopBrowserSession',
-        'bedrock-agentcore:GetBrowserSession',
-        'bedrock-agentcore:ConnectBrowserAutomationStream',
-        'bedrock-agentcore:UpdateBrowserStream',
-      ],
-      resources: [`arn:aws:bedrock-agentcore:${this.region}:${this.account}:browser/*`],
-    }));
 
     new CfnOutput(this, 'CreditsTableArn', { value: creditsTable.tableArn });
 

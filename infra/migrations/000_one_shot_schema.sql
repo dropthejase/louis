@@ -16,6 +16,7 @@ create table if not exists public.user_profiles (
   display_name text,
   organisation text,
   tabular_model text,
+  disabled_mcp_servers jsonb not null default '[]'::jsonb,
   tier text not null default 'Free',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

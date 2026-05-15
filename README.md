@@ -80,7 +80,7 @@ Change `RemovalPolicy.DESTROY` → `RemovalPolicy.RETAIN` (or `SNAPSHOT` for Aur
 
 ```bash
 cd infra && npm install
-npx cdk deploy StorageStack DatabaseStack AuthStack ApiStack
+npx cdk deploy StorageStack DatabaseStack AuthStack AgentStack ApiStack
 ```
 
 For `ConversionStack`, Finch must be running:
@@ -142,7 +142,8 @@ Runs `vite build`, syncs the output to S3, and invalidates the CloudFront cache.
 
 | What changed | Command |
 |---|---|
-| CDK stack | `cd infra && npx cdk deploy <STACK>` |
+| CDK stack (general) | `cd infra && npx cdk deploy <STACK>` |
+| Admin config (MCP, Chrome policy) | `cd infra && npx cdk deploy AgentStack` |
 | Agents | `AWS_REGION=eu-west-1 ./scripts/deploy-agent.sh louisMain` (or `louisTabular`) |
 | Frontend | `AWS_REGION=eu-west-1 ./scripts/deploy-frontend.sh` |
 | ConversionStack | `finch vm start && export CDK_DOCKER=finch && npx cdk deploy ConversionStack && finch vm stop` |
@@ -191,6 +192,29 @@ Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` m
 
 **Limitations:** Skills are read-only. The agent cannot execute scripts — this is to reduce the risk of privilege escalation.
 
+### MCP Servers
+
+The AWS administrator can connect approved [Model Context Protocol](https://modelcontextprotocol.io) servers to the agent by uploading `mcp.json` to the admin S3 bucket. Users can toggle individual servers on or off in Agent Settings. Only HTTP (StreamableHTTP) transport is supported.
+
+For authenticated servers, store the API key as an AWS Secrets Manager secret under the `louis/mcp/` prefix (e.g. `louis/mcp/my-server`) and reference it in `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "url": "https://example.com/mcp",
+      "authSecretName": "louis/mcp/my-server"
+    }
+  }
+}
+```
+
+The agent fetches the secret at cold start and sends it as a `Bearer` token. The key never appears in `mcp.json` or S3.
+
+**Limitations:** Only static Bearer token auth is supported. OAuth 2.0 / three-legged OAuth (3LO) flows are not supported — servers requiring interactive sign-in (e.g. GitHub/Google OAuth) cannot be used without AgentCore Gateway.
+
+The default configuration includes **[Lex](https://lex.lab.i.ai.gov.uk/mcp)** — a public MCP server for UK legislation search, provided by i.AI (DSIT).
+
 ---
 
 ## Ideas for Extension
@@ -205,6 +229,7 @@ Users can upload **Skills** — knowledge packages (a folder with a `SKILL.md` m
 **Platform & Scale**
 - **Decoupling** — with SQS
 - **Usage analytics** — with Amazon Quick
+- **Structured logging** — replace `console.log/error` in Lambda route files with AWS Lambda Powertools Logger for consistent JSON logs, correlation IDs, and CloudWatch Insights compatibility
 
 **Auth & Multi-tenancy**
 - **Firm-level tenancy** — add an `organisation_id` tier; Cognito user groups + IAM permission boundaries to enforce firm isolation at the AWS level
