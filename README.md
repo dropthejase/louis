@@ -202,7 +202,7 @@ The agent can fetch pages from a curated set of legal and regulatory websites: c
 
 ### Strands Skills
 
-Users can upload [**Skills**](https://skills.md/) via the UI, which saves them into S3. The repo seeds a sample [EU AI System Classifier](https://lawve.ai/en/skills/eu-ai-act-classification-werner-plutat) Skill by Werner Plutat. You can find many more on [Lawve AI](https://lawve.ai/en).
+Users can upload [**Skills**](https://skills.md/) via the UI, which saves them into S3. The demo shows a sample [EU AI System Classifier](https://lawve.ai/en/skills/eu-ai-act-classification-werner-plutat) Skill by Werner Plutat. You can find many more on [Lawve AI](https://lawve.ai/en).
 
 **Limitations:** Skills are read-only. The agent cannot execute scripts — this is to reduce the risk of privilege escalation.
 
