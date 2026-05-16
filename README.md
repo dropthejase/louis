@@ -61,6 +61,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full detail.
 
 Before deploying, review these settings in `infra/`:
 
+- **AWS region** — defaults to `eu-west-1` (Dublin). To deploy elsewhere, update the `region` constant in `infra/bin/app.ts` and set `AWS_REGION` when running deploy scripts
 - **Bedrock model IDs** — update model ID constants if you want to swap Claude versions or use a different model
 - **Aurora minimum ACU** — defaults to `0` (scales to zero). Set a non-zero minimum (e.g. `0.5`) to avoid cold-start latency on the first query after idle
 - **Lambda provisioned concurrency** — not configured by default; the API and agent Lambdas will cold-start after periods of inactivity. Add provisioned concurrency to `ApiStack` / agent function if you need consistent response times
