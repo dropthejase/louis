@@ -4,7 +4,7 @@
 
 Louis is a fork of [MikeOSS](https://github.com/willchen96/mike) — an AWS-native implementation of the same AI-powered legal document workspace. 
 
-<video src="assets/demo.mp4" controls width="100%"></video>
+https://github.com/user-attachments/assets/7fa9a700-17e4-4c0d-a796-11594a0b58d1
 
 `00:00` Document interaction · `00:13` Redlining · `00:33` Tabular Review · `00:46` Web Search · `00:59` Web Search allowlist block · `01:07` Skills · `01:37` MCP
 
